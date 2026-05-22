@@ -1,0 +1,497 @@
+/**
+ * Deployment Engine v2 — Applies selected changes from DEV to PROD.
+ * 
+ * Supports:
+ * - Adding new tables (copy .tmdl file)
+ * - Removing tables (delete .tmdl file)
+ * - Adding/removing/modifying objects within tables (manipulate file blocks)
+ * - Adding/removing/modifying relationships (manipulate relationships.tmdl)
+ * - Adding/removing/modifying expressions (manipulate expressions.tmdl)
+ * - Adding/removing roles, perspectives, cultures (copy/delete files)
+ * - Backup before deployment
+ */
+
+const fs = require('fs');
+const path = require('path');
+const {
+    findObjectBlock,
+    findTopLevelBlock,
+    removeObjectBlock,
+    replaceObjectBlock,
+    appendTopLevelBlock,
+    appendChildBlock,
+    addRefEntry,
+    removeRefEntry
+} = require('./tmdl-writer');
+
+/**
+ * Deploy selected diffs from DEV model to PROD folder.
+ * 
+ * @param {Array} selectedDiffs - Array of diff objects to deploy
+ * @param {object} devModel - Loaded DEV model (with rawFiles)
+ * @param {string} prodPath - Path to PROD definition/ folder
+ * @param {object} options - { dryRun: boolean, backup: boolean }
+ * @returns {object} Deployment result { success: boolean, actions: [], errors: [] }
+ */
+function deployChanges(selectedDiffs, devModel, prodPath, options = {}) {
+    const { dryRun = false, backup = true } = options;
+    const result = { success: true, actions: [], errors: [], backupPath: null };
+
+    // Create backup if requested
+    if (backup && !dryRun) {
+        const backupDir = createBackup(prodPath);
+        result.backupPath = backupDir;
+        result.actions.push({ type: 'backup', message: `Backup created: ${backupDir}` });
+    }
+
+    // Group diffs by their target file to minimize file I/O
+    const fileOps = planFileOperations(selectedDiffs, devModel, prodPath);
+
+    // Execute operations
+    for (const op of fileOps) {
+        try {
+            if (dryRun) {
+                result.actions.push({ type: 'dryrun', ...op.description });
+            } else {
+                executeOperation(op, prodPath);
+                result.actions.push({ type: 'applied', ...op.description });
+            }
+        } catch (err) {
+            result.errors.push({ operation: op.description, error: err.message });
+            result.success = false;
+        }
+    }
+
+    return result;
+}
+
+/**
+ * Plan all file operations from selected diffs.
+ */
+function planFileOperations(selectedDiffs, devModel, prodPath) {
+    const operations = [];
+
+    for (const diff of selectedDiffs) {
+        const ops = planSingleDiff(diff, devModel, prodPath);
+        operations.push(...ops);
+    }
+
+    return operations;
+}
+
+/**
+ * Plan operations for a single diff.
+ */
+function planSingleDiff(diff, devModel, prodPath) {
+    const ops = [];
+    const { type, objectType, identityKey, displayName, rawBlock, parentTable } = diff;
+
+    switch (objectType) {
+        case 'table':
+            ops.push(...planTableOp(diff, devModel, prodPath));
+            break;
+        case 'column':
+        case 'measure':
+        case 'hierarchy':
+        case 'partition':
+        case 'calculationGroup':
+        case 'calculationItem':
+            ops.push(...planChildObjectOp(diff, devModel, prodPath));
+            break;
+        case 'relationship':
+            ops.push(...planRelationshipOp(diff, devModel, prodPath));
+            break;
+        case 'expression':
+            ops.push(...planExpressionOp(diff, devModel, prodPath));
+            break;
+        case 'role':
+        case 'tablePermission':
+            ops.push(...planRoleOp(diff, devModel, prodPath));
+            break;
+        case 'perspective':
+            ops.push(...planFileBasedOp(diff, devModel, prodPath, 'perspectives'));
+            break;
+        case 'culture':
+            ops.push(...planFileBasedOp(diff, devModel, prodPath, 'cultures'));
+            break;
+        case 'dataSource':
+            ops.push(...planDataSourceOp(diff, devModel, prodPath));
+            break;
+        default:
+            break;
+    }
+
+    return ops;
+}
+
+/**
+ * Plan operations for table-level changes.
+ */
+function planTableOp(diff, devModel, prodPath) {
+    const tableName = diff.displayName;
+    const fileName = `${tableName}.tmdl`;
+    const targetFile = path.join(prodPath, 'tables', fileName);
+    const sourceFileKey = `tables/${fileName}`;
+
+    if (diff.type === 0) {
+        // ADD: copy entire table file from DEV to PROD
+        const content = devModel.rawFiles[sourceFileKey];
+        if (!content) return [];
+        return [{
+            action: 'writeFile',
+            targetPath: targetFile,
+            content,
+            updateModelRef: { type: 'add', refType: 'table', name: tableName },
+            description: { action: 'add', objectType: 'table', name: tableName, file: `tables/${fileName}` }
+        }];
+    } else if (diff.type === 1) {
+        // REMOVE: delete table file from PROD
+        return [{
+            action: 'deleteFile',
+            targetPath: targetFile,
+            updateModelRef: { type: 'remove', refType: 'table', name: tableName },
+            description: { action: 'remove', objectType: 'table', name: tableName, file: `tables/${fileName}` }
+        }];
+    } else {
+        // MODIFY: for table-level property changes, update the table declaration in PROD
+        // Copy the entire file from DEV (since table structure is controlled by DEV)
+        const content = devModel.rawFiles[sourceFileKey];
+        if (!content) return [];
+        return [{
+            action: 'writeFile',
+            targetPath: targetFile,
+            content,
+            description: { action: 'modify', objectType: 'table', name: tableName, file: `tables/${fileName}` }
+        }];
+    }
+}
+
+/**
+ * Plan operations for child objects (columns, measures, etc.) within a table.
+ */
+function planChildObjectOp(diff, devModel, prodPath) {
+    const tableName = diff.parentTable;
+    if (!tableName) return [];
+
+    const fileName = `${tableName}.tmdl`;
+    const targetFile = path.join(prodPath, 'tables', fileName);
+    const objectType = diff.objectType;
+    const objectName = diff.displayName.split('.').slice(1).join('.');
+
+    if (diff.type === 0) {
+        // ADD: append the child block to the PROD table file
+        return [{
+            action: 'appendChild',
+            targetPath: targetFile,
+            childBlock: diff.rawBlock,
+            description: { action: 'add', objectType, name: diff.displayName, file: `tables/${fileName}` }
+        }];
+    } else if (diff.type === 1) {
+        // REMOVE: remove the child block from PROD table file
+        return [{
+            action: 'removeChild',
+            targetPath: targetFile,
+            childType: objectType,
+            childName: objectName,
+            description: { action: 'remove', objectType, name: diff.displayName, file: `tables/${fileName}` }
+        }];
+    } else {
+        // MODIFY: replace the child block in PROD with DEV version
+        return [{
+            action: 'replaceChild',
+            targetPath: targetFile,
+            childType: objectType,
+            childName: objectName,
+            newBlock: diff.rawBlock,
+            description: { action: 'modify', objectType, name: diff.displayName, file: `tables/${fileName}` }
+        }];
+    }
+}
+
+/**
+ * Plan operations for relationship changes.
+ */
+function planRelationshipOp(diff, devModel, prodPath) {
+    const targetFile = path.join(prodPath, 'relationships.tmdl');
+    // Extract the relationship name (GUID) from rawBlock first line
+    const relNameMatch = diff.rawBlock ? diff.rawBlock.match(/^relationship\s+(.+)$/m) : null;
+    const relName = relNameMatch ? relNameMatch[1].trim().replace(/^'|'$/g, '') : diff.displayName;
+
+    if (diff.type === 0) {
+        // ADD: append relationship block to relationships.tmdl
+        return [{
+            action: 'appendTopLevel',
+            targetPath: targetFile,
+            block: diff.rawBlock,
+            description: { action: 'add', objectType: 'relationship', name: diff.displayName, file: 'relationships.tmdl' }
+        }];
+    } else if (diff.type === 1) {
+        // REMOVE: remove relationship block from relationships.tmdl
+        return [{
+            action: 'removeTopLevel',
+            targetPath: targetFile,
+            objectType: 'relationship',
+            objectName: relName,
+            description: { action: 'remove', objectType: 'relationship', name: diff.displayName, file: 'relationships.tmdl' }
+        }];
+    } else {
+        // MODIFY: replace relationship block
+        return [{
+            action: 'replaceTopLevel',
+            targetPath: targetFile,
+            objectType: 'relationship',
+            objectName: relName,
+            newBlock: diff.rawBlock,
+            description: { action: 'modify', objectType: 'relationship', name: diff.displayName, file: 'relationships.tmdl' }
+        }];
+    }
+}
+
+/**
+ * Plan operations for expression changes.
+ */
+function planExpressionOp(diff, devModel, prodPath) {
+    const targetFile = path.join(prodPath, 'expressions.tmdl');
+    const exprName = diff.displayName;
+
+    if (diff.type === 0) {
+        return [{
+            action: 'appendTopLevel',
+            targetPath: targetFile,
+            block: diff.rawBlock,
+            createIfMissing: true,
+            description: { action: 'add', objectType: 'expression', name: exprName, file: 'expressions.tmdl' }
+        }];
+    } else if (diff.type === 1) {
+        return [{
+            action: 'removeTopLevel',
+            targetPath: targetFile,
+            objectType: 'expression',
+            objectName: exprName,
+            description: { action: 'remove', objectType: 'expression', name: exprName, file: 'expressions.tmdl' }
+        }];
+    } else {
+        return [{
+            action: 'replaceTopLevel',
+            targetPath: targetFile,
+            objectType: 'expression',
+            objectName: exprName,
+            newBlock: diff.rawBlock,
+            description: { action: 'modify', objectType: 'expression', name: exprName, file: 'expressions.tmdl' }
+        }];
+    }
+}
+
+/**
+ * Plan operations for role changes.
+ */
+function planRoleOp(diff, devModel, prodPath) {
+    if (diff.objectType === 'role') {
+        return planFileBasedOp(diff, devModel, prodPath, 'roles');
+    }
+    // tablePermission — modify the parent role file
+    const roleName = diff.displayName.split(' → ')[0];
+    const fileName = `${roleName}.tmdl`;
+    const sourceFileKey = `roles/${fileName}`;
+    const targetFile = path.join(prodPath, 'roles', fileName);
+    const content = devModel.rawFiles[sourceFileKey];
+    if (!content) return [];
+
+    return [{
+        action: 'writeFile',
+        targetPath: targetFile,
+        content,
+        description: { action: diff.type === 0 ? 'add' : diff.type === 1 ? 'remove' : 'modify', objectType: 'tablePermission', name: diff.displayName, file: `roles/${fileName}` }
+    }];
+}
+
+/**
+ * Plan operations for file-based objects (roles, perspectives, cultures).
+ */
+function planFileBasedOp(diff, devModel, prodPath, subdir) {
+    const name = diff.displayName;
+    const fileName = `${name}.tmdl`;
+    const sourceFileKey = `${subdir}/${fileName}`;
+    const targetFile = path.join(prodPath, subdir, fileName);
+
+    if (diff.type === 0) {
+        const content = devModel.rawFiles[sourceFileKey];
+        if (!content) return [];
+        const refType = subdir === 'roles' ? 'role' : subdir === 'perspectives' ? 'perspective' : 'culture';
+        return [{
+            action: 'writeFile',
+            targetPath: targetFile,
+            content,
+            ensureDir: true,
+            updateModelRef: { type: 'add', refType, name },
+            description: { action: 'add', objectType: diff.objectType, name, file: `${subdir}/${fileName}` }
+        }];
+    } else if (diff.type === 1) {
+        const refType = subdir === 'roles' ? 'role' : subdir === 'perspectives' ? 'perspective' : 'culture';
+        return [{
+            action: 'deleteFile',
+            targetPath: targetFile,
+            updateModelRef: { type: 'remove', refType, name },
+            description: { action: 'remove', objectType: diff.objectType, name, file: `${subdir}/${fileName}` }
+        }];
+    } else {
+        const content = devModel.rawFiles[sourceFileKey];
+        if (!content) return [];
+        return [{
+            action: 'writeFile',
+            targetPath: targetFile,
+            content,
+            description: { action: 'modify', objectType: diff.objectType, name, file: `${subdir}/${fileName}` }
+        }];
+    }
+}
+
+/**
+ * Plan operations for data source changes.
+ */
+function planDataSourceOp(diff, devModel, prodPath) {
+    const targetFile = path.join(prodPath, 'dataSources.tmdl');
+    const dsName = diff.displayName;
+
+    if (diff.type === 0) {
+        return [{
+            action: 'appendTopLevel',
+            targetPath: targetFile,
+            block: diff.rawBlock,
+            createIfMissing: true,
+            description: { action: 'add', objectType: 'dataSource', name: dsName, file: 'dataSources.tmdl' }
+        }];
+    } else if (diff.type === 1) {
+        return [{
+            action: 'removeTopLevel',
+            targetPath: targetFile,
+            objectType: 'dataSource',
+            objectName: dsName,
+            description: { action: 'remove', objectType: 'dataSource', name: dsName, file: 'dataSources.tmdl' }
+        }];
+    } else {
+        return [{
+            action: 'replaceTopLevel',
+            targetPath: targetFile,
+            objectType: 'dataSource',
+            objectName: dsName,
+            newBlock: diff.rawBlock,
+            description: { action: 'modify', objectType: 'dataSource', name: dsName, file: 'dataSources.tmdl' }
+        }];
+    }
+}
+
+/**
+ * Execute a single file operation.
+ */
+function executeOperation(op, prodPath) {
+    switch (op.action) {
+        case 'writeFile': {
+            if (op.ensureDir) {
+                const dir = path.dirname(op.targetPath);
+                if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+            }
+            fs.writeFileSync(op.targetPath, op.content, 'utf-8');
+            break;
+        }
+        case 'deleteFile': {
+            if (fs.existsSync(op.targetPath)) {
+                fs.unlinkSync(op.targetPath);
+            }
+            break;
+        }
+        case 'appendChild': {
+            if (!fs.existsSync(op.targetPath)) break;
+            let content = fs.readFileSync(op.targetPath, 'utf-8');
+            content = appendChildBlock(content, op.childBlock);
+            fs.writeFileSync(op.targetPath, content, 'utf-8');
+            break;
+        }
+        case 'removeChild': {
+            if (!fs.existsSync(op.targetPath)) break;
+            let content = fs.readFileSync(op.targetPath, 'utf-8');
+            content = removeObjectBlock(content, op.childType, op.childName, 0);
+            fs.writeFileSync(op.targetPath, content, 'utf-8');
+            break;
+        }
+        case 'replaceChild': {
+            if (!fs.existsSync(op.targetPath)) break;
+            let content = fs.readFileSync(op.targetPath, 'utf-8');
+            content = replaceObjectBlock(content, op.childType, op.childName, 0, op.newBlock);
+            fs.writeFileSync(op.targetPath, content, 'utf-8');
+            break;
+        }
+        case 'appendTopLevel': {
+            if (!fs.existsSync(op.targetPath)) {
+                if (op.createIfMissing) {
+                    fs.writeFileSync(op.targetPath, op.block + '\n', 'utf-8');
+                }
+                break;
+            }
+            let content = fs.readFileSync(op.targetPath, 'utf-8');
+            content = appendTopLevelBlock(content, op.block);
+            fs.writeFileSync(op.targetPath, content, 'utf-8');
+            break;
+        }
+        case 'removeTopLevel': {
+            if (!fs.existsSync(op.targetPath)) break;
+            let content = fs.readFileSync(op.targetPath, 'utf-8');
+            content = removeObjectBlock(content, op.objectType, op.objectName, -1);
+            fs.writeFileSync(op.targetPath, content, 'utf-8');
+            break;
+        }
+        case 'replaceTopLevel': {
+            if (!fs.existsSync(op.targetPath)) break;
+            let content = fs.readFileSync(op.targetPath, 'utf-8');
+            content = replaceObjectBlock(content, op.objectType, op.objectName, -1, op.newBlock);
+            fs.writeFileSync(op.targetPath, content, 'utf-8');
+            break;
+        }
+    }
+
+    // Handle model.tmdl ref updates
+    if (op.updateModelRef) {
+        const modelTmdlPath = path.join(prodPath, 'model.tmdl');
+        if (fs.existsSync(modelTmdlPath)) {
+            let modelContent = fs.readFileSync(modelTmdlPath, 'utf-8');
+            if (op.updateModelRef.type === 'add') {
+                modelContent = addRefEntry(modelContent, op.updateModelRef.refType, op.updateModelRef.name);
+            } else {
+                modelContent = removeRefEntry(modelContent, op.updateModelRef.refType, op.updateModelRef.name);
+            }
+            fs.writeFileSync(modelTmdlPath, modelContent, 'utf-8');
+        }
+    }
+}
+
+/**
+ * Create a timestamped backup of the PROD folder.
+ */
+function createBackup(prodPath) {
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').substring(0, 19);
+    const parentDir = path.dirname(prodPath);
+    const backupDir = path.join(parentDir, `definition_backup_${timestamp}`);
+    
+    copyDirSync(prodPath, backupDir);
+    return backupDir;
+}
+
+/**
+ * Recursively copy directory.
+ */
+function copyDirSync(src, dest) {
+    fs.mkdirSync(dest, { recursive: true });
+    const entries = fs.readdirSync(src, { withFileTypes: true });
+    
+    for (const entry of entries) {
+        const srcPath = path.join(src, entry.name);
+        const destPath = path.join(dest, entry.name);
+        if (entry.isDirectory()) {
+            copyDirSync(srcPath, destPath);
+        } else {
+            fs.copyFileSync(srcPath, destPath);
+        }
+    }
+}
+
+module.exports = { deployChanges };

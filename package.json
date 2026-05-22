@@ -1,0 +1,13 @@
+{
+  "name": "model-alchemist",
+  "version": "2.2.0",
+  "description": "Semantic Model Analysis, Comparison and Deployment Tool (TMDL)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "dependencies": {
+    "express": "^4.21.0"
+  }
+}

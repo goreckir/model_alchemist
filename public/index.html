@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Model Alchemist v2.0 — Compare & Deploy</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <header class="app-header">
+        <div class="logo">
+            <span class="logo-icon">⚗️</span>
+            <h1>Model Alchemist</h1>
+            <span class="version">v2.0</span>
+        </div>
+        <div class="header-actions">
+            <button id="btn-new-compare" class="btn btn-secondary hidden">New Comparison</button>
+            <button id="btn-refresh" class="btn btn-secondary hidden" title="Refresh comparison">🔄 Refresh</button>
+            <button id="btn-deploy" class="btn btn-deploy hidden" disabled>
+                <span class="deploy-icon">🚀</span>
+                Deploy Selected (<span id="deploy-count">0</span>)
+            </button>
+        </div>
+    </header>
+
+    <main class="app-main">
+        <!-- Connection Panel -->
+        <section id="connection-panel" class="connection-panel">
+            <div class="connection-card">
+                <h2>Compare & Deploy Semantic Models</h2>
+                <p class="subtitle">Select .pbip project files to compare DEV and PROD models</p>
+                
+                <div class="connection-form">
+                    <div class="form-group">
+                        <label>
+                            <span class="badge badge-dev">DEV</span>
+                            Source: <span id="label-dev-file" class="label-filename">—</span>
+                        </label>
+                        <div class="file-picker-row">
+                            <input type="text" id="dev-path" placeholder="Select .pbip file or paste path..." />
+                            <button id="btn-browse-dev" class="btn btn-secondary btn-browse">Browse...</button>
+                        </div>
+                    </div>
+
+                    <div class="swap-row">
+                        <button id="btn-swap" class="btn btn-swap" title="Swap DEV ↔ PROD">⇅</button>
+                    </div>
+
+                    <div class="form-group">
+                        <label>
+                            <span class="badge badge-prod">PROD</span>
+                            Target: <span id="label-prod-file" class="label-filename">—</span>
+                        </label>
+                        <div class="file-picker-row">
+                            <input type="text" id="prod-path" placeholder="Select .pbip file or paste path..." />
+                            <button id="btn-browse-prod" class="btn btn-secondary btn-browse">Browse...</button>
+                        </div>
+                    </div>
+
+                    <button id="btn-compare" class="btn btn-primary btn-large">
+                        Compare Models
+                    </button>
+                    <div id="error-message" class="error-message hidden"></div>
+                    <div id="loading" class="loading hidden">
+                        <div class="spinner"></div>
+                        <span>Comparing models...</span>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Results Panel -->
+        <section id="results-panel" class="results-panel hidden">
+            <div class="results-layout">
+                <!-- Sidebar -->
+                <aside class="sidebar">
+                    <div class="sidebar-header">
+                        <h3>Change Groups</h3>
+                        <div class="summary-bar">
+                            <span class="summary-total" id="total-diffs">0 differences</span>
+                        </div>
+                        <div class="summary-types">
+                            <span class="badge-count badge-added" id="count-added">0 added</span>
+                            <span class="badge-count badge-removed" id="count-removed">0 removed</span>
+                            <span class="badge-count badge-modified" id="count-modified">0 modified</span>
+                        </div>
+                    </div>
+                    <nav class="group-list" id="group-list"></nav>
+                    <div class="sidebar-footer">
+                        <div class="filter-section">
+                            <label>Filter by type:</label>
+                            <div class="filter-buttons">
+                                <button class="filter-btn active" data-filter="all">All</button>
+                                <button class="filter-btn" data-filter="Added">Added</button>
+                                <button class="filter-btn" data-filter="Removed">Removed</button>
+                                <button class="filter-btn" data-filter="Modified">Modified</button>
+                            </div>
+                        </div>
+                        <div class="select-section">
+                            <label>Selection:</label>
+                            <div class="select-buttons">
+                                <button id="btn-select-all" class="btn btn-sm">Select All Visible</button>
+                                <button id="btn-deselect-all" class="btn btn-sm">Deselect All</button>
+                            </div>
+                        </div>
+                        <div class="select-section">
+                            <label>View:</label>
+                            <div class="select-buttons">
+                                <button id="btn-expand-all" class="btn btn-sm">Expand All</button>
+                                <button id="btn-collapse-all" class="btn btn-sm">Collapse All</button>
+                            </div>
+                        </div>
+                    </div>
+                </aside>
+
+                <!-- Diff View -->
+                <div class="diff-container">
+                    <div class="diff-header">
+                        <div class="diff-header-left">
+                            <span class="badge badge-dev">DEV</span>
+                            <span id="dev-model-name" class="model-name"></span>
+                        </div>
+                        <div class="diff-header-right">
+                            <span class="badge badge-prod">PROD</span>
+                            <span id="prod-model-name" class="model-name"></span>
+                        </div>
+                    </div>
+                    <div class="diff-content" id="diff-content"></div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Deploy Modal -->
+        <div id="deploy-modal" class="modal hidden">
+            <div class="modal-backdrop"></div>
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2>Deploy Changes to PROD</h2>
+                    <button id="modal-close" class="btn-close">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <div class="deploy-summary" id="deploy-summary"></div>
+                    <div class="deploy-options">
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="opt-backup" checked />
+                            Create backup before deployment
+                        </label>
+                    </div>
+                    <div id="deploy-preview" class="deploy-preview"></div>
+                </div>
+                <div class="modal-footer">
+                    <button id="btn-cancel-deploy" class="btn btn-secondary">Cancel</button>
+                    <button id="btn-confirm-deploy" class="btn btn-deploy">
+                        <span class="deploy-icon">🚀</span> Confirm Deployment
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Deploy Result Modal -->
+        <div id="result-modal" class="modal hidden">
+            <div class="modal-backdrop"></div>
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2 id="result-title">Deployment Result</h2>
+                    <button id="result-close" class="btn-close">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <div id="result-body"></div>
+                </div>
+                <div class="modal-footer">
+                    <button id="btn-result-ok" class="btn btn-primary">OK</button>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <script src="js/app.js"></script>
+</body>
+</html>
