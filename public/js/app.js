@@ -1,4 +1,4 @@
-// Model Alchemist v2.1 — Frontend Application with Deploy & File Browser
+// Model Alchemist v3.0 — Frontend Application with Deploy, File Browser & Fabric
 (function () {
     'use strict';
 
@@ -9,6 +9,14 @@
     let selectedKeys = new Set();
     let devPath = localStorage.getItem('ma_devPath') || '';
     let prodPath = localStorage.getItem('ma_prodPath') || '';
+    let fabricConnected = false;
+    let workspacesCache = [];
+
+    // Source mode: 'local' or 'fabric' for each side
+    let devSourceMode = 'local';
+    let prodSourceMode = 'local';
+    let devFabricSelection = { workspaceId: null, semanticModelId: null, modelName: null };
+    let prodFabricSelection = { workspaceId: null, semanticModelId: null, modelName: null };
 
     // DOM Elements
     const connectionPanel = document.getElementById('connection-panel');
@@ -64,6 +72,23 @@
     devPathInput.addEventListener('change', () => resolveManualPath('dev'));
     prodPathInput.addEventListener('change', () => resolveManualPath('prod'));
 
+    // Fabric event listeners
+    document.getElementById('btn-fabric-connect').addEventListener('click', openFabricModal);
+    document.getElementById('fabric-modal-close').addEventListener('click', closeFabricModal);
+    document.getElementById('btn-fabric-login').addEventListener('click', handleFabricLogin);
+    document.getElementById('btn-fabric-disconnect').addEventListener('click', handleFabricDisconnect);
+    document.getElementById('btn-resolve-dev').addEventListener('click', () => resolveConnectionString('dev'));
+    document.getElementById('btn-resolve-prod').addEventListener('click', () => resolveConnectionString('prod'));
+
+    // Source tab switching
+    document.querySelectorAll('.source-tab').forEach(tab => {
+        tab.addEventListener('click', (e) => {
+            const target = e.target.closest('.source-tabs').dataset.target;
+            const source = e.target.dataset.source;
+            switchSourceTab(target, source);
+        });
+    });
+
     // Restore saved selections from localStorage
     restoreSavedPaths();
 
@@ -85,8 +110,32 @@
     });
 
     async function handleCompare() {
-        if (!devPath || !prodPath) {
-            showError('Please select both DEV and PROD model files.');
+        const devIsLocal = devSourceMode === 'local';
+        const prodIsLocal = prodSourceMode === 'local';
+
+        // Validate inputs
+        if (devIsLocal && !devPath) {
+            showError('Please select a DEV model file.');
+            return;
+        }
+        if (!devIsLocal && !fabricConnected) {
+            showError('Sign in to Fabric first (DEV source).');
+            return;
+        }
+        if (!devIsLocal && !devFabricSelection.semanticModelId) {
+            showError('Verify DEV connection string first (click "Verify Access").');
+            return;
+        }
+        if (prodIsLocal && !prodPath) {
+            showError('Please select a PROD model file.');
+            return;
+        }
+        if (!prodIsLocal && !fabricConnected) {
+            showError('Sign in to Fabric first (PROD source).');
+            return;
+        }
+        if (!prodIsLocal && !prodFabricSelection.semanticModelId) {
+            showError('Verify PROD connection string first (click "Verify Access").');
             return;
         }
 
@@ -94,11 +143,30 @@
         showLoading();
 
         try {
-            const response = await fetch('/api/compare', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ devPath, prodPath })
-            });
+            let response;
+
+            // If both are local, use the original endpoint
+            if (devIsLocal && prodIsLocal) {
+                response = await fetch('/api/compare', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ devPath, prodPath })
+                });
+            } else {
+                // Use the fabric-aware comparison endpoint
+                const devSource = devIsLocal
+                    ? { type: 'local', path: devPath }
+                    : { type: 'fabric', connectionString: devFabricSelection.connectionString, workspaceId: devFabricSelection.workspaceId, semanticModelId: devFabricSelection.semanticModelId };
+                const prodSource = prodIsLocal
+                    ? { type: 'local', path: prodPath }
+                    : { type: 'fabric', connectionString: prodFabricSelection.connectionString, workspaceId: prodFabricSelection.workspaceId, semanticModelId: prodFabricSelection.semanticModelId };
+
+                response = await fetch('/api/compare-fabric', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ devSource, prodSource })
+                });
+            }
 
             if (!response.ok) {
                 const err = await response.json();
@@ -116,17 +184,35 @@
     }
 
     async function handleRefresh() {
-        if (!devPath || !prodPath) return;
-
         btnRefresh.disabled = true;
         btnRefresh.textContent = '⏳ Refreshing...';
 
         try {
-            const response = await fetch('/api/compare', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ devPath, prodPath })
-            });
+            const devIsLocal = devSourceMode === 'local';
+            const prodIsLocal = prodSourceMode === 'local';
+            let response;
+
+            if (devIsLocal && prodIsLocal) {
+                if (!devPath || !prodPath) return;
+                response = await fetch('/api/compare', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ devPath, prodPath })
+                });
+            } else {
+                const devSource = devIsLocal
+                    ? { type: 'local', path: devPath }
+                    : { type: 'fabric', connectionString: devFabricSelection.connectionString, workspaceId: devFabricSelection.workspaceId, semanticModelId: devFabricSelection.semanticModelId };
+                const prodSource = prodIsLocal
+                    ? { type: 'local', path: prodPath }
+                    : { type: 'fabric', connectionString: prodFabricSelection.connectionString, workspaceId: prodFabricSelection.workspaceId, semanticModelId: prodFabricSelection.semanticModelId };
+
+                response = await fetch('/api/compare-fabric', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ devSource, prodSource })
+                });
+            }
 
             if (!response.ok) {
                 const err = await response.json();
@@ -166,8 +252,8 @@
         btnRefresh.classList.remove('hidden');
         btnDeploy.classList.remove('hidden');
 
-        devModelName.textContent = comparisonResult.devSource;
-        prodModelName.textContent = comparisonResult.prodSource;
+        setModelInfo(devModelName, comparisonResult.devSource, devPathInput.value);
+        setModelInfo(prodModelName, comparisonResult.prodSource, prodPathInput.value);
 
         const diffs = comparisonResult.diffs || [];
         const added = diffs.filter(d => d.type === 0).length;
@@ -182,6 +268,25 @@
         renderGroups();
         renderDiffs();
         updateDeployButton();
+    }
+
+    function setModelInfo(el, source, inputPath) {
+        if (!source) { el.textContent = ''; return; }
+        // Fabric source: "Fabric: Workspace/Model"
+        if (source.startsWith('Fabric:')) {
+            const parts = source.replace('Fabric: ', '').split('/');
+            const modelName = parts.pop();
+            const workspace = parts.join('/');
+            el.innerHTML = `<span class="model-filename">☁️ ${escapeHtml(modelName)}</span><span class="model-path">${escapeHtml(workspace)}</span>`;
+        } else {
+            // Local path: use .pbip file path from input if available
+            const displayPath = inputPath || source;
+            const sep = displayPath.includes('/') ? '/' : '\\';
+            const segments = displayPath.split(sep);
+            const fileName = segments.pop() || displayPath;
+            const dirPath = segments.join(sep) + sep;
+            el.innerHTML = `<span class="model-filename">📁 ${escapeHtml(fileName)}</span><span class="model-path">${escapeHtml(dirPath)}</span>`;
+        }
     }
 
     function renderGroups() {
@@ -481,6 +586,7 @@
 
     async function handleConfirmDeploy() {
         deployModal.classList.add('hidden');
+        showAlchemistAnimation();
 
         try {
             const response = await fetch('/api/deploy', {
@@ -494,10 +600,42 @@
             });
 
             const result = await response.json();
+            hideAlchemistAnimation();
             showDeployResult(result);
         } catch (err) {
+            hideAlchemistAnimation();
             showDeployResult({ success: false, errors: [{ error: err.message }], actions: [] });
         }
+    }
+
+    function showAlchemistAnimation() {
+        let overlay = document.getElementById('deploy-animation-overlay');
+        if (!overlay) {
+            overlay = document.createElement('div');
+            overlay.id = 'deploy-animation-overlay';
+            overlay.className = 'deploy-animation-overlay';
+            overlay.innerHTML = `
+                <div class="alchemist-animation">
+                    <div class="alchemist-flask">
+                        <span class="flask-icon">⚗️</span>
+                        <div class="flask-bubbles">
+                            <span class="bubble b1"></span>
+                            <span class="bubble b2"></span>
+                            <span class="bubble b3"></span>
+                        </div>
+                    </div>
+                    <p class="alchemist-text">Deploying changes...</p>
+                    <p class="alchemist-subtext">Mixing the elixir of transformation</p>
+                </div>
+            `;
+            document.body.appendChild(overlay);
+        }
+        overlay.classList.remove('hidden');
+    }
+
+    function hideAlchemistAnimation() {
+        const overlay = document.getElementById('deploy-animation-overlay');
+        if (overlay) overlay.classList.add('hidden');
     }
 
     function showDeployResult(result) {
@@ -687,10 +825,266 @@
         labelDev.textContent = labelProd.textContent;
         labelProd.textContent = tmpLabel;
 
+        // Swap source modes
+        const tmpMode = devSourceMode;
+        devSourceMode = prodSourceMode;
+        prodSourceMode = tmpMode;
+
+        // Swap fabric selections
+        const tmpFabric = { ...devFabricSelection };
+        devFabricSelection = { ...prodFabricSelection };
+        prodFabricSelection = tmpFabric;
+
         // Persist
         localStorage.setItem('ma_devPath', devPath);
         localStorage.setItem('ma_prodPath', prodPath);
         localStorage.setItem('ma_devFile', devPathInput.value);
         localStorage.setItem('ma_prodFile', prodPathInput.value);
     }
+
+    // ===== Fabric Integration =====
+
+    function openFabricModal() {
+        const modal = document.getElementById('fabric-modal');
+        modal.classList.remove('hidden');
+        checkFabricStatus();
+    }
+
+    function closeFabricModal() {
+        document.getElementById('fabric-modal').classList.add('hidden');
+    }
+
+    async function checkFabricStatus() {
+        try {
+            const res = await fetch('/api/fabric/status');
+            const data = await res.json();
+
+            if (data.status === 'connected') {
+                showFabricConnected(data.account);
+            } else if (data.status === 'pending') {
+                showFabricPending();
+            }
+        } catch { /* ignore */ }
+    }
+
+    async function handleFabricLogin() {
+        hideFabricError();
+        showFabricPending();
+
+        try {
+            const res = await fetch('/api/fabric/login', { method: 'POST' });
+            const data = await res.json();
+
+            if (data.status === 'connected') {
+                showFabricConnected(data.account);
+            } else if (data.status === 'pending') {
+                // Login already in progress (browser window is open)
+                pollFabricStatus();
+            } else if (data.error) {
+                showFabricError(data.error);
+                resetFabricModal();
+            }
+        } catch (err) {
+            showFabricError(`Login error: ${err.message}`);
+            resetFabricModal();
+        }
+    }
+
+    function pollFabricStatus() {
+        const interval = setInterval(async () => {
+            try {
+                const res = await fetch('/api/fabric/status');
+                const data = await res.json();
+                if (data.status === 'connected') {
+                    clearInterval(interval);
+                    showFabricConnected(data.account);
+                } else if (data.status === 'disconnected') {
+                    clearInterval(interval);
+                    resetFabricModal();
+                }
+            } catch { /* continue polling */ }
+        }, 2000);
+        // Stop polling after 5 minutes
+        setTimeout(() => clearInterval(interval), 300000);
+    }
+
+    function showFabricPending() {
+        document.getElementById('fabric-auth-form').classList.add('hidden');
+        document.getElementById('fabric-auth-pending').classList.remove('hidden');
+        document.getElementById('fabric-auth-success').classList.add('hidden');
+    }
+
+    function showFabricConnected(account) {
+        fabricConnected = true;
+        const displayName = account?.username || account?.name || 'User';
+        document.getElementById('fabric-auth-form').classList.add('hidden');
+        document.getElementById('fabric-auth-pending').classList.add('hidden');
+        document.getElementById('fabric-auth-success').classList.remove('hidden');
+        document.getElementById('fabric-user-name').textContent = displayName;
+        document.getElementById('fabric-status-dot').className = 'status-dot connected';
+
+        // Show account in header
+        const badge = document.getElementById('fabric-account-badge');
+        badge.textContent = `👤 ${displayName}`;
+        badge.classList.remove('hidden');
+
+        // Show connection string inputs in source tabs
+        enableFabricSelectors();
+    }
+
+    async function handleFabricDisconnect() {
+        try {
+            await fetch('/api/fabric/disconnect', { method: 'POST' });
+        } catch { /* ignore */ }
+
+        fabricConnected = false;
+        devFabricSelection = { workspaceId: null, semanticModelId: null, modelName: null };
+        prodFabricSelection = { workspaceId: null, semanticModelId: null, modelName: null };
+        document.getElementById('fabric-status-dot').className = 'status-dot disconnected';
+        document.getElementById('fabric-account-badge').classList.add('hidden');
+        document.getElementById('fabric-status-dev').textContent = '';
+        document.getElementById('fabric-status-prod').textContent = '';
+        disableFabricSelectors();
+        resetFabricModal();
+        closeFabricModal();
+    }
+
+    function resetFabricModal() {
+        document.getElementById('fabric-auth-form').classList.remove('hidden');
+        document.getElementById('fabric-auth-pending').classList.add('hidden');
+        document.getElementById('fabric-auth-success').classList.add('hidden');
+        hideFabricError();
+    }
+
+    function showFabricError(msg) {
+        const el = document.getElementById('fabric-error');
+        el.textContent = msg;
+        el.classList.remove('hidden');
+    }
+
+    function hideFabricError() {
+        document.getElementById('fabric-error').classList.add('hidden');
+    }
+
+    async function resolveConnectionString(target) {
+        const connStr = document.getElementById(`${target}-conn-string`).value.trim();
+        const statusEl = document.getElementById(`fabric-status-${target}`);
+
+        if (!connStr) {
+            statusEl.textContent = '⚠️ Paste a connection string first.';
+            statusEl.className = 'fabric-resolve-status error';
+            return;
+        }
+
+        statusEl.textContent = 'Verifying...';
+        statusEl.className = 'fabric-resolve-status';
+
+        try {
+            const res = await fetch('/api/fabric/resolve', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ connectionString: connStr })
+            });
+
+            const data = await res.json();
+
+            if (!res.ok) {
+                statusEl.textContent = `✗ ${data.error}`;
+                statusEl.className = 'fabric-resolve-status error';
+                return;
+            }
+
+            // Store resolved IDs for comparison
+            const selection = {
+                workspaceId: data.workspaceId,
+                semanticModelId: data.semanticModelId,
+                modelName: data.modelName,
+                connectionString: connStr
+            };
+
+            if (target === 'dev') {
+                devFabricSelection = selection;
+                document.getElementById('label-dev-file').textContent = `☁️ ${data.modelName}`;
+            } else {
+                prodFabricSelection = selection;
+                document.getElementById('label-prod-file').textContent = `☁️ ${data.modelName}`;
+            }
+
+            statusEl.textContent = `✓ ${data.workspaceName} / ${data.modelName}`;
+            statusEl.className = 'fabric-resolve-status success';
+
+            // Save connection string
+            localStorage.setItem(`ma_fabric_${target}_connStr`, connStr);
+        } catch (err) {
+            statusEl.textContent = `✗ ${err.message}`;
+            statusEl.className = 'fabric-resolve-status error';
+        }
+    }
+
+    function switchSourceTab(target, source) {
+        const tabs = document.querySelectorAll(`.source-tabs[data-target="${target}"] .source-tab`);
+        tabs.forEach(t => t.classList.remove('active'));
+        document.querySelector(`.source-tabs[data-target="${target}"] .source-tab[data-source="${source}"]`).classList.add('active');
+
+        const contents = document.querySelectorAll(`.source-content[data-target="${target}"]`);
+        contents.forEach(c => c.classList.remove('active'));
+        document.querySelector(`.source-content.source-${source}[data-target="${target}"]`).classList.add('active');
+
+        if (target === 'dev') {
+            devSourceMode = source;
+            const labelEl = document.getElementById('label-dev-file');
+            if (source === 'fabric' && devFabricSelection.modelName) {
+                labelEl.textContent = `☁️ ${devFabricSelection.modelName}`;
+            } else if (source === 'local') {
+                const savedFile = localStorage.getItem('ma_devFile');
+                labelEl.textContent = savedFile ? savedFile.split(/[/\\]/).pop() : '—';
+            }
+        } else {
+            prodSourceMode = source;
+            const labelEl = document.getElementById('label-prod-file');
+            if (source === 'fabric' && prodFabricSelection.modelName) {
+                labelEl.textContent = `☁️ ${prodFabricSelection.modelName}`;
+            } else if (source === 'local') {
+                const savedFile = localStorage.getItem('ma_prodFile');
+                labelEl.textContent = savedFile ? savedFile.split(/[/\\]/).pop() : '—';
+            }
+        }
+    }
+
+    function enableFabricSelectors() {
+        const hintDev = document.getElementById('fabric-hint-dev');
+        const hintProd = document.getElementById('fabric-hint-prod');
+        const selectsDev = document.getElementById('fabric-selects-dev');
+        const selectsProd = document.getElementById('fabric-selects-prod');
+
+        if (hintDev) hintDev.classList.add('hidden');
+        if (hintProd) hintProd.classList.add('hidden');
+        if (selectsDev) selectsDev.classList.remove('hidden');
+        if (selectsProd) selectsProd.classList.remove('hidden');
+
+        // Restore saved connection strings
+        const savedDev = localStorage.getItem('ma_fabric_dev_connStr');
+        const savedProd = localStorage.getItem('ma_fabric_prod_connStr');
+        if (savedDev) document.getElementById('dev-conn-string').value = savedDev;
+        if (savedProd) document.getElementById('prod-conn-string').value = savedProd;
+    }
+
+    function disableFabricSelectors() {
+        const hintDev = document.getElementById('fabric-hint-dev');
+        const hintProd = document.getElementById('fabric-hint-prod');
+        const selectsDev = document.getElementById('fabric-selects-dev');
+        const selectsProd = document.getElementById('fabric-selects-prod');
+
+        if (hintDev) hintDev.classList.remove('hidden');
+        if (hintProd) hintProd.classList.remove('hidden');
+        if (selectsDev) selectsDev.classList.add('hidden');
+        if (selectsProd) selectsProd.classList.add('hidden');
+    }
+
+    // Restore saved fabric connection string and username
+    // Check if already connected on page load
+    checkFabricStatus();
+
+    // Close fabric modal on backdrop click
+    document.querySelector('#fabric-modal .modal-backdrop')?.addEventListener('click', closeFabricModal);
 })();

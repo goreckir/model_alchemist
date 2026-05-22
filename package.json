@@ -1,13 +1,14 @@
 {
   "name": "model-alchemist",
-  "version": "2.2.0",
-  "description": "Semantic Model Analysis, Comparison and Deployment Tool (TMDL)",
+  "version": "3.0.0",
+  "description": "Semantic Model Analysis, Comparison and Deployment Tool (TMDL + Fabric XMLA)",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js"
   },
   "dependencies": {
+    "@azure/msal-node": "^2.16.0",
     "express": "^4.21.0"
   }
 }

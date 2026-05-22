@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Model Alchemist v2.0 — Compare & Deploy</title>
+    <title>Model Alchemist v3.0 — Compare & Deploy</title>
     <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
@@ -11,9 +11,14 @@
         <div class="logo">
             <span class="logo-icon">⚗️</span>
             <h1>Model Alchemist</h1>
-            <span class="version">v2.0</span>
+            <span class="version">v3.0</span>
         </div>
         <div class="header-actions">
+            <span id="fabric-account-badge" class="fabric-account-badge hidden"></span>
+            <button id="btn-fabric-connect" class="btn btn-fabric" title="Connect to Microsoft Fabric">
+                <span class="fabric-icon">☁️</span> Fabric
+                <span id="fabric-status-dot" class="status-dot disconnected"></span>
+            </button>
             <button id="btn-new-compare" class="btn btn-secondary hidden">New Comparison</button>
             <button id="btn-refresh" class="btn btn-secondary hidden" title="Refresh comparison">🔄 Refresh</button>
             <button id="btn-deploy" class="btn btn-deploy hidden" disabled>
@@ -28,17 +33,40 @@
         <section id="connection-panel" class="connection-panel">
             <div class="connection-card">
                 <h2>Compare & Deploy Semantic Models</h2>
-                <p class="subtitle">Select .pbip project files to compare DEV and PROD models</p>
+                <p class="subtitle">Select local .pbip files or connect to Microsoft Fabric</p>
                 
                 <div class="connection-form">
                     <div class="form-group">
                         <label>
-                            <span class="badge badge-dev">DEV</span>
-                            Source: <span id="label-dev-file" class="label-filename">—</span>
+                            <span class="badge badge-dev">Source</span>
+                            <span id="label-dev-file" class="label-filename">—</span>
                         </label>
-                        <div class="file-picker-row">
-                            <input type="text" id="dev-path" placeholder="Select .pbip file or paste path..." />
-                            <button id="btn-browse-dev" class="btn btn-secondary btn-browse">Browse...</button>
+                        <div class="source-selector">
+                            <div class="source-tabs" data-target="dev">
+                                <button class="source-tab active" data-source="local">📁 Local</button>
+                                <button class="source-tab" data-source="fabric">☁️ Fabric</button>
+                            </div>
+                            <div class="source-content source-local active" data-target="dev">
+                                <div class="file-picker-row">
+                                    <input type="text" id="dev-path" placeholder="Select .pbip file or paste path..." />
+                                    <button id="btn-browse-dev" class="btn btn-secondary btn-browse">Browse...</button>
+                                </div>
+                            </div>
+                            <div class="source-content source-fabric" data-target="dev">
+                                <div class="fabric-selector" id="fabric-selector-dev">
+                                    <div class="fabric-connect-hint" id="fabric-hint-dev">
+                                        <p>Not connected to Fabric.</p>
+                                        <button class="btn btn-primary btn-fabric-connect-inline" onclick="document.getElementById('btn-fabric-connect').click()">☁️ Sign in to Fabric</button>
+                                    </div>
+                                    <div class="fabric-selects hidden" id="fabric-selects-dev">
+                                        <textarea id="dev-conn-string" class="fabric-conn-input" rows="2" placeholder="Data Source=powerbi://api.powerbi.com/v1.0/myorg/Workspace;Initial Catalog=Model;"></textarea>
+                                        <div class="fabric-resolve-row">
+                                            <button id="btn-resolve-dev" class="btn btn-secondary btn-sm">Verify Access</button>
+                                            <span id="fabric-status-dev" class="fabric-resolve-status"></span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
                     </div>
 
@@ -48,12 +76,35 @@
 
                     <div class="form-group">
                         <label>
-                            <span class="badge badge-prod">PROD</span>
-                            Target: <span id="label-prod-file" class="label-filename">—</span>
+                            <span class="badge badge-prod">Target</span>
+                            <span id="label-prod-file" class="label-filename">—</span>
                         </label>
-                        <div class="file-picker-row">
-                            <input type="text" id="prod-path" placeholder="Select .pbip file or paste path..." />
-                            <button id="btn-browse-prod" class="btn btn-secondary btn-browse">Browse...</button>
+                        <div class="source-selector">
+                            <div class="source-tabs" data-target="prod">
+                                <button class="source-tab active" data-source="local">📁 Local</button>
+                                <button class="source-tab" data-source="fabric">☁️ Fabric</button>
+                            </div>
+                            <div class="source-content source-local active" data-target="prod">
+                                <div class="file-picker-row">
+                                    <input type="text" id="prod-path" placeholder="Select .pbip file or paste path..." />
+                                    <button id="btn-browse-prod" class="btn btn-secondary btn-browse">Browse...</button>
+                                </div>
+                            </div>
+                            <div class="source-content source-fabric" data-target="prod">
+                                <div class="fabric-selector" id="fabric-selector-prod">
+                                    <div class="fabric-connect-hint" id="fabric-hint-prod">
+                                        <p>Not connected to Fabric.</p>
+                                        <button class="btn btn-primary btn-fabric-connect-inline" onclick="document.getElementById('btn-fabric-connect').click()">☁️ Sign in to Fabric</button>
+                                    </div>
+                                    <div class="fabric-selects hidden" id="fabric-selects-prod">
+                                        <textarea id="prod-conn-string" class="fabric-conn-input" rows="2" placeholder="Data Source=powerbi://api.powerbi.com/v1.0/myorg/Workspace;Initial Catalog=Model;"></textarea>
+                                        <div class="fabric-resolve-row">
+                                            <button id="btn-resolve-prod" class="btn btn-secondary btn-sm">Verify Access</button>
+                                            <span id="fabric-status-prod" class="fabric-resolve-status"></span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
                     </div>
 
@@ -117,12 +168,12 @@
                 <div class="diff-container">
                     <div class="diff-header">
                         <div class="diff-header-left">
-                            <span class="badge badge-dev">DEV</span>
-                            <span id="dev-model-name" class="model-name"></span>
+                            <span class="badge badge-dev">Source</span>
+                            <div class="model-info" id="dev-model-name"></div>
                         </div>
                         <div class="diff-header-right">
-                            <span class="badge badge-prod">PROD</span>
-                            <span id="prod-model-name" class="model-name"></span>
+                            <span class="badge badge-prod">Target</span>
+                            <div class="model-info" id="prod-model-name"></div>
                         </div>
                     </div>
                     <div class="diff-content" id="diff-content"></div>
@@ -170,6 +221,47 @@
                 </div>
                 <div class="modal-footer">
                     <button id="btn-result-ok" class="btn btn-primary">OK</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Fabric Connection Modal -->
+        <div id="fabric-modal" class="modal hidden">
+            <div class="modal-backdrop"></div>
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2>☁️ Connect to Microsoft Fabric</h2>
+                    <button id="fabric-modal-close" class="btn-close">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <div id="fabric-auth-form">
+                        <p class="fabric-auth-info">
+                            Click the button below to sign in via your browser.<br>
+                            <strong>No credentials are stored by this application</strong> — authentication
+                            happens entirely through Microsoft's secure login page.
+                        </p>
+                        <div id="fabric-error" class="fabric-error hidden"></div>
+                        <button id="btn-fabric-login" class="btn btn-primary btn-microsoft">
+                            <svg width="16" height="16" viewBox="0 0 21 21" style="vertical-align:middle;margin-right:8px"><rect x="1" y="1" width="9" height="9" fill="#f25022"/><rect x="11" y="1" width="9" height="9" fill="#7fba00"/><rect x="1" y="11" width="9" height="9" fill="#00a4ef"/><rect x="11" y="11" width="9" height="9" fill="#ffb900"/></svg>
+                            Sign in with Microsoft
+                        </button>
+                        <p class="fabric-security-note">🔒 Your password never passes through this app.</p>
+                    </div>
+                    <div id="fabric-auth-pending" class="hidden">
+                        <div class="fabric-pending-box">
+                            <div class="spinner-small"></div>
+                            <p>Waiting for browser login to complete...</p>
+                            <p class="fabric-auth-info">Complete the sign-in in the browser window that was opened.</p>
+                        </div>
+                    </div>
+                    <div id="fabric-auth-success" class="hidden">
+                        <div class="fabric-connected-box">
+                            <span class="fabric-connected-icon">✓</span>
+                            <p>Signed in as <strong id="fabric-user-name"></strong></p>
+                            <p class="fabric-security-note">🔒 No credentials stored. Only a session token is held in memory.</p>
+                            <button id="btn-fabric-disconnect" class="btn btn-secondary">Sign out</button>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
