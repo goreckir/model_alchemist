@@ -1,5 +1,39 @@
 # Model Alchemist — Release Notes
 
+## v3.1.0
+
+### Improvements
+- **Reliable file picker in Chrome** — Rewrote PowerShell file dialog to use Win32 `SetForegroundWindow` API for forced focus activation. The dialog now always appears on top regardless of which browser/window is active.
+- **Model info display** — Comparison header now shows the original `.pbip` filename and its directory path (instead of the resolved `definition/` folder).
+- **Source/Target labels** — Renamed "DEV"/"PROD" badges to "Source"/"Target" with neutral white styling for clearer terminology.
+- **Consistent icons** — 📁 for local models, ☁️ for Fabric models in the comparison header.
+
+---
+
+## v3.0.0
+
+### New Features
+- **Microsoft Fabric connectivity** — Compare and deploy semantic models directly from Microsoft Fabric workspaces via REST API. No local files required.
+- **OAuth browser-based authentication** — Secure sign-in via Microsoft login page (MSAL + PKCE). No credentials are stored — only a session token in memory.
+- **Independent DEV/PROD sources** — Each side (DEV and PROD) can independently use a local `.pbip` file or a Fabric connection string. Mix-and-match freely.
+- **Connection string inputs** — Paste a Power BI connection string (`Data Source=powerbi://...;Initial Catalog=...;`) and click "Verify Access" to resolve workspace/model.
+- **Deploy to Fabric** — Selected changes are applied and uploaded back to the target Fabric semantic model via `updateDefinition` API.
+- **Refresh for Fabric models** — The Refresh button now re-fetches and re-compares Fabric models (not just local files).
+
+### Improvements
+- **No Python dependency** — File picker now uses PowerShell `System.Windows.Forms.OpenFileDialog` instead of Python/tkinter. Zero external runtime dependencies on Windows.
+- **Fabric long-running operations** — Proper polling of Fabric API async operations with status checks (`Running`/`Succeeded`/`Failed`) and `/result` endpoint fallback.
+- **Cache-busting headers** — Static files served with `no-store` to prevent stale UI after updates.
+- **Connection string parser** — New module to parse Power BI connection strings into workspace/model identifiers.
+
+### Architecture
+- `fabric/auth.js` — MSAL interactive login with system browser, token caching in memory.
+- `fabric/api-client.js` — Fabric REST API client (list workspaces, list models, get/update definition).
+- `fabric/model-loader.js` — Converts Fabric TMDL definition into the same format as local models.
+- `fabric/connection-parser.js` — Parses `Data Source` + `Initial Catalog` from connection strings.
+
+---
+
 ## v2.2.0
 
 ### New Features
