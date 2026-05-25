@@ -21,6 +21,16 @@
             </button>
             <button id="btn-new-compare" class="btn btn-secondary hidden">New Comparison</button>
             <button id="btn-refresh" class="btn btn-secondary hidden" title="Refresh comparison">🔄 Refresh</button>
+            <div class="export-dropdown hidden" id="export-dropdown">
+                <button id="btn-export" class="btn btn-secondary" title="Export differences">
+                    📥 Export
+                </button>
+                <div class="export-menu" id="export-menu">
+                    <button class="export-option" data-format="csv">CSV</button>
+                    <button class="export-option" data-format="markdown">Markdown</button>
+                    <button class="export-option" data-format="html">HTML Report</button>
+                </div>
+            </div>
             <button id="btn-deploy" class="btn btn-deploy hidden" disabled>
                 <span class="deploy-icon">🚀</span>
                 Deploy Selected (<span id="deploy-count">0</span>)
@@ -196,6 +206,10 @@
                             <input type="checkbox" id="opt-backup" checked />
                             Create backup before deployment
                         </label>
+                        <div id="backup-path-row" class="backup-path-row hidden" style="margin-top: 8px; display: flex; align-items: center; gap: 8px;">
+                            <label for="backup-path" style="font-size: 13px; white-space: nowrap;">Backup folder:</label>
+                            <input type="text" id="backup-path" placeholder="Enter backup destination path..." style="flex: 1; padding: 4px 8px; border: 1px solid var(--color-border); border-radius: 4px; font-size: 13px; background: var(--color-bg-input); color: var(--color-text);" />
+                        </div>
                     </div>
                     <div id="deploy-preview" class="deploy-preview"></div>
                 </div>
@@ -252,6 +266,7 @@
                             <div class="spinner-small"></div>
                             <p>Waiting for browser login to complete...</p>
                             <p class="fabric-auth-info">Complete the sign-in in the browser window that was opened.</p>
+                            <button id="btn-fabric-cancel-login" class="btn btn-secondary">Cancel</button>
                         </div>
                     </div>
                     <div id="fabric-auth-success" class="hidden">

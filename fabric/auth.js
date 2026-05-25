@@ -17,6 +17,7 @@ let currentAccount = null;
 let cachedAccessToken = null;
 let loginInProgress = false;
 let loginPromise = null;
+let loginAbortController = null;
 
 /**
  * Open URL in system browser.
@@ -51,27 +52,35 @@ async function loginInteractive(clientId) {
 
     initMsal(clientId);
     loginInProgress = true;
+    loginAbortController = new AbortController();
 
     loginPromise = (async () => {
         try {
-            const result = await msalInstance.acquireTokenInteractive({
-                scopes: FABRIC_SCOPES,
-                openBrowser: async (url) => {
-                    openBrowser(url);
-                },
-                successTemplate: `
-                    <html><body style="font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;background:#1a1a2e;color:#eee;">
-                    <div style="text-align:center">
-                        <h1 style="color:#4cc9f0">✓ Login successful</h1>
-                        <p>You can close this window and return to Model Alchemist.</p>
-                    </div></body></html>`,
-                errorTemplate: `
-                    <html><body style="font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;background:#1a1a2e;color:#eee;">
-                    <div style="text-align:center">
-                        <h1 style="color:#ff6b6b">✗ Login failed</h1>
-                        <p>{{error}}</p>
-                    </div></body></html>`
-            });
+            const result = await Promise.race([
+                msalInstance.acquireTokenInteractive({
+                    scopes: FABRIC_SCOPES,
+                    openBrowser: async (url) => {
+                        openBrowser(url);
+                    },
+                    successTemplate: `
+                        <html><head><meta charset="utf-8"></head><body style="font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;background:#1a1a2e;color:#eee;">
+                        <div style="text-align:center">
+                            <h1 style="color:#4cc9f0">🧙 The gates of knowledge are open</h1>
+                            <p>You can close this window and return to Model Alchemist.</p>
+                        </div></body></html>`,
+                    errorTemplate: `
+                        <html><head><meta charset="utf-8"></head><body style="font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;background:#1a1a2e;color:#eee;">
+                        <div style="text-align:center">
+                            <h1 style="color:#ff6b6b">✗ Login failed</h1>
+                            <p>{{error}}</p>
+                        </div></body></html>`
+                }),
+                new Promise((_, reject) => {
+                    loginAbortController.signal.addEventListener('abort', () => {
+                        reject(new Error('Login cancelled by user.'));
+                    });
+                })
+            ]);
 
             currentAccount = result.account;
             cachedAccessToken = result.accessToken;
@@ -79,10 +88,20 @@ async function loginInteractive(clientId) {
         } finally {
             loginInProgress = false;
             loginPromise = null;
+            loginAbortController = null;
         }
     })();
 
     return loginPromise;
+}
+
+/**
+ * Cancel an in-progress login attempt.
+ */
+function cancelLogin() {
+    if (loginInProgress && loginAbortController) {
+        loginAbortController.abort();
+    }
 }
 
 /**
@@ -150,6 +169,7 @@ function logout() {
 
 module.exports = {
     loginInteractive,
+    cancelLogin,
     acquireTokenSilent,
     getAccessToken,
     isAuthenticated,
