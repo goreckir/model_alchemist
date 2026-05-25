@@ -4,7 +4,6 @@
  */
 
 const CHANGE_GROUPS = {
-    POWER_QUERY: 'Power Query',
     TABLES: 'Tables',
     COLUMNS: 'Columns',
     MEASURES: 'Measures',
@@ -172,20 +171,20 @@ function extractHierarchy(tableName, hier, sourceFile, objects) {
 
 function extractPartition(tableName, partition, sourceFile, objects) {
     const key = `partition:${tableName}.${partition.name}`;
-    const expression = partition.expression || '';
+    const partitionType = partition.expression || '';
+    const sourceExpression = partition.properties.source || '';
     const props = {
         mode: partition.properties.mode || 'import',
-        type: partition.properties.type || '',
-        expression
+        type: partitionType,
+        expression: sourceExpression
     };
-    const isM = partition.properties.type === 'm' || expression.includes('let') || expression.includes('Source');
 
     objects[key] = {
         objectType: 'partition',
         identityKey: key,
         displayName: `${tableName}.${partition.name}`,
         parentTable: tableName,
-        changeGroup: isM ? CHANGE_GROUPS.POWER_QUERY : CHANGE_GROUPS.TABLES,
+        changeGroup: CHANGE_GROUPS.TABLES,
         sourceFile,
         rawBlock: partition.rawBlock,
         properties: props

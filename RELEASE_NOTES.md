@@ -1,5 +1,25 @@
 # Model Alchemist — Release Notes
 
+## v3.5.0
+
+### New Features
+- **Export comparison report** — New "Export" dropdown in the header allows exporting all detected differences to CSV, Markdown, or HTML format.
+  - **CSV** — flat table with all diffs and property values for further analysis in Excel.
+  - **Markdown** — structured report with summary table, side-by-side property tables for simple values, and fenced code blocks for expressions/Power Query.
+  - **HTML** — dark-themed standalone page with side-by-side code comparison (syntax-highlighted) and collapsible sections.
+- **Cancel Fabric login** — A cancel button appears during Fabric authentication, allowing users to abort the browser login flow without restarting the app.
+
+### Improvements
+- **Fabric login message** — Success page now shows "🧙 The gates of knowledge are open" with UTF-8 encoding.
+- **Deploy result display** — Backup actions are no longer shown in the deploy success summary (previously displayed as "✓ []").
+- **Markdown export quality** — Expression/source properties render as labeled code blocks; simple properties (dataType, isHidden, etc.) render in compact side-by-side tables. Redundant TMDL code fences are automatically stripped.
+
+### Bug Fixes
+- **UTF-8 in auth pages** — Added `<meta charset="utf-8">` to MSAL success/error HTML templates to fix garbled characters.
+- **Double code fence** — Fixed Markdown export producing ```` ``` ```` on consecutive lines when TMDL values already contained fence markers.
+
+---
+
 ## v3.1.0
 
 ### Improvements

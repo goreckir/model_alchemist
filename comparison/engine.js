@@ -3,7 +3,7 @@
  * Enhanced: each diff carries sourceFile and rawBlock info for deployment.
  */
 
-const { extractAll } = require('./extractor');
+const { extractAll, CHANGE_GROUPS } = require('./extractor');
 
 function compareModels(devModel, prodModel, devPath, prodPath) {
     const devObjects = extractAll(devModel);
@@ -75,6 +75,9 @@ function compareModels(devModel, prodModel, devPath, prodPath) {
     }
 
     const summary = {};
+    for (const group of Object.values(CHANGE_GROUPS)) {
+        summary[group] = 0;
+    }
     for (const diff of diffs) {
         summary[diff.changeGroup] = (summary[diff.changeGroup] || 0) + 1;
     }

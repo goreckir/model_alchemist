@@ -73,7 +73,7 @@ app.post('/api/compare', (req, res) => {
 
 // API: Deploy selected changes to PROD
 app.post('/api/deploy', async (req, res) => {
-    const { selectedKeys, dryRun = false, backup = true } = req.body;
+    const { selectedKeys, dryRun = false, backup = true, backupPath } = req.body;
 
     if (!selectedKeys || !selectedKeys.length) {
         return res.status(400).json({ error: 'No changes selected for deployment.' });
@@ -99,7 +99,7 @@ app.post('/api/deploy', async (req, res) => {
             res.json(result);
         } else {
             // Fabric deployment — apply changes via temp dir, then upload
-            const result = await deployToFabric(selectedDiffs, lastDevModel, lastProdModel, lastProdFabricInfo, { dryRun });
+            const result = await deployToFabric(selectedDiffs, lastDevModel, lastProdModel, lastProdFabricInfo, { dryRun, backup, backupPath });
             res.json(result);
         }
     } catch (err) {
@@ -139,12 +139,32 @@ app.post('/api/deploy/preview', async (req, res) => {
  * Strategy: write PROD rawFiles to temp dir, run deployer, read back, upload to Fabric.
  */
 async function deployToFabric(selectedDiffs, devModel, prodModel, fabricInfo, options = {}) {
-    const { dryRun = false } = options;
+    const { dryRun = false, backup = false, backupPath } = options;
     const os = require('os');
     const tmpDir = path.join(os.tmpdir(), `model-alchemist-deploy-${Date.now()}`);
     const result = { success: true, actions: [], errors: [], backupPath: null };
 
     try {
+        // Create backup if requested and backupPath is provided
+        if (backup && backupPath && !dryRun) {
+            const modelName = prodModel.name || 'SemanticModel';
+            const semanticModelFolder = `${modelName}.SemanticModel`;
+            const timestamp = new Date().toISOString().replace(/[:.]/g, '-').substring(0, 19);
+            const backupDestination = path.join(backupPath, `${semanticModelFolder}_backup_${timestamp}`);
+
+            // Write PROD rawFiles as backup
+            fs.mkdirSync(backupDestination, { recursive: true });
+            const defDir = path.join(backupDestination, 'definition');
+            fs.mkdirSync(defDir, { recursive: true });
+            for (const [filePath, content] of Object.entries(prodModel.rawFiles)) {
+                const fullPath = path.join(defDir, filePath);
+                fs.mkdirSync(path.dirname(fullPath), { recursive: true });
+                fs.writeFileSync(fullPath, content, 'utf-8');
+            }
+            result.backupPath = backupDestination;
+            result.actions.push({ type: 'backup', message: `Backup created: ${backupDestination}` });
+        }
+
         // Write PROD rawFiles to temp directory
         fs.mkdirSync(tmpDir, { recursive: true });
         for (const [filePath, content] of Object.entries(prodModel.rawFiles)) {
@@ -317,6 +337,12 @@ app.get('/api/fabric/status', async (req, res) => {
         }
     }
     res.json({ status: 'disconnected' });
+});
+
+// API: Cancel in-progress login
+app.post('/api/fabric/cancel-login', (req, res) => {
+    fabricAuth.cancelLogin();
+    res.json({ status: 'cancelled' });
 });
 
 // API: Disconnect from Fabric

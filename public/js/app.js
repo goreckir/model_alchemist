@@ -26,6 +26,9 @@
     const btnCompare = document.getElementById('btn-compare');
     const btnNewCompare = document.getElementById('btn-new-compare');
     const btnRefresh = document.getElementById('btn-refresh');
+    const exportDropdown = document.getElementById('export-dropdown');
+    const btnExport = document.getElementById('btn-export');
+    const exportMenu = document.getElementById('export-menu');
     const btnDeploy = document.getElementById('btn-deploy');
     const deployCount = document.getElementById('deploy-count');
     const errorMessage = document.getElementById('error-message');
@@ -63,6 +66,17 @@
     document.getElementById('btn-expand-all').addEventListener('click', expandAll);
     document.getElementById('btn-collapse-all').addEventListener('click', collapseAll);
 
+    // Export dropdown
+    btnExport.addEventListener('click', (e) => {
+        e.stopPropagation();
+        exportMenu.classList.toggle('open');
+    });
+    document.addEventListener('click', () => exportMenu.classList.remove('open'));
+    exportMenu.addEventListener('click', (e) => {
+        const format = e.target.dataset.format;
+        if (format) { exportDiffs(format); exportMenu.classList.remove('open'); }
+    });
+
     // File browser event listeners
     document.getElementById('btn-browse-dev').addEventListener('click', () => pickFile('dev'));
     document.getElementById('btn-browse-prod').addEventListener('click', () => pickFile('prod'));
@@ -76,6 +90,7 @@
     document.getElementById('btn-fabric-connect').addEventListener('click', openFabricModal);
     document.getElementById('fabric-modal-close').addEventListener('click', closeFabricModal);
     document.getElementById('btn-fabric-login').addEventListener('click', handleFabricLogin);
+    document.getElementById('btn-fabric-cancel-login').addEventListener('click', handleFabricCancelLogin);
     document.getElementById('btn-fabric-disconnect').addEventListener('click', handleFabricDisconnect);
     document.getElementById('btn-resolve-dev').addEventListener('click', () => resolveConnectionString('dev'));
     document.getElementById('btn-resolve-prod').addEventListener('click', () => resolveConnectionString('prod'));
@@ -239,6 +254,7 @@
         resultsPanel.classList.add('hidden');
         btnNewCompare.classList.add('hidden');
         btnRefresh.classList.add('hidden');
+        exportDropdown.classList.add('hidden');
         btnDeploy.classList.add('hidden');
         document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
         document.querySelector('.filter-btn[data-filter="all"]').classList.add('active');
@@ -250,6 +266,7 @@
         resultsPanel.classList.remove('hidden');
         btnNewCompare.classList.remove('hidden');
         btnRefresh.classList.remove('hidden');
+        exportDropdown.classList.remove('hidden');
         btnDeploy.classList.remove('hidden');
 
         setModelInfo(devModelName, comparisonResult.devSource, devPathInput.value);
@@ -301,11 +318,8 @@
         });
         groupList.appendChild(allItem);
 
-        const groups = {};
-        (comparisonResult.diffs || []).forEach(d => {
-            const g = d.changeGroup || 'Other';
-            groups[g] = (groups[g] || 0) + 1;
-        });
+        // Use summary from backend (includes all groups, even with zero count)
+        const groups = comparisonResult.summary || {};
 
         Object.entries(groups)
             .sort((a, b) => b[1] - a[1])
@@ -544,6 +558,11 @@
         const removed = selectedDiffs.filter(d => d.type === 1).length;
         const modified = selectedDiffs.filter(d => d.type === 2).length;
 
+        // Determine target label
+        const targetLabel = prodSourceMode === 'fabric' && prodFabricSelection.modelName
+            ? `☁️ Fabric: ${prodFabricSelection.modelName}`
+            : prodPathInput.value;
+
         deploySummary.innerHTML = `
             <p>Deploying <span class="count-highlight">${selectedDiffs.length}</span> changes to PROD:</p>
             <p style="margin-left: 16px;">
@@ -552,9 +571,15 @@
                 ${modified ? `<span class="badge-count badge-modified">${modified} to modify</span> ` : ''}
             </p>
             <p style="margin-top: 8px; font-size: 13px; color: var(--color-text-dim);">
-                Target: <code>${escapeHtml(prodPathInput.value)}</code>
+                Target: <code>${escapeHtml(targetLabel)}</code>
             </p>
         `;
+
+        // Show/hide backup path input based on source mode
+        const backupPathRow = document.getElementById('backup-path-row');
+        if (backupPathRow) {
+            backupPathRow.classList.toggle('hidden', prodSourceMode === 'local');
+        }
 
         // Get preview
         try {
@@ -589,14 +614,20 @@
         showAlchemistAnimation();
 
         try {
+            const backupPathInput = document.getElementById('backup-path');
+            const payload = {
+                selectedKeys: [...selectedKeys],
+                dryRun: false,
+                backup: optBackup.checked
+            };
+            if (prodSourceMode === 'fabric' && optBackup.checked && backupPathInput && backupPathInput.value.trim()) {
+                payload.backupPath = backupPathInput.value.trim();
+            }
+
             const response = await fetch('/api/deploy', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    selectedKeys: [...selectedKeys],
-                    dryRun: false,
-                    backup: optBackup.checked
-                })
+                body: JSON.stringify(payload)
             });
 
             const result = await response.json();
@@ -656,12 +687,15 @@
         }
 
         if (result.actions && result.actions.length > 0) {
-            html += `<p style="font-weight: 600; margin-bottom: 8px;">${result.actions.length} operations executed:</p>`;
-            html += '<div class="result-actions">';
-            for (const action of result.actions) {
-                html += `<div class="result-action-item">✓ ${escapeHtml(action.action || '')} [${escapeHtml(action.objectType || '')}] ${escapeHtml(action.name || '')}</div>`;
+            const deployActions = result.actions.filter(a => a.type !== 'backup');
+            if (deployActions.length > 0) {
+                html += `<p style="font-weight: 600; margin-bottom: 8px;">${deployActions.length} operations executed:</p>`;
+                html += '<div class="result-actions">';
+                for (const action of deployActions) {
+                    html += `<div class="result-action-item">✓ ${escapeHtml(action.action || '')} [${escapeHtml(action.objectType || '')}] ${escapeHtml(action.name || '')}</div>`;
+                }
+                html += '</div>';
             }
-            html += '</div>';
         }
 
         if (result.errors && result.errors.length > 0) {
@@ -908,6 +942,13 @@
         setTimeout(() => clearInterval(interval), 300000);
     }
 
+    async function handleFabricCancelLogin() {
+        try {
+            await fetch('/api/fabric/cancel-login', { method: 'POST' });
+        } catch { /* ignore */ }
+        resetFabricModal();
+    }
+
     function showFabricPending() {
         document.getElementById('fabric-auth-form').classList.add('hidden');
         document.getElementById('fabric-auth-pending').classList.remove('hidden');
@@ -1087,4 +1128,204 @@
 
     // Close fabric modal on backdrop click
     document.querySelector('#fabric-modal .modal-backdrop')?.addEventListener('click', closeFabricModal);
+
+    // ===== Export Functions =====
+
+    function exportDiffs(format) {
+        if (!comparisonResult || !comparisonResult.diffs) return;
+
+        const diffs = comparisonResult.diffs;
+        const typeNames = { 0: 'Added', 1: 'Removed', 2: 'Modified' };
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+        const devSource = comparisonResult.devSource || 'DEV';
+        const prodSource = comparisonResult.prodSource || 'PROD';
+        const modelName = (comparisonResult.devModelName || comparisonResult.prodModelName || 'Model').replace(/[^a-zA-Z0-9_\-]/g, '_');
+
+        let content, filename, mimeType;
+
+        if (format === 'csv') {
+            // Part 1: Summary
+            const rows = [['=== SUMMARY ==='], ['Group', 'Change Type', 'Object Type', 'Name']];
+            for (const d of diffs) {
+                rows.push([
+                    d.changeGroup || '',
+                    typeNames[d.type] || '',
+                    d.objectType || '',
+                    d.displayName || ''
+                ]);
+            }
+            // Part 2: Details
+            rows.push([]);
+            rows.push(['=== DETAILS ===']);
+            rows.push(['Object', 'Change Type', 'Property', 'DEV Value', 'PROD Value']);
+            for (const d of diffs) {
+                const props = d.propertyDiffs || [];
+                if (props.length === 0) {
+                    rows.push([d.displayName || '', typeNames[d.type], '', '', '']);
+                } else {
+                    for (const p of props) {
+                        rows.push([
+                            d.displayName || '',
+                            typeNames[d.type],
+                            p.propertyName || '',
+                            formatExportValue(p.devValue),
+                            formatExportValue(p.prodValue)
+                        ]);
+                    }
+                }
+            }
+            content = rows.map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n');
+            filename = `${modelName}_diff_${timestamp}.csv`;
+            mimeType = 'text/csv;charset=utf-8;';
+        } else if (format === 'markdown') {
+            // Part 1: Summary
+            let md = `# Model Comparison Report: ${modelName}\n\n`;
+            md += `**Date:** ${new Date().toLocaleString()}\n\n`;
+            md += `**DEV:** ${devSource}\n\n`;
+            md += `**PROD:** ${prodSource}\n\n`;
+            md += `**Total differences:** ${diffs.length}\n\n`;
+            md += `## Summary\n\n`;
+            md += `| # | Group | Type | Object | Name |\n`;
+            md += `|---|-------|------|--------|------|\n`;
+            diffs.forEach((d, i) => {
+                md += `| ${i + 1} | ${d.changeGroup || ''} | ${typeNames[d.type]} | ${d.objectType || ''} | ${d.displayName || ''} |\n`;
+            });
+            // Part 2: Details
+            md += `\n---\n\n## Details\n\n`;
+            for (const d of diffs) {
+                md += `### ${typeNames[d.type]}: [${d.objectType}] ${d.displayName}\n\n`;
+                const props = d.propertyDiffs || [];
+                if (props.length === 0) {
+                    md += `_No property details_\n\n`;
+                } else {
+                    // Separate code properties (expression) from simple properties
+                    const codeProps = props.filter(p => p.propertyName === 'expression' || p.propertyName === 'source');
+                    const simpleProps = props.filter(p => p.propertyName !== 'expression' && p.propertyName !== 'source');
+
+                    // Simple properties as side-by-side table
+                    if (simpleProps.length > 0) {
+                        md += `| Property | Source (DEV) | Target (PROD) |\n`;
+                        md += `|----------|-------------|---------------|\n`;
+                        for (const p of simpleProps) {
+                            const devStr = p.devValue != null ? String(p.devValue).replace(/\|/g, '\\|') : '\u2014';
+                            const prodStr = p.prodValue != null ? String(p.prodValue).replace(/\|/g, '\\|') : '\u2014';
+                            md += `| ${p.propertyName} | ${devStr} | ${prodStr} |\n`;
+                        }
+                        md += `\n`;
+                    }
+
+                    // Code properties as fenced code blocks
+                    const stripFence = (v) => String(v).replace(/^[\n\r]*```\n?/, '').replace(/\n?```[\n\r]*$/, '').replace(/^\n+/, '');
+                    for (const p of codeProps) {
+                        md += `**${p.propertyName}**\n\n`;
+                        if (p.devValue != null) {
+                            md += `Source (DEV):\n\`\`\`\n${stripFence(p.devValue)}\n\`\`\`\n\n`;
+                        }
+                        if (p.prodValue != null) {
+                            md += `Target (PROD):\n\`\`\`\n${stripFence(p.prodValue)}\n\`\`\`\n\n`;
+                        }
+                    }
+                }
+            }
+            content = md;
+            filename = `${modelName}_diff_${timestamp}.md`;
+            mimeType = 'text/markdown;charset=utf-8;';
+        } else if (format === 'html') {
+            let html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Model Comparison: ${escapeHtml(modelName)}</title>
+<style>
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 1400px; margin: 0 auto; padding: 24px; background: #1a1a2e; color: #e0e0e0; }
+h1 { color: #4cc9f0; }
+h2 { color: #a0a0d0; margin-top: 40px; border-bottom: 1px solid #333; padding-bottom: 8px; }
+h3 { color: #ccc; margin-top: 24px; }
+table { width: 100%; border-collapse: collapse; margin-top: 16px; }
+th { background: #2a2a4e; padding: 10px 12px; text-align: left; border-bottom: 2px solid #4cc9f0; }
+td { padding: 8px 12px; border-bottom: 1px solid #333; }
+tr:hover { background: #2a2a3e; }
+.badge { padding: 2px 8px; border-radius: 4px; font-size: 12px; font-weight: 600; }
+.badge-added { background: rgba(80,200,120,0.2); color: #50c878; }
+.badge-removed { background: rgba(255,100,100,0.2); color: #ff6464; }
+.badge-modified { background: rgba(255,200,50,0.2); color: #ffc832; }
+.summary { display: flex; gap: 16px; margin: 16px 0; }
+.summary span { padding: 4px 12px; border-radius: 4px; }
+.detail-item { margin: 20px 0; padding: 16px; background: #222244; border-radius: 8px; border-left: 4px solid #4cc9f0; }
+.detail-item.added { border-left-color: #50c878; }
+.detail-item.removed { border-left-color: #ff6464; }
+.detail-item.modified { border-left-color: #ffc832; }
+.prop-name { font-weight: 600; color: #4cc9f0; margin-top: 12px; margin-bottom: 4px; }
+.prop-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 8px; }
+.prop-col { min-width: 0; }
+.prop-col-header { font-size: 11px; text-transform: uppercase; color: #888; margin-bottom: 4px; font-weight: 600; }
+.prop-value { background: #1a1a3e; padding: 8px 12px; border-radius: 4px; font-family: 'Cascadia Code', 'Fira Code', monospace; font-size: 12px; white-space: pre-wrap; word-break: break-all; overflow-x: auto; min-height: 32px; }
+.prop-value.source { border-left: 3px solid #50c878; }
+.prop-value.target { border-left: 3px solid #ff6464; }
+.prop-value.empty { color: #555; font-style: italic; }
+.label { font-size: 11px; text-transform: uppercase; color: #888; margin-top: 8px; }
+</style></head><body>
+<h1>Model Comparison: ${escapeHtml(modelName)}</h1>
+<p><strong>Date:</strong> ${new Date().toLocaleString()}</p>
+<p><strong>DEV:</strong> ${escapeHtml(devSource)}</p>
+<p><strong>PROD:</strong> ${escapeHtml(prodSource)}</p>
+<div class="summary">
+<span class="badge badge-added">${diffs.filter(d => d.type === 0).length} Added</span>
+<span class="badge badge-removed">${diffs.filter(d => d.type === 1).length} Removed</span>
+<span class="badge badge-modified">${diffs.filter(d => d.type === 2).length} Modified</span>
+</div>
+
+<h2>Summary</h2>
+<table><thead><tr><th>#</th><th>Group</th><th>Type</th><th>Object</th><th>Name</th></tr></thead><tbody>`;
+            diffs.forEach((d, i) => {
+                const cls = d.type === 0 ? 'added' : d.type === 1 ? 'removed' : 'modified';
+                html += `<tr><td>${i + 1}</td><td>${escapeHtml(d.changeGroup || '')}</td><td><span class="badge badge-${cls}">${typeNames[d.type]}</span></td><td>${escapeHtml(d.objectType || '')}</td><td>${escapeHtml(d.displayName || '')}</td></tr>`;
+            });
+            html += `</tbody></table>
+
+<h2>Details</h2>`;
+            for (const d of diffs) {
+                const cls = d.type === 0 ? 'added' : d.type === 1 ? 'removed' : 'modified';
+                html += `<div class="detail-item ${cls}">`;
+                html += `<h3><span class="badge badge-${cls}">${typeNames[d.type]}</span> [${escapeHtml(d.objectType)}] ${escapeHtml(d.displayName)}</h3>`;
+                const props = d.propertyDiffs || [];
+                if (props.length === 0) {
+                    html += `<p style="color:#888;">No property details</p>`;
+                } else {
+                    for (const p of props) {
+                        html += `<div class="prop-name">${escapeHtml(p.propertyName)}</div>`;
+                        html += `<div class="prop-row">`;
+                        html += `<div class="prop-col"><div class="prop-col-header">Source (DEV)</div>`;
+                        html += p.devValue != null
+                            ? `<div class="prop-value source">${escapeHtml(String(p.devValue))}</div>`
+                            : `<div class="prop-value empty">—</div>`;
+                        html += `</div>`;
+                        html += `<div class="prop-col"><div class="prop-col-header">Target (PROD)</div>`;
+                        html += p.prodValue != null
+                            ? `<div class="prop-value target">${escapeHtml(String(p.prodValue))}</div>`
+                            : `<div class="prop-value empty">—</div>`;
+                        html += `</div>`;
+                        html += `</div>`;
+                    }
+                }
+                html += `</div>`;
+            }
+            html += `</body></html>`;
+            content = html;
+            filename = `${modelName}_diff_${timestamp}.html`;
+            mimeType = 'text/html;charset=utf-8;';
+        }
+
+        // Trigger download
+        const blob = new Blob([content], { type: mimeType });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    }
+
+    function formatExportValue(val) {
+        if (val == null) return '';
+        return String(val).replace(/\r?\n/g, ' ↵ ');
+    }
 })();
