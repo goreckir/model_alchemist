@@ -4,10 +4,8 @@
  */
 
 const CHANGE_GROUPS = {
-    TABLES: 'Tables',
-    COLUMNS: 'Columns',
+    TABLES: 'Tables & Relationships',
     MEASURES: 'Measures',
-    RELATIONSHIPS: 'Relationships',
     ROLES: 'Roles & Row-Level Security',
     CALCULATION_GROUPS: 'Calculation Groups',
     HIERARCHIES: 'Hierarchies',
@@ -15,7 +13,8 @@ const CHANGE_GROUPS = {
     TRANSLATIONS: 'Translations',
     DATA_SOURCES: 'Data Sources & Parameters',
     MODEL_PROPERTIES: 'Model Properties',
-    NAMED_EXPRESSIONS: 'Named Expressions'
+    NAMED_EXPRESSIONS: 'Named Expressions',
+    FUNCTIONS: 'Functions'
 };
 
 /**
@@ -46,6 +45,9 @@ function extractAll(model) {
     for (const ds of model.dataSources) {
         if (ds.type === 'datasource') extractDataSource(ds, objects);
     }
+    for (const func of (model.functions || [])) {
+        if (func.type === 'function') extractFunction(func, objects);
+    }
     if (model.modelConfig && model.modelConfig.length > 0) {
         extractModelProperties(model.modelConfig[0], objects);
     }
@@ -57,11 +59,14 @@ function extractTable(table, objects) {
     const tableName = table.name;
     const key = `table:${tableName}`;
 
+    // If table has a calculationGroup child, classify it as Calculation Group
+    const hasCalcGroup = table.children.some(c => c.type === 'calculationgroup');
+
     objects[key] = {
         objectType: 'table',
         identityKey: key,
         displayName: tableName,
-        changeGroup: CHANGE_GROUPS.TABLES,
+        changeGroup: hasCalcGroup ? CHANGE_GROUPS.CALCULATION_GROUPS : CHANGE_GROUPS.TABLES,
         sourceFile: table.file,
         rawBlock: table.rawBlock,
         properties: {
@@ -73,7 +78,7 @@ function extractTable(table, objects) {
 
     for (const child of table.children) {
         switch (child.type) {
-            case 'column': extractColumn(tableName, child, table.file, objects); break;
+            case 'column': extractColumn(tableName, child, table.file, objects, hasCalcGroup); break;
             case 'measure': extractMeasure(tableName, child, table.file, objects); break;
             case 'hierarchy': extractHierarchy(tableName, child, table.file, objects); break;
             case 'partition': extractPartition(tableName, child, table.file, objects); break;
@@ -82,7 +87,7 @@ function extractTable(table, objects) {
     }
 }
 
-function extractColumn(tableName, col, sourceFile, objects) {
+function extractColumn(tableName, col, sourceFile, objects, isCalcGroupTable) {
     const key = `column:${tableName}.${col.name}`;
     const props = {
         dataType: col.properties.dataType || '',
@@ -105,7 +110,7 @@ function extractColumn(tableName, col, sourceFile, objects) {
         identityKey: key,
         displayName: `${tableName}.${col.name}`,
         parentTable: tableName,
-        changeGroup: CHANGE_GROUPS.COLUMNS,
+        changeGroup: isCalcGroupTable ? CHANGE_GROUPS.CALCULATION_GROUPS : CHANGE_GROUPS.TABLES,
         sourceFile,
         rawBlock: col.rawBlock,
         properties: props
@@ -231,7 +236,7 @@ function extractRelationship(rel, objects) {
         objectType: 'relationship',
         identityKey: key,
         displayName: semanticKey,
-        changeGroup: CHANGE_GROUPS.RELATIONSHIPS,
+        changeGroup: CHANGE_GROUPS.TABLES,
         sourceFile: rel.file,
         rawBlock: rel.rawBlock,
         properties: {
@@ -247,6 +252,11 @@ function extractRelationship(rel, objects) {
 
 function extractRole(role, objects) {
     const key = `role:${role.name}`;
+
+    // Collect table permission summaries for role-level view
+    const tablePerms = (role.children || []).filter(c => c.type === 'tablepermission');
+    const permSummary = tablePerms.map(tp => tp.name).join(', ');
+
     objects[key] = {
         objectType: 'role',
         identityKey: key,
@@ -254,36 +264,67 @@ function extractRole(role, objects) {
         changeGroup: CHANGE_GROUPS.ROLES,
         sourceFile: role.file,
         rawBlock: role.rawBlock,
-        properties: { modelPermission: role.properties.modelPermission || '' }
-    };
-    for (const child of role.children || []) {
-        if (child.type === 'tablepermission') {
-            const tpKey = `tablePermission:${role.name}.${child.name}`;
-            objects[tpKey] = {
-                objectType: 'tablePermission',
-                identityKey: tpKey,
-                displayName: `${role.name} → ${child.name}`,
-                parentRole: role.name,
-                changeGroup: CHANGE_GROUPS.ROLES,
-                sourceFile: role.file,
-                rawBlock: child.rawBlock,
-                properties: { filterExpression: child.expression || child.properties.filterExpression || '' }
-            };
+        properties: {
+            modelPermission: role.properties.modelPermission || '',
+            description: role.properties.description || '',
+            tablePermissions: permSummary
         }
+    };
+    for (const child of tablePerms) {
+        const tpKey = `tablePermission:${role.name}.${child.name}`;
+        const filterExpr = child.expression || child.properties.filterExpression || '';
+        objects[tpKey] = {
+            objectType: 'tablePermission',
+            identityKey: tpKey,
+            displayName: `${role.name} → ${child.name}`,
+            parentRole: role.name,
+            changeGroup: CHANGE_GROUPS.ROLES,
+            sourceFile: role.file,
+            rawBlock: child.rawBlock,
+            properties: {
+                filterExpression: filterExpr
+            }
+        };
+    }
+
+    // Extract role members
+    const members = (role.children || []).filter(c => c.type === 'member');
+    for (const member of members) {
+        const mKey = `roleMember:${role.name}.${member.name}`;
+        objects[mKey] = {
+            objectType: 'roleMember',
+            identityKey: mKey,
+            displayName: `${role.name} → ${member.name}`,
+            parentRole: role.name,
+            changeGroup: CHANGE_GROUPS.ROLES,
+            sourceFile: role.file,
+            rawBlock: member.rawBlock,
+            properties: {
+                memberName: member.name,
+                memberType: member.properties.memberType || member.properties.identityProvider || ''
+            }
+        };
     }
 }
 
 function extractExpression(expr, objects) {
     const key = `expression:${expr.name}`;
+    const exprValue = expr.expression || '';
+
+    // Detect M parameters (IsParameterQuery in meta) vs shared queries
+    const isParameter = exprValue.includes('IsParameterQuery');
+    const group = isParameter ? CHANGE_GROUPS.DATA_SOURCES : CHANGE_GROUPS.NAMED_EXPRESSIONS;
+
     objects[key] = {
         objectType: 'expression',
+        subType: isParameter ? 'parameter' : 'query',
         identityKey: key,
         displayName: expr.name,
-        changeGroup: CHANGE_GROUPS.NAMED_EXPRESSIONS,
+        changeGroup: group,
         sourceFile: expr.file,
         rawBlock: expr.rawBlock,
         properties: {
-            expression: expr.expression || '',
+            expression: exprValue,
             kind: expr.properties.kind || 'm'
         }
     };
@@ -308,6 +349,41 @@ function extractPerspective(persp, objects) {
 
 function extractCulture(culture, objects) {
     const key = `culture:${culture.name}`;
+    const props = { locale: culture.name };
+
+    // Extract translation details from parsed children
+    const translationsObj = (culture.children || []).find(c => c.type === 'translations');
+    if (translationsObj) {
+        const translations = [];
+        for (const modelChild of translationsObj.children || []) {
+            for (const tableChild of modelChild.children || []) {
+                const tableName = tableChild.name;
+                for (const objChild of tableChild.children || []) {
+                    const objType = objChild.type; // column, measure, table, hierarchy
+                    const objName = objChild.name;
+                    const caption = objChild.properties.caption || '';
+                    const description = objChild.properties.description || '';
+                    const parts = [];
+                    if (caption) parts.push(`caption: ${caption}`);
+                    if (description) parts.push(`description: ${description}`);
+                    if (parts.length > 0) {
+                        translations.push(`${tableName}.${objName} (${objType}): ${parts.join(', ')}`);
+                    }
+                }
+                // Table-level translations (caption/description on the table itself)
+                if (tableChild.properties.caption || tableChild.properties.description) {
+                    const parts = [];
+                    if (tableChild.properties.caption) parts.push(`caption: ${tableChild.properties.caption}`);
+                    if (tableChild.properties.description) parts.push(`description: ${tableChild.properties.description}`);
+                    translations.push(`${tableName} (table): ${parts.join(', ')}`);
+                }
+            }
+        }
+        if (translations.length > 0) {
+            props.translations = translations.join('\n');
+        }
+    }
+
     objects[key] = {
         objectType: 'culture',
         identityKey: key,
@@ -315,7 +391,7 @@ function extractCulture(culture, objects) {
         changeGroup: CHANGE_GROUPS.TRANSLATIONS,
         sourceFile: culture.file,
         rawBlock: culture.rawBlock,
-        properties: { locale: culture.name }
+        properties: props
     };
 }
 
@@ -343,6 +419,22 @@ function extractModelProperties(modelObj, objects) {
         properties: {
             culture: modelObj.properties.culture || '',
             defaultPowerBIDataSourceVersion: modelObj.properties.defaultPowerBIDataSourceVersion || ''
+        }
+    };
+}
+
+function extractFunction(func, objects) {
+    const key = `function:${func.name}`;
+    objects[key] = {
+        objectType: 'function',
+        identityKey: key,
+        displayName: func.name,
+        changeGroup: CHANGE_GROUPS.FUNCTIONS,
+        sourceFile: func.file,
+        rawBlock: func.rawBlock,
+        properties: {
+            expression: func.expression || '',
+            description: func.properties.description || ''
         }
     };
 }

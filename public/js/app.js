@@ -6,6 +6,7 @@
     let comparisonResult = null;
     let activeGroup = null;
     let activeFilter = 'all';
+    let searchTerm = '';
     let selectedKeys = new Set();
     let devPath = localStorage.getItem('ma_devPath') || '';
     let prodPath = localStorage.getItem('ma_prodPath') || '';
@@ -35,6 +36,7 @@
     const loading = document.getElementById('loading');
     const groupList = document.getElementById('group-list');
     const diffContent = document.getElementById('diff-content');
+    const diffSearchInput = document.getElementById('diff-search');
     const totalDiffs = document.getElementById('total-diffs');
     const countAdded = document.getElementById('count-added');
     const countRemoved = document.getElementById('count-removed');
@@ -114,6 +116,16 @@
             activeFilter = btn.dataset.filter;
             renderDiffs();
         });
+    });
+
+    // Search input — filter diffs by name from 2nd character
+    diffSearchInput.addEventListener('input', () => {
+        searchTerm = diffSearchInput.value.trim();
+        if (searchTerm.length >= 2) {
+            renderDiffs();
+        } else if (searchTerm.length === 0) {
+            renderDiffs();
+        }
     });
 
     // Close modals on backdrop click
@@ -347,6 +359,7 @@
 
     function renderDiffs() {
         let diffs = comparisonResult.diffs || [];
+        const groups = comparisonResult.groups || [];
 
         if (activeGroup !== null) {
             diffs = diffs.filter(d => d.changeGroup === activeGroup);
@@ -354,6 +367,10 @@
         if (activeFilter !== 'all') {
             const typeMap = { 'Added': 0, 'Removed': 1, 'Modified': 2 };
             diffs = diffs.filter(d => d.type === typeMap[activeFilter]);
+        }
+        if (searchTerm.length >= 2) {
+            const term = searchTerm.toLowerCase();
+            diffs = diffs.filter(d => d.displayName.toLowerCase().includes(term));
         }
 
         if (diffs.length === 0) {
@@ -366,18 +383,101 @@
             return;
         }
 
-        diffs.sort((a, b) => {
-            const order = { 0: 0, 2: 1, 1: 2 };
-            return (order[a.type] || 0) - (order[b.type] || 0);
-        });
+        diffs.sort((a, b) => a.displayName.localeCompare(b.displayName));
+
+        // Build set of keys that belong to groups (for current visible diffs)
+        const visibleKeys = new Set(diffs.map(d => d.identityKey));
+        const groupedKeys = new Set();
+        const activeGroups = groups.filter(g =>
+            g.memberKeys.some(k => visibleKeys.has(k))
+        );
+        for (const g of activeGroups) {
+            for (const k of g.memberKeys) groupedKeys.add(k);
+        }
 
         diffContent.innerHTML = '';
+
+        // Render atomic groups first
+        for (const group of activeGroups) {
+            const groupDiffs = diffs.filter(d => group.memberKeys.includes(d.identityKey));
+            if (groupDiffs.length > 0) {
+                diffContent.appendChild(createGroupElement(group, groupDiffs));
+            }
+        }
+
+        // Render ungrouped diffs
         for (const diff of diffs) {
-            diffContent.appendChild(createDiffElement(diff));
+            if (!groupedKeys.has(diff.identityKey)) {
+                diffContent.appendChild(createDiffElement(diff));
+            }
         }
     }
 
-    function createDiffElement(diff) {
+    function createGroupElement(group, groupDiffs) {
+        const container = document.createElement('div');
+        container.className = 'diff-group';
+        container.dataset.groupId = group.groupId;
+
+        const allSelected = groupDiffs.every(d => selectedKeys.has(d.identityKey));
+        const someSelected = groupDiffs.some(d => selectedKeys.has(d.identityKey));
+
+        container.innerHTML = `
+            <div class="diff-group-header">
+                <div class="diff-checkbox-cell">
+                    <input type="checkbox" class="diff-group-checkbox" ${allSelected ? 'checked' : ''} ${someSelected && !allSelected ? 'indeterminate' : ''} />
+                </div>
+                <div class="diff-group-info">
+                    <span class="diff-group-icon">⚡</span>
+                    <span class="diff-group-label">${escapeHtml(group.label)}</span>
+                    <span class="diff-group-count">${groupDiffs.length} changes</span>
+                    ${group.requiresRefresh ? '<span class="diff-group-badge">requires refresh</span>' : ''}
+                </div>
+                <span class="expand-indicator">▼</span>
+            </div>
+            <div class="diff-group-members"></div>
+        `;
+
+        const checkbox = container.querySelector('.diff-group-checkbox');
+        if (someSelected && !allSelected) checkbox.indeterminate = true;
+
+        // Group checkbox toggles all members
+        checkbox.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const shouldSelect = checkbox.checked;
+            for (const diff of groupDiffs) {
+                if (shouldSelect) {
+                    selectedKeys.add(diff.identityKey);
+                } else {
+                    selectedKeys.delete(diff.identityKey);
+                }
+            }
+            // Update member checkboxes
+            container.querySelectorAll('.diff-checkbox').forEach(cb => {
+                cb.checked = shouldSelect;
+                cb.closest('.diff-object').classList.toggle('selected', shouldSelect);
+            });
+            checkbox.indeterminate = false;
+            updateDeployButton();
+        });
+
+        // Expand/collapse group members
+        const header = container.querySelector('.diff-group-header');
+        const membersContainer = container.querySelector('.diff-group-members');
+        header.addEventListener('click', (e) => {
+            if (e.target.closest('.diff-checkbox-cell')) return;
+            container.classList.toggle('expanded');
+            if (container.classList.contains('expanded') && membersContainer.children.length === 0) {
+                for (const diff of groupDiffs) {
+                    const el = createDiffElement(diff, group);
+                    membersContainer.appendChild(el);
+                }
+            }
+        });
+
+        return container;
+    }
+
+    function createDiffElement(diff, parentGroup) {
         const typeClass = diff.type === 0 ? 'added' : diff.type === 1 ? 'removed' : 'modified';
         const isSelected = selectedKeys.has(diff.identityKey);
 
@@ -390,29 +490,29 @@
 
         if (diff.type === 0) {
             leftContent = `
-                <span class="diff-symbol">+</span>
+                <span class="diff-object-name" title="${escapeAttr(diff.displayName)}">${escapeHtml(diff.displayName)}</span>
                 <span class="diff-object-type">[${escapeHtml(diff.objectType)}]</span>
-                <span class="diff-object-name">${escapeHtml(diff.displayName)}</span>
+                <span class="diff-symbol">+</span>
                 <span class="expand-indicator">▼</span>
             `;
         } else if (diff.type === 1) {
             rightContent = `
-                <span class="diff-symbol">−</span>
+                <span class="diff-object-name" title="${escapeAttr(diff.displayName)}">${escapeHtml(diff.displayName)}</span>
                 <span class="diff-object-type">[${escapeHtml(diff.objectType)}]</span>
-                <span class="diff-object-name">${escapeHtml(diff.displayName)}</span>
+                <span class="diff-symbol">−</span>
                 <span class="expand-indicator">▼</span>
             `;
         } else {
             leftContent = `
-                <span class="diff-symbol">~</span>
+                <span class="diff-object-name" title="${escapeAttr(diff.displayName)}">${escapeHtml(diff.displayName)}</span>
                 <span class="diff-object-type">[${escapeHtml(diff.objectType)}]</span>
-                <span class="diff-object-name">${escapeHtml(diff.displayName)}</span>
+                <span class="diff-symbol">~</span>
                 <span class="expand-indicator">▼</span>
             `;
             rightContent = `
-                <span class="diff-symbol">~</span>
+                <span class="diff-object-name" title="${escapeAttr(diff.displayName)}">${escapeHtml(diff.displayName)}</span>
                 <span class="diff-object-type">[${escapeHtml(diff.objectType)}]</span>
-                <span class="diff-object-name">${escapeHtml(diff.displayName)}</span>
+                <span class="diff-symbol">~</span>
             `;
         }
 
@@ -431,12 +531,36 @@
         const checkbox = container.querySelector('.diff-checkbox');
         checkbox.addEventListener('click', (e) => {
             e.stopPropagation();
-            if (checkbox.checked) {
-                selectedKeys.add(diff.identityKey);
-                container.classList.add('selected');
+            if (parentGroup) {
+                // Inside a group: toggle ALL members together
+                const shouldSelect = checkbox.checked;
+                const groupContainer = container.closest('.diff-group');
+                const groupDiffKeys = parentGroup.memberKeys;
+                for (const key of groupDiffKeys) {
+                    if (shouldSelect) selectedKeys.add(key);
+                    else selectedKeys.delete(key);
+                }
+                // Update all member checkboxes in this group
+                if (groupContainer) {
+                    groupContainer.querySelectorAll('.diff-checkbox').forEach(cb => {
+                        cb.checked = shouldSelect;
+                        cb.closest('.diff-object').classList.toggle('selected', shouldSelect);
+                    });
+                    const groupCb = groupContainer.querySelector('.diff-group-checkbox');
+                    if (groupCb) {
+                        groupCb.checked = shouldSelect;
+                        groupCb.indeterminate = false;
+                    }
+                }
             } else {
-                selectedKeys.delete(diff.identityKey);
-                container.classList.remove('selected');
+                // Standalone diff: toggle individually
+                if (checkbox.checked) {
+                    selectedKeys.add(diff.identityKey);
+                    container.classList.add('selected');
+                } else {
+                    selectedKeys.delete(diff.identityKey);
+                    container.classList.remove('selected');
+                }
             }
             updateDeployButton();
         });
@@ -513,8 +637,18 @@
         document.querySelectorAll('.diff-checkbox').forEach(cb => {
             cb.checked = true;
             selectedKeys.add(cb.dataset.key);
-            cb.closest('.diff-object').classList.add('selected');
+            const diffObj = cb.closest('.diff-object');
+            if (diffObj) diffObj.classList.add('selected');
         });
+        // Also select all group checkboxes and their hidden members
+        document.querySelectorAll('.diff-group-checkbox').forEach(cb => {
+            cb.checked = true;
+            cb.indeterminate = false;
+        });
+        const groups = comparisonResult.groups || [];
+        for (const group of groups) {
+            for (const key of group.memberKeys) selectedKeys.add(key);
+        }
         updateDeployButton();
     }
 
@@ -522,7 +656,12 @@
         selectedKeys.clear();
         document.querySelectorAll('.diff-checkbox').forEach(cb => {
             cb.checked = false;
-            cb.closest('.diff-object').classList.remove('selected');
+            const diffObj = cb.closest('.diff-object');
+            if (diffObj) diffObj.classList.remove('selected');
+        });
+        document.querySelectorAll('.diff-group-checkbox').forEach(cb => {
+            cb.checked = false;
+            cb.indeterminate = false;
         });
         updateDeployButton();
     }
@@ -551,6 +690,25 @@
 
     async function handleDeployClick() {
         if (selectedKeys.size === 0) return;
+
+        // Check for partial group selections — warn user
+        const groups = comparisonResult.groups || [];
+        const partialGroups = [];
+        for (const group of groups) {
+            const selectedCount = group.memberKeys.filter(k => selectedKeys.has(k)).length;
+            if (selectedCount > 0 && selectedCount < group.memberKeys.length) {
+                partialGroups.push(group);
+            }
+        }
+        if (partialGroups.length > 0) {
+            const groupNames = partialGroups.map(g => g.label).join(', ');
+            const proceed = confirm(
+                `⚠️ Incomplete atomic groups selected: ${groupNames}\n\n` +
+                `Deploying only part of Power Query changes may cause model refresh errors.\n\n` +
+                `Do you want to continue anyway?`
+            );
+            if (!proceed) return;
+        }
 
         // Show deploy modal with preview
         const selectedDiffs = comparisonResult.diffs.filter(d => selectedKeys.has(d.identityKey));
@@ -707,8 +865,120 @@
             html += '</div>';
         }
 
+        // Offer refresh for Fabric deployments with data-affecting changes
+        if (result.success && result.tablesNeedingRefresh !== undefined) {
+            const tables = result.tablesNeedingRefresh;
+            const isFullRefresh = tables.length === 0;
+            const tableLabel = isFullRefresh
+                ? 'Full model refresh (Named Expressions changed)'
+                : tables.map(t => `<code>${escapeHtml(t)}</code>`).join(', ');
+
+            html += `<div id="refresh-offer" style="margin-top: 20px; padding: 16px; background: rgba(78, 154, 241, 0.08); border: 1px solid rgba(78, 154, 241, 0.3); border-radius: 8px;">`;
+            html += `<p style="font-weight: 600; margin-bottom: 8px;">⚡ Refresh Required</p>`;
+            html += `<p style="font-size: 13px; margin-bottom: 12px;">Deployed changes affect data sources and require a model refresh to take effect.</p>`;
+            html += `<p style="font-size: 12px; margin-bottom: 12px; opacity: 0.8;">Tables: ${tableLabel}</p>`;
+            html += `<button id="btn-trigger-refresh" class="btn btn-primary" style="margin-right: 8px;">🔄 Refresh Now</button>`;
+            html += `<button id="btn-skip-refresh" class="btn btn-secondary">Skip</button>`;
+            html += `<div id="refresh-status" style="margin-top: 12px; display: none;"></div>`;
+            html += `</div>`;
+        }
+
         bodyEl.innerHTML = html;
         resultModal.classList.remove('hidden');
+
+        // Bind refresh buttons if present
+        const btnRefresh = document.getElementById('btn-trigger-refresh');
+        const btnSkip = document.getElementById('btn-skip-refresh');
+        if (btnRefresh) {
+            const tables = result.tablesNeedingRefresh;
+            btnRefresh.addEventListener('click', () => triggerFabricRefresh(tables));
+            btnSkip.addEventListener('click', () => {
+                document.getElementById('refresh-offer').style.display = 'none';
+            });
+        }
+    }
+
+    // ===== Fabric Refresh =====
+
+    async function triggerFabricRefresh(tables) {
+        const statusEl = document.getElementById('refresh-status');
+        const btnRefresh = document.getElementById('btn-trigger-refresh');
+        const btnSkip = document.getElementById('btn-skip-refresh');
+
+        btnRefresh.disabled = true;
+        btnSkip.style.display = 'none';
+        statusEl.style.display = 'block';
+        statusEl.innerHTML = '<span style="color: var(--color-text-muted);">⏳ Starting refresh...</span>';
+
+        try {
+            const response = await fetch('/api/fabric/refresh', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ tables })
+            });
+            const result = await response.json();
+
+            if (!response.ok || !result.success) {
+                statusEl.innerHTML = `<span style="color: var(--color-removed-text);">✗ ${escapeHtml(result.error || 'Refresh failed')}</span>`;
+                btnRefresh.disabled = false;
+                btnSkip.style.display = '';
+                return;
+            }
+
+            if (result.requestId) {
+                statusEl.innerHTML = '<span style="color: var(--color-text-muted);">⏳ Refresh in progress...</span>';
+                pollRefreshStatus(result.requestId, statusEl, btnRefresh);
+            } else {
+                statusEl.innerHTML = '<span style="color: var(--color-added-text);">✓ Refresh triggered (no tracking ID returned)</span>';
+            }
+        } catch (err) {
+            statusEl.innerHTML = `<span style="color: var(--color-removed-text);">✗ ${escapeHtml(err.message)}</span>`;
+            btnRefresh.disabled = false;
+            btnSkip.style.display = '';
+        }
+    }
+
+    async function pollRefreshStatus(requestId, statusEl, btnRefresh) {
+        const startTime = Date.now();
+        const maxPollTime = 60 * 60 * 1000; // 60 minutes max polling
+
+        const poll = async () => {
+            if (Date.now() - startTime > maxPollTime) {
+                statusEl.innerHTML = '<span style="color: var(--color-text-muted);">⏳ Refresh still running (polling stopped after 60 min) — check Fabric portal for status.</span>';
+                btnRefresh.style.display = 'none';
+                return;
+            }
+
+            try {
+                const response = await fetch(`/api/fabric/refresh/status/${requestId}`);
+                const data = await response.json();
+
+                if (data.status === 'Completed') {
+                    statusEl.innerHTML = '<span style="color: var(--color-added-text);">✓ Refresh completed successfully!</span>';
+                    btnRefresh.style.display = 'none';
+                    return;
+                } else if (data.status === 'Failed') {
+                    const errMsg = data.serviceExceptionJson || 'Unknown error';
+                    statusEl.innerHTML = `<span style="color: var(--color-removed-text);">✗ Refresh failed: ${escapeHtml(typeof errMsg === 'string' ? errMsg : JSON.stringify(errMsg))}</span>`;
+                    btnRefresh.disabled = false;
+                    btnRefresh.textContent = '🔄 Retry';
+                    return;
+                } else if (data.status === 'Cancelled' || data.status === 'Disabled') {
+                    statusEl.innerHTML = `<span style="color: var(--color-text-muted);">⚠ Refresh ${data.status.toLowerCase()}</span>`;
+                    btnRefresh.disabled = false;
+                    return;
+                }
+
+                // Still running — poll again
+                statusEl.innerHTML = '<span style="color: var(--color-text-muted);">⏳ Refresh in progress...</span>';
+                setTimeout(poll, 5000);
+            } catch (err) {
+                statusEl.innerHTML = `<span style="color: var(--color-text-muted);">⏳ Refresh running (status check failed: ${escapeHtml(err.message)})</span>`;
+                setTimeout(poll, 10000);
+            }
+        };
+
+        setTimeout(poll, 5000); // First check after 5s
     }
 
     // ===== Utilities =====
@@ -724,6 +994,11 @@
         const div = document.createElement('div');
         div.textContent = str;
         return div.innerHTML;
+    }
+
+    function escapeAttr(str) {
+        if (!str) return '';
+        return str.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     }
 
     function showError(msg) { errorMessage.textContent = msg; errorMessage.classList.remove('hidden'); }

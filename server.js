@@ -200,6 +200,12 @@ async function deployToFabric(selectedDiffs, devModel, prodModel, fabricInfo, op
 
         result.actions = deployResult.actions;
         result.actions.push({ type: 'fabric-upload', message: 'Definition uploaded to Fabric successfully.' });
+
+        // Determine which tables need refresh after metadata deploy
+        const tablesNeedingRefresh = detectTablesNeedingRefresh(selectedDiffs);
+        if (tablesNeedingRefresh !== null) {
+            result.tablesNeedingRefresh = tablesNeedingRefresh;
+        }
     } catch (err) {
         result.success = false;
         result.errors.push({ operation: { action: 'fabric-upload' }, error: err.message });
@@ -209,6 +215,53 @@ async function deployToFabric(selectedDiffs, devModel, prodModel, fabricInfo, op
     }
 
     return result;
+}
+
+/**
+ * Detect which tables need refresh after deploying metadata changes.
+ * Rules: partitions, named expressions, new tables/columns require data refresh.
+ * Measures, relationships, column properties (isHidden, format, etc.) do NOT.
+ */
+function detectTablesNeedingRefresh(selectedDiffs) {
+    const tables = new Set();
+
+    for (const diff of selectedDiffs) {
+        const objType = diff.objectType;
+        const diffType = diff.type; // 0=added, 1=removed, 2=modified
+
+        // Partition expression changed → refresh that table
+        if (objType === 'partition') {
+            if (diff.parentTable) tables.add(diff.parentTable);
+        }
+        // Named expression (shared M query) changed → affects tables using it (refresh all)
+        else if (objType === 'expression') {
+            tables.add('__all__');
+        }
+        // New table added → needs refresh
+        else if (objType === 'table' && diffType === 0) {
+            if (diff.displayName) tables.add(diff.displayName);
+        }
+        // New column added (has sourceColumn) → table needs data refresh
+        else if (objType === 'column' && diffType === 0) {
+            if (diff.parentTable) tables.add(diff.parentTable);
+        }
+        // Column with expression change (calculated column)
+        else if (objType === 'column' && diffType === 2) {
+            const hasExpr = (diff.propertyDiffs || []).some(p => p.propertyName === 'expression');
+            if (hasExpr && diff.parentTable) tables.add(diff.parentTable);
+        }
+    }
+
+    // If __all__ marker → return empty array meaning "full model refresh"
+    if (tables.has('__all__')) {
+        return []; // empty = full model refresh
+    }
+
+    if (tables.size === 0) {
+        return null; // no refresh needed
+    }
+
+    return [...tables];
 }
 
 /**
@@ -343,6 +396,52 @@ app.get('/api/fabric/status', async (req, res) => {
 app.post('/api/fabric/cancel-login', (req, res) => {
     fabricAuth.cancelLogin();
     res.json({ status: 'cancelled' });
+});
+
+// API: Trigger refresh of affected tables after Fabric deployment
+app.post('/api/fabric/refresh', async (req, res) => {
+    const { tables } = req.body; // optional: array of table names
+
+    if (!lastProdFabricInfo) {
+        return res.status(400).json({ error: 'No Fabric target available. Deploy to Fabric first.' });
+    }
+
+    try {
+        const token = await fabricAuth.getAccessToken();
+        if (!token) {
+            return res.status(401).json({ error: 'Not authenticated. Login to Fabric first.' });
+        }
+
+        const { workspaceId, semanticModelId } = lastProdFabricInfo;
+        const result = await fabricApi.refreshSemanticModel(token, workspaceId, semanticModelId, tables || []);
+        res.json({ success: true, requestId: result.requestId });
+    } catch (err) {
+        console.error('Refresh error:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// API: Check refresh status
+app.get('/api/fabric/refresh/status/:requestId', async (req, res) => {
+    const { requestId } = req.params;
+
+    if (!lastProdFabricInfo) {
+        return res.status(400).json({ error: 'No Fabric target available.' });
+    }
+
+    try {
+        const token = await fabricAuth.getAccessToken();
+        if (!token) {
+            return res.status(401).json({ error: 'Not authenticated.' });
+        }
+
+        const { workspaceId, semanticModelId } = lastProdFabricInfo;
+        const status = await fabricApi.getRefreshStatus(token, workspaceId, semanticModelId, requestId);
+        res.json(status);
+    } catch (err) {
+        console.error('Refresh status error:', err);
+        res.status(500).json({ error: err.message });
+    }
 });
 
 // API: Disconnect from Fabric
