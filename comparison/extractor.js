@@ -81,7 +81,7 @@ function extractTable(table, objects) {
             case 'column': extractColumn(tableName, child, table.file, objects, hasCalcGroup); break;
             case 'measure': extractMeasure(tableName, child, table.file, objects); break;
             case 'hierarchy': extractHierarchy(tableName, child, table.file, objects); break;
-            case 'partition': extractPartition(tableName, child, table.file, objects); break;
+            case 'partition': extractPartition(tableName, child, table.file, objects, hasCalcGroup); break;
             case 'calculationgroup': extractCalculationGroup(tableName, child, table.file, objects); break;
         }
     }
@@ -174,7 +174,7 @@ function extractHierarchy(tableName, hier, sourceFile, objects) {
     };
 }
 
-function extractPartition(tableName, partition, sourceFile, objects) {
+function extractPartition(tableName, partition, sourceFile, objects, isCalcGroupTable) {
     const key = `partition:${tableName}.${partition.name}`;
     const partitionType = partition.expression || '';
     const sourceExpression = partition.properties.source || '';
@@ -189,7 +189,7 @@ function extractPartition(tableName, partition, sourceFile, objects) {
         identityKey: key,
         displayName: `${tableName}.${partition.name}`,
         parentTable: tableName,
-        changeGroup: CHANGE_GROUPS.TABLES,
+        changeGroup: isCalcGroupTable ? CHANGE_GROUPS.CALCULATION_GROUPS : CHANGE_GROUPS.TABLES,
         sourceFile,
         rawBlock: partition.rawBlock,
         properties: props

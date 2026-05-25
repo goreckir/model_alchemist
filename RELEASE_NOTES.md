@@ -1,5 +1,33 @@
 # Model Alchemist — Release Notes
 
+## v4.1.0
+
+### New Features
+- **Parameter refresh groups** — Parameters (named expressions with `IsParameterQuery`) are now displayed as separate refresh groups with ⚡↻ icon and label "Parameter 'X' affecting N tables". Transitive dependencies are resolved via BFS (e.g. `PBI_Environment` → `silver_Release_Notes` → `_Release_Notes`).
+- **Calculation Group refresh detection** — Adding/removing calculation items or changing their ordinal now correctly triggers a refresh group for the parent CG table.
+- **Auto port fallback** — If port 3001 is busy, the server tries up to 20 consecutive ports before giving up.
+- **Auto-open browser** — Browser opens automatically when the server starts listening.
+
+### Improvements
+- **`///` description parsing** — TMDL `///` annotation lines are now collected as `description` property and included in `rawBlock` for correct comparison and deployment.
+- **Refresh group icons** — Regular table groups show ↻, parameter groups show ⚡↻ for visual distinction.
+- **Parameter groups at top** — Parameter-driven refresh groups appear before table groups in the UI.
+- **Alphabetical sort within groups** — Both parameter and table refresh groups are sorted alphabetically.
+
+### Bug Fixes
+- **Parameters not triggering refresh** — Fixed filter that prevented parameter changes from being linked to dependent tables.
+- **Transitive dependency resolution** — Parameters depending on other expressions (chains) now correctly resolve all downstream tables.
+- **`///` vs `//` confusion** — Parser now correctly distinguishes description annotations (`///`) from regular comments (`//`).
+
+### Architecture
+- `parser/tmdl-parser.js` — `pendingDescription` collection for `///` lines; skip `//` comments separately.
+- `deployment/tmdl-writer.js` — `findObjectBlock` looks backwards to include preceding `///` lines.
+- `comparison/extractor.js` — `extractPartition` accepts `isCalcGroupTable` flag for CG classification.
+- `comparison/engine.js` — `computeGroups` separates parameter diffs (by `changeGroup`) from table diffs; BFS `findDependentExprNames()`; `parameterGroups` with `isParameterGroup: true`.
+- `server.js` — `startServer()` with port retry loop + auto-open browser; `detectTablesNeedingRefresh` updated for calculation items.
+
+---
+
 ## v4.0.0
 
 ### New Features

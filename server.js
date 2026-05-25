@@ -221,6 +221,8 @@ async function deployToFabric(selectedDiffs, devModel, prodModel, fabricInfo, op
  * Detect which tables need refresh after deploying metadata changes.
  * Rules: partitions, named expressions, new tables/columns require data refresh.
  * Measures, relationships, column properties (isHidden, format, etc.) do NOT.
+ * Calculation groups: adding/removing items or changing ordinal requires refresh;
+ *   modifying only the DAX expression does NOT (evaluated at query time).
  */
 function detectTablesNeedingRefresh(selectedDiffs) {
     const tables = new Set();
@@ -249,6 +251,20 @@ function detectTablesNeedingRefresh(selectedDiffs) {
         else if (objType === 'column' && diffType === 2) {
             const hasExpr = (diff.propertyDiffs || []).some(p => p.propertyName === 'expression');
             if (hasExpr && diff.parentTable) tables.add(diff.parentTable);
+        }
+        // Calculation item added/removed → refresh the CG table (Name/Ordinal columns are materialized)
+        else if (objType === 'calculationItem' && (diffType === 0 || diffType === 1)) {
+            if (diff.parentTable) tables.add(diff.parentTable);
+        }
+        // Calculation item modified → only if ordinal changed (expression is query-time)
+        else if (objType === 'calculationItem' && diffType === 2) {
+            const hasOrdinalChange = (diff.propertyDiffs || []).some(p => p.propertyName === 'ordinal');
+            if (hasOrdinalChange && diff.parentTable) tables.add(diff.parentTable);
+        }
+        // Calculation group precedence changed → refresh the CG table
+        else if (objType === 'calculationGroup' && diffType === 2) {
+            const hasPrecedenceChange = (diff.propertyDiffs || []).some(p => p.propertyName === 'precedence');
+            if (hasPrecedenceChange && diff.parentTable) tables.add(diff.parentTable);
         }
     }
 
@@ -618,6 +634,22 @@ app.get('*', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-app.listen(PORT, () => {
-    console.log(`Model Alchemist v3.0 running at http://localhost:${PORT}`);
-});
+function startServer(port, maxAttempts = 20) {
+    const server = app.listen(port, () => {
+        const url = `http://localhost:${port}`;
+        console.log(`Model Alchemist v4.1 running at ${url}`);
+        const { exec } = require('child_process');
+        exec(`start "" "${url}"`);
+    });
+    server.on('error', (err) => {
+        if (err.code === 'EADDRINUSE' && port - PORT < maxAttempts - 1) {
+            console.log(`Port ${port} is busy, trying ${port + 1}...`);
+            startServer(port + 1, maxAttempts);
+        } else {
+            console.error(`Could not find a free port after ${maxAttempts} attempts (tried ${PORT}-${port}).`);
+            process.exit(1);
+        }
+    });
+}
+
+startServer(PORT);

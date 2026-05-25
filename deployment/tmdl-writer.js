@@ -50,8 +50,21 @@ function findObjectBlock(content, objectType, objectName, parentIndent) {
 
         if (!matchesPattern) continue;
 
-        // Found the start — find the end
-        const startLine = i;
+        // Found the start — look backwards for /// description lines at same indent
+        let blockStart = i;
+        while (blockStart > 0) {
+            const prevLine = lines[blockStart - 1];
+            const prevTrimmed = prevLine.trim();
+            const prevIndent = getIndentLevel(prevLine);
+            if (prevIndent === targetIndent && prevTrimmed.startsWith('///')) {
+                blockStart--;
+            } else {
+                break;
+            }
+        }
+
+        // Find the end
+        const startLine = blockStart;
         let endLine = i + 1;
         while (endLine < lines.length) {
             const nextLine = lines[endLine];
