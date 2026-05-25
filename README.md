@@ -100,6 +100,10 @@ model_alchemist/
 |----------|-------------|---------|
 | `PORT` | HTTP server port | `3001` |
 
+## License
+
+MIT © [Radosław Górecki](https://github.com/goreckir)
+
 ## Notes
 
 - The app operates directly on TMDL files on disk — a backup before deployment is recommended (enabled by default).
