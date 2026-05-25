@@ -1,4 +1,4 @@
-// Model Alchemist v3.0 — Frontend Application with Deploy, File Browser & Fabric
+// Model Alchemist v4.1 — Frontend Application with Deploy, File Browser & Fabric
 (function () {
     'use strict';
 
@@ -421,13 +421,14 @@
         const allSelected = groupDiffs.every(d => selectedKeys.has(d.identityKey));
         const someSelected = groupDiffs.some(d => selectedKeys.has(d.identityKey));
 
+        const groupIcon = group.isParameterGroup ? '⚡↻' : '↻';
         container.innerHTML = `
             <div class="diff-group-header">
                 <div class="diff-checkbox-cell">
                     <input type="checkbox" class="diff-group-checkbox" ${allSelected ? 'checked' : ''} ${someSelected && !allSelected ? 'indeterminate' : ''} />
                 </div>
                 <div class="diff-group-info">
-                    <span class="diff-group-icon">⚡</span>
+                    <span class="diff-group-icon">${groupIcon}</span>
                     <span class="diff-group-label">${escapeHtml(group.label)}</span>
                     <span class="diff-group-count">${groupDiffs.length} changes</span>
                     ${group.requiresRefresh ? '<span class="diff-group-badge">requires refresh</span>' : ''}
@@ -874,7 +875,7 @@
                 : tables.map(t => `<code>${escapeHtml(t)}</code>`).join(', ');
 
             html += `<div id="refresh-offer" style="margin-top: 20px; padding: 16px; background: rgba(78, 154, 241, 0.08); border: 1px solid rgba(78, 154, 241, 0.3); border-radius: 8px;">`;
-            html += `<p style="font-weight: 600; margin-bottom: 8px;">⚡ Refresh Required</p>`;
+            html += `<p style="font-weight: 600; margin-bottom: 8px;">↻ Refresh Required</p>`;
             html += `<p style="font-size: 13px; margin-bottom: 12px;">Deployed changes affect data sources and require a model refresh to take effect.</p>`;
             html += `<p style="font-size: 12px; margin-bottom: 12px; opacity: 0.8;">Tables: ${tableLabel}</p>`;
             html += `<button id="btn-trigger-refresh" class="btn btn-primary" style="margin-right: 8px;">🔄 Refresh Now</button>`;

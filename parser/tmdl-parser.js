@@ -26,27 +26,52 @@ function parseTmdlFile(content, filePath) {
     const lines = content.replace(/\r\n/g, '\n').split('\n');
     const objects = [];
     let i = 0;
+    let pendingDescription = [];
 
     while (i < lines.length) {
         const line = lines[i];
         const indent = getIndentLevel(line);
         const trimmed = line.trim();
 
-        if (!trimmed || trimmed.startsWith('//') || trimmed.startsWith('---')) {
+        if (!trimmed || trimmed.startsWith('---')) {
             i++;
+            pendingDescription = [];
+            continue;
+        }
+
+        // Collect /// description lines for the next object
+        if (trimmed.startsWith('///')) {
+            pendingDescription.push(trimmed.substring(3).trim());
+            i++;
+            continue;
+        }
+
+        // Skip regular comments (// but not ///)
+        if (trimmed.startsWith('//')) {
+            i++;
+            pendingDescription = [];
             continue;
         }
 
         if (indent === 0) {
             const parsed = parseObjectBlock(lines, i, 0, filePath);
             if (parsed) {
+                if (pendingDescription.length > 0) {
+                    parsed.object.properties.description = pendingDescription.join('\n');
+                    // Include /// lines in rawBlock for deployment
+                    const descPrefix = pendingDescription.map(d => `/// ${d}`).join('\n');
+                    parsed.object.rawBlock = descPrefix + '\n' + parsed.object.rawBlock;
+                    pendingDescription = [];
+                }
                 objects.push(parsed.object);
                 i = parsed.nextLine;
             } else {
                 i++;
+                pendingDescription = [];
             }
         } else {
             i++;
+            pendingDescription = [];
         }
     }
 
@@ -99,29 +124,52 @@ function parseObjectBlock(lines, startLine, baseIndent, filePath) {
 
     // Parse child properties and nested objects
     let i = startLine + 1;
+    let pendingDescription = [];
     while (i < lines.length) {
         const childLine = lines[i];
         const childIndent = getIndentLevel(childLine);
         const childTrimmed = childLine.trim();
 
         if (childTrimmed && childIndent <= baseIndent) break;
-        if (!childTrimmed) { i++; continue; }
+        if (!childTrimmed) { i++; pendingDescription = []; continue; }
 
         if (childIndent === baseIndent + 1) {
+            // Collect /// description lines for the next child object
+            if (childTrimmed.startsWith('///')) {
+                pendingDescription.push(childTrimmed.substring(3).trim());
+                i++;
+                continue;
+            }
+            // Skip regular comments
+            if (childTrimmed.startsWith('//')) {
+                i++;
+                pendingDescription = [];
+                continue;
+            }
             // 1. Nested object declaration
             if (isObjectDeclaration(childTrimmed)) {
                 const childParsed = parseObjectBlock(lines, i, baseIndent + 1, filePath);
                 if (childParsed) {
+                    if (pendingDescription.length > 0) {
+                        childParsed.object.properties.description = pendingDescription.join('\n');
+                        // Include /// lines in rawBlock for deployment
+                        const indent = '\t'.repeat(baseIndent + 1);
+                        const descPrefix = pendingDescription.map(d => `${indent}/// ${d}`).join('\n');
+                        childParsed.object.rawBlock = descPrefix + '\n' + childParsed.object.rawBlock;
+                        pendingDescription = [];
+                    }
                     obj.children.push(childParsed.object);
                     i = childParsed.nextLine;
                     continue;
                 }
                 i++;
+                pendingDescription = [];
             } else if (childTrimmed.includes(':') && !childTrimmed.startsWith("'")) {
                 // 2. Property assignment (key: value)
                 const prop = parseProperty(childTrimmed);
                 if (prop) obj.properties[prop.name] = prop.value;
                 i++;
+                pendingDescription = [];
             } else if (childTrimmed.includes(' =') || childTrimmed.endsWith(' =')) {
                 // 3. Multi-line expression property
                 const exprResult = parseMultiLineExpression(lines, i, baseIndent + 1);
@@ -129,9 +177,11 @@ function parseObjectBlock(lines, startLine, baseIndent, filePath) {
                     obj.properties[exprResult.propName] = exprResult.value;
                 }
                 i = exprResult.nextLine;
+                pendingDescription = [];
             } else if (isBooleanShorthand(childTrimmed)) {
                 obj.properties[childTrimmed] = 'true';
                 i++;
+                pendingDescription = [];
             } else {
                 if (obj.expression !== null || declaration.hasExpression) {
                     const exprLines = [childTrimmed];
@@ -152,6 +202,7 @@ function parseObjectBlock(lines, startLine, baseIndent, filePath) {
                 } else {
                     i++;
                 }
+                pendingDescription = [];
             }
         } else if (childIndent > baseIndent + 1) {
             if (obj.expression === null && !declaration.hasExpression) {

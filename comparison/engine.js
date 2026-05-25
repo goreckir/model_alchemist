@@ -147,21 +147,58 @@ function computeGroups(diffs, devObjects) {
         }
     }
 
-    // Find named expressions that changed and map them to tables via ALL partitions (not just changed)
-    const namedExprDiffs = diffs.filter(d => d.changeGroup === 'Named Expressions');
+    // Find named expressions/parameters that changed and map them to tables via ALL partitions
+    const namedExprDiffs = diffs.filter(d => d.objectType === 'expression');
+    // Separate parameters from non-parameter expressions (parameters are in 'Data Sources & Parameters' group)
+    const parameterDiffs = namedExprDiffs.filter(d => d.changeGroup === CHANGE_GROUPS.DATA_SOURCES);
+    const nonParamExprDiffs = namedExprDiffs.filter(d => d.changeGroup !== CHANGE_GROUPS.DATA_SOURCES);
+
     // Build complete partition map from devObjects (includes unchanged partitions)
     const allPartitions = Object.values(devObjects).filter(o => o.objectType === 'partition');
+    // Build complete expressions map (all expressions in DEV model, not just changed ones)
+    const allExpressions = Object.values(devObjects).filter(o => o.objectType === 'expression');
 
-    for (const exprDiff of namedExprDiffs) {
-        const exprName = exprDiff.displayName;
-        // Find tables whose partitions reference this expression name
-        const referencingTables = new Set();
-        for (const part of allPartitions) {
-            const partExpr = part.properties.expression || part.properties.type || '';
-            if (partExpr.includes(exprName)) {
-                referencingTables.add(part.parentTable);
+    // Resolve transitive dependencies: param → expression → ... → partition
+    // For each changed expression, find all expressions that (transitively) depend on it
+    function findDependentExprNames(changedName) {
+        const dependents = new Set();
+        const queue = [changedName];
+        while (queue.length > 0) {
+            const name = queue.shift();
+            for (const expr of allExpressions) {
+                if (dependents.has(expr.displayName)) continue;
+                const body = expr.properties.expression || '';
+                if (body.includes(name)) {
+                    dependents.add(expr.displayName);
+                    queue.push(expr.displayName);
+                }
             }
         }
+        return dependents;
+    }
+
+    // Find tables affected by a set of expression names (direct or via partitions)
+    function findAffectedTables(exprNames) {
+        const tables = new Set();
+        for (const part of allPartitions) {
+            const partExpr = part.properties.expression || part.properties.type || '';
+            for (const depName of exprNames) {
+                if (partExpr.includes(depName)) {
+                    tables.add(part.parentTable);
+                    break;
+                }
+            }
+        }
+        return tables;
+    }
+
+    // Process NON-parameter expressions → add to table refresh groups
+    for (const exprDiff of nonParamExprDiffs) {
+        const exprName = exprDiff.displayName;
+        const allDependentNames = findDependentExprNames(exprName);
+        allDependentNames.add(exprName);
+
+        const referencingTables = findAffectedTables(allDependentNames);
 
         if (referencingTables.size > 0) {
             for (const tbl of referencingTables) {
@@ -170,6 +207,29 @@ function computeGroups(diffs, devObjects) {
                 }
                 refreshTables.get(tbl).add(exprDiff.identityKey);
             }
+        }
+    }
+
+    // Process PARAMETERS → create separate parameter groups (not merged with table groups)
+    const parameterGroups = [];
+    for (const paramDiff of parameterDiffs) {
+        const paramName = paramDiff.displayName;
+        const allDependentNames = findDependentExprNames(paramName);
+        allDependentNames.add(paramName);
+
+        const affectedTables = findAffectedTables(allDependentNames);
+        const tableCount = affectedTables.size;
+
+        if (tableCount > 0) {
+            parameterGroups.push({
+                groupId: `param-refresh:${paramName}`,
+                label: `Parameter '${paramName}' affecting ${tableCount} ${tableCount === 1 ? 'table' : 'tables'}`,
+                reason: `Parameter change requires refresh of dependent tables: ${[...affectedTables].join(', ')}`,
+                memberKeys: [paramDiff.identityKey],
+                affectedTables: [...affectedTables],
+                requiresRefresh: true,
+                isParameterGroup: true
+            });
         }
     }
 
@@ -197,12 +257,71 @@ function computeGroups(diffs, devObjects) {
         }
     }
 
+    // Calculation Groups: added/removed items or ordinal changes require refresh of CG table
+    const calcItemDiffs = diffs.filter(d => d.objectType === 'calculationItem');
+    const cgTablesNeedingRefresh = new Set();
+
+    for (const ciDiff of calcItemDiffs) {
+        const tableName = ciDiff.parentTable;
+        if (!tableName) continue;
+        // Added or removed calc item → refresh needed
+        if (ciDiff.type === 0 || ciDiff.type === 1) {
+            cgTablesNeedingRefresh.add(tableName);
+        }
+        // Modified calc item → only if ordinal changed
+        if (ciDiff.type === 2) {
+            const hasOrdinalChange = (ciDiff.propertyDiffs || []).some(p => p.propertyName === 'ordinal');
+            if (hasOrdinalChange) cgTablesNeedingRefresh.add(tableName);
+        }
+    }
+
+    // Also check calculationGroup-level changes (e.g. precedence)
+    const calcGroupDiffs = diffs.filter(d => d.objectType === 'calculationGroup' && d.type === 2);
+    for (const cgDiff of calcGroupDiffs) {
+        const hasPrecedenceChange = (cgDiff.propertyDiffs || []).some(p => p.propertyName === 'precedence');
+        if (hasPrecedenceChange && cgDiff.parentTable) {
+            cgTablesNeedingRefresh.add(cgDiff.parentTable);
+        }
+    }
+
+    for (const tableName of cgTablesNeedingRefresh) {
+        // Skip if already in a refresh group from partition logic
+        if (refreshTables.has(tableName)) continue;
+
+        const tableDiffs = diffs.filter(d => d.parentTable === tableName);
+        const tableObjDiff = diffs.find(d => d.objectType === 'table' && d.displayName === tableName);
+
+        const memberKeys = new Set();
+        for (const d of tableDiffs) {
+            memberKeys.add(d.identityKey);
+        }
+        if (tableObjDiff) {
+            memberKeys.add(tableObjDiff.identityKey);
+        }
+
+        if (memberKeys.size > 0) {
+            groups.push({
+                groupId: `refresh:${tableName}`,
+                label: tableName,
+                reason: 'Calculation group structural change (added/removed items or ordinal) requires refresh',
+                memberKeys: [...memberKeys],
+                requiresRefresh: true
+            });
+        }
+    }
+
+    // Sort groups alphabetically by label
+    groups.sort((a, b) => a.label.localeCompare(b.label));
+
     // Merge groups that share named expression members (expression referenced by multiple tables)
+    // Only merge non-parameter groups
     let merged = true;
     while (merged) {
         merged = false;
         for (let i = 0; i < groups.length; i++) {
+            if (groups[i].isParameterGroup) continue;
             for (let j = i + 1; j < groups.length; j++) {
+                if (groups[j].isParameterGroup) continue;
                 // Check if they share any named expression key
                 const sharedExpr = groups[i].memberKeys.some(k =>
                     k.startsWith('expression:') && groups[j].memberKeys.includes(k)
@@ -222,6 +341,9 @@ function computeGroups(diffs, devObjects) {
             if (merged) break;
         }
     }
+
+    // Add parameter groups at the beginning
+    groups.unshift(...parameterGroups.sort((a, b) => a.label.localeCompare(b.label)));
 
     return groups;
 }

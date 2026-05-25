@@ -290,14 +290,17 @@ body {
 }
 .diff-object-header-right { border-left: 1px solid var(--color-border); }
 
-.diff-object.added .diff-object-header-left { background: var(--color-added-line); color: var(--color-added-text); }
+.diff-object.added .diff-object-header-left { background: var(--color-header); color: var(--color-text); }
 .diff-object.added .diff-object-header-right { background: rgba(30, 30, 46, 0.5); color: var(--color-text-dim); }
 .diff-object.removed .diff-object-header-left { background: rgba(30, 30, 46, 0.5); color: var(--color-text-dim); }
-.diff-object.removed .diff-object-header-right { background: var(--color-removed-line); color: var(--color-removed-text); }
+.diff-object.removed .diff-object-header-right { background: var(--color-header); color: var(--color-text); }
 .diff-object.modified .diff-object-header-left,
-.diff-object.modified .diff-object-header-right { background: var(--color-modified-line); color: var(--color-modified-text); }
+.diff-object.modified .diff-object-header-right { background: var(--color-header); color: var(--color-text); }
 
 .diff-symbol { font-weight: 700; font-size: 16px; width: 20px; text-align: center; flex-shrink: 0; margin-left: 8px; }
+.diff-object.added .diff-symbol { color: var(--color-added-text); }
+.diff-object.removed .diff-symbol { color: var(--color-removed-text); }
+.diff-object.modified .diff-symbol { color: var(--color-modified-text); }
 .diff-object-type { opacity: 0.7; font-size: 11px; flex-shrink: 0; margin-left: auto; }
 .diff-object-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
 .expand-indicator { font-size: 10px; opacity: 0.5; flex-shrink: 0; margin-left: 4px; }
