@@ -89,6 +89,7 @@ function compareModels(devModel, prodModel, devPath, prodPath) {
         prodSource: prodPath,
         timestamp: new Date().toISOString(),
         diffs,
+        groups: computeGroups(diffs, devObjects),
         summary
     };
 }
@@ -114,6 +115,115 @@ function computePropertyDiffs(devProps, prodProps) {
 function normalizeValue(value) {
     if (value === null || value === undefined) return '';
     return String(value).trim();
+}
+
+/**
+ * Compute atomic groups for diffs that must be deployed together.
+ * Rule: If a partition expression changed, group it with all sourceColumn-based
+ * column changes (add/remove/structural modify) in that table.
+ * Metadata-only column changes (isHidden, formatString, etc.) stay independent.
+ */
+function computeGroups(diffs, devObjects) {
+    const groups = [];
+
+    // Find all partition diffs (added, removed, or modified)
+    const partitionDiffs = diffs.filter(d => d.objectType === 'partition');
+
+    // Track which tables need refresh (table name → set of member keys)
+    const refreshTables = new Map();
+
+    for (const partDiff of partitionDiffs) {
+        const tableName = partDiff.parentTable;
+        if (!tableName) continue;
+
+        // Check if partition expression actually changed (not just mode)
+        if (partDiff.type === 2) {
+            const hasExprChange = (partDiff.propertyDiffs || []).some(p => p.propertyName === 'expression');
+            if (!hasExprChange) continue;
+        }
+
+        if (!refreshTables.has(tableName)) {
+            refreshTables.set(tableName, new Set());
+        }
+    }
+
+    // Find named expressions that changed and map them to tables via ALL partitions (not just changed)
+    const namedExprDiffs = diffs.filter(d => d.changeGroup === 'Named Expressions');
+    // Build complete partition map from devObjects (includes unchanged partitions)
+    const allPartitions = Object.values(devObjects).filter(o => o.objectType === 'partition');
+
+    for (const exprDiff of namedExprDiffs) {
+        const exprName = exprDiff.displayName;
+        // Find tables whose partitions reference this expression name
+        const referencingTables = new Set();
+        for (const part of allPartitions) {
+            const partExpr = part.properties.expression || part.properties.type || '';
+            if (partExpr.includes(exprName)) {
+                referencingTables.add(part.parentTable);
+            }
+        }
+
+        if (referencingTables.size > 0) {
+            for (const tbl of referencingTables) {
+                if (!refreshTables.has(tbl)) {
+                    refreshTables.set(tbl, new Set());
+                }
+                refreshTables.get(tbl).add(exprDiff.identityKey);
+            }
+        }
+    }
+
+    // For each table needing refresh, gather ALL diffs for that table
+    for (const [tableName, extraKeys] of refreshTables) {
+        const tableDiffs = diffs.filter(d => d.parentTable === tableName);
+        const tableObjDiff = diffs.find(d => d.objectType === 'table' && d.displayName === tableName);
+
+        const memberKeys = new Set(extraKeys);
+        for (const d of tableDiffs) {
+            memberKeys.add(d.identityKey);
+        }
+        if (tableObjDiff) {
+            memberKeys.add(tableObjDiff.identityKey);
+        }
+
+        if (memberKeys.size > 0) {
+            groups.push({
+                groupId: `refresh:${tableName}`,
+                label: tableName,
+                reason: 'Power Query expression change requires atomic deployment with dependent columns',
+                memberKeys: [...memberKeys],
+                requiresRefresh: true
+            });
+        }
+    }
+
+    // Merge groups that share named expression members (expression referenced by multiple tables)
+    let merged = true;
+    while (merged) {
+        merged = false;
+        for (let i = 0; i < groups.length; i++) {
+            for (let j = i + 1; j < groups.length; j++) {
+                // Check if they share any named expression key
+                const sharedExpr = groups[i].memberKeys.some(k =>
+                    k.startsWith('expression:') && groups[j].memberKeys.includes(k)
+                );
+                if (sharedExpr) {
+                    // Merge j into i
+                    const mergedKeys = new Set([...groups[i].memberKeys, ...groups[j].memberKeys]);
+                    const labels = [...new Set([...groups[i].label.split(', '), ...groups[j].label.split(', ')])];
+                    groups[i].memberKeys = [...mergedKeys];
+                    groups[i].label = labels.join(', ');
+                    groups[i].groupId = `refresh:${labels.join('+')}`;
+                    groups.splice(j, 1);
+                    merged = true;
+                    break;
+                }
+            }
+            if (merged) break;
+        }
+    }
+
+    return groups;
 }
 
 module.exports = { compareModels };

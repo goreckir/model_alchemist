@@ -205,8 +205,17 @@ function parseMultiLineExpression(lines, startLine, baseIndent) {
 
 /**
  * Parse a declaration line like "table 'Sales Amount'" or "measure Total ="
+ * Also handles bare keywords without names (e.g. "calculationGroup", "translations")
  */
 function parseDeclaration(line) {
+    // Handle bare keyword (no name, no expression) — e.g. "calculationGroup", "translations"
+    const bareMatch = line.match(/^(\w+)$/);
+    if (bareMatch) {
+        const type = bareMatch[1].toLowerCase();
+        if (type === 'ref') return null;
+        return { type, name: '', hasExpression: false, expressionValue: '' };
+    }
+
     const match = line.match(/^(\w+)\s+(.+?)(?:\s*=\s*(.*))?$/);
     if (!match) return null;
 
@@ -249,13 +258,13 @@ function extractName(str) {
 function isObjectDeclaration(line) {
     const objectTypes = [
         'table', 'column', 'measure', 'hierarchy', 'level',
-        'partition', 'relationship', 'role', 'tablePermission',
-        'columnPermission', 'member', 'perspective', 'perspectiveTable',
-        'perspectiveMeasure', 'perspectiveColumn', 'perspectiveHierarchy',
-        'cultureInfo', 'culture', 'expression', 'dataSource', 'function',
-        'database', 'model', 'calculationGroup', 'calculationItem',
-        'kpi', 'annotation', 'extendedProperty', 'alternateOf',
-        'translations', 'linguisticMetadata'
+        'partition', 'relationship', 'role', 'tablepermission',
+        'columnpermission', 'member', 'perspective', 'perspectivetable',
+        'perspectivemeasure', 'perspectivecolumn', 'perspectivehierarchy',
+        'cultureinfo', 'culture', 'expression', 'datasource', 'function',
+        'database', 'model', 'calculationgroup', 'calculationitem',
+        'kpi', 'annotation', 'extendedproperty', 'alternateof',
+        'translations', 'linguisticmetadata'
     ];
     return objectTypes.includes(line.split(/\s+/)[0].toLowerCase());
 }

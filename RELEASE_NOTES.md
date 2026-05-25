@@ -1,5 +1,34 @@
 # Model Alchemist — Release Notes
 
+## v4.0.0
+
+### New Features
+- **Refresh Groups** — Changes are automatically grouped by data refresh dependency. Tables sharing named expressions (Power Query sources) are merged into a single deployment group. Groups clearly indicate which tables require a data refresh after deployment.
+- **Search in diff list** — New search box in the comparison header filters visible differences by name (activates from 2nd character typed).
+- **UDF (User Defined Functions) support** — Functions defined in the model are now extracted, compared, and deployed as a separate "Functions" change group.
+- **Translation details** — Culture/translation objects now show per-object translation details (caption/description) instead of just the culture name.
+- **Calculation Groups classification** — Calculation group tables and their columns are now correctly classified into the "Calculation Groups" change group (previously mixed with Tables).
+
+### Improvements
+- **UI layout overhaul** — Diff items now show: `<name> [type] +/~/− ▼` with type badge pushed to the right via flexbox.
+- **Alphabetical sort** — Diff list is sorted alphabetically by display name (no longer grouped by type).
+- **Ellipsis for long names** — Object names that exceed available width are truncated with "..." and show the full name in a tooltip on hover.
+- **Group badges right-aligned** — "N changes" count and "REQUIRES REFRESH" badge are pushed to the right side of group headers.
+- **Relationships merged into Tables** — Relationships are now part of "Tables & Relationships" group instead of a separate group.
+- **Named expressions → table refresh linking** — Engine checks ALL partition expressions (not just changed ones) to correctly link named expression changes to dependent tables.
+- **Multi-table group merging** — Groups sharing the same named expression keys are automatically merged.
+
+### Bug Fixes
+- **Parser: bare keywords** — Fixed `parseDeclaration()` failing on bare keywords without names (e.g., `calculationGroup`, `translations`). Added bare keyword detection before the main name+type regex.
+- **Columns in CG tables** — Columns belonging to calculation group tables are now correctly assigned to "Calculation Groups" change group instead of "Tables & Relationships".
+
+### Architecture
+- `comparison/extractor.js` — Added `extractFunction()`, enhanced `extractCulture()` with translation tree parsing, `extractColumn()` accepts `isCalcGroupTable` flag.
+- `comparison/engine.js` — `computeGroups(diffs, devObjects)` rewritten: takes full devObjects for partition expression matching, merges multi-table groups.
+- `parser/tmdl-parser.js` — `parseDeclaration()` handles bare keywords via `bareMatch` check.
+
+---
+
 ## v3.5.0
 
 ### New Features

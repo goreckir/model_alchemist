@@ -225,9 +225,57 @@ async function updateSemanticModelDefinition(accessToken, workspaceId, semanticM
     return result;
 }
 
+/**
+ * Trigger a refresh of the semantic model via Power BI Enhanced Refresh API.
+ * @param {string} accessToken - Valid access token
+ * @param {string} workspaceId - Workspace (group) ID
+ * @param {string} semanticModelId - Dataset ID
+ * @param {string[]} tables - Array of table names to refresh (empty = full model)
+ * @returns {{ requestId: string }} - The refresh request ID for status polling
+ */
+async function refreshSemanticModel(accessToken, workspaceId, semanticModelId, tables = []) {
+    const url = `${POWERBI_API_BASE}/groups/${workspaceId}/datasets/${semanticModelId}/refreshes`;
+
+    const body = {
+        type: 'automatic',
+        commitMode: 'transactional',
+        maxParallelism: 10,
+        retryCount: 1
+    };
+
+    if (tables.length > 0) {
+        body.objects = tables.map(t => ({ table: t }));
+    }
+
+    const result = await apiRequest(url, accessToken, 'POST', body);
+
+    // 202 Accepted — extract requestId from Location header
+    if (result.status === 202 && result.location) {
+        const match = result.location.match(/refreshes\/(.+)$/);
+        return { requestId: match ? match[1] : null, location: result.location };
+    }
+
+    return { requestId: null };
+}
+
+/**
+ * Get refresh operation status.
+ * @param {string} accessToken
+ * @param {string} workspaceId
+ * @param {string} semanticModelId
+ * @param {string} requestId
+ * @returns {{ status: string, startTime: string, endTime?: string }}
+ */
+async function getRefreshStatus(accessToken, workspaceId, semanticModelId, requestId) {
+    const url = `${POWERBI_API_BASE}/groups/${workspaceId}/datasets/${semanticModelId}/refreshes/${requestId}`;
+    return await apiRequest(url, accessToken);
+}
+
 module.exports = {
     listWorkspaces,
     listSemanticModels,
     getSemanticModelDefinition,
-    updateSemanticModelDefinition
+    updateSemanticModelDefinition,
+    refreshSemanticModel,
+    getRefreshStatus
 };
