@@ -23,6 +23,8 @@ const {
     addRefEntry,
     removeRefEntry
 } = require('./tmdl-writer');
+const { validateDependencies } = require('./validator');
+const { loadModelFromFolder } = require('../parser/model-loader');
 
 /**
  * Deploy selected diffs from DEV model to PROD folder.
@@ -30,12 +32,35 @@ const {
  * @param {Array} selectedDiffs - Array of diff objects to deploy
  * @param {object} devModel - Loaded DEV model (with rawFiles)
  * @param {string} prodPath - Path to PROD definition/ folder
- * @param {object} options - { dryRun: boolean, backup: boolean }
- * @returns {object} Deployment result { success: boolean, actions: [], errors: [] }
+ * @param {object} options - { dryRun: boolean, backup: boolean, prodModel?: object }
+ * @returns {object} Deployment result { success, actions, errors, warnings, backupPath }
  */
 function deployChanges(selectedDiffs, devModel, prodPath, options = {}) {
     const { dryRun = false, backup = true } = options;
-    const result = { success: true, actions: [], errors: [], backupPath: null };
+    const result = { success: true, actions: [], errors: [], warnings: [], backupPath: null };
+
+    // Dependency validation (uses prodModel if provided, otherwise loads from prodPath)
+    try {
+        const prodModel = options.prodModel || loadModelFromFolder(prodPath);
+        const validation = validateDependencies(selectedDiffs, devModel, prodModel);
+        result.warnings = validation.warnings;
+        if (validation.errors.length > 0) {
+            result.success = false;
+            result.errors.push(...validation.errors.map(e => ({
+                operation: { action: 'validate', identityKey: e.identityKey },
+                error: `[${e.code}] ${e.message}`
+            })));
+            if (!dryRun) {
+                // Hard errors block real deployment; dry-run still reports planned ops.
+                return result;
+            }
+        }
+    } catch (validationErr) {
+        result.warnings.push({
+            code: 'VALIDATION_SKIPPED',
+            message: `Walidacja zaleznosci pominieta: ${validationErr.message}`
+        });
+    }
 
     // Create backup if requested
     if (backup && !dryRun) {
