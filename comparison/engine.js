@@ -164,6 +164,26 @@ function computeGroups(diffs, devObjects) {
     // Build complete expressions map (all expressions in DEV model, not just changed ones)
     const allExpressions = Object.values(devObjects).filter(o => o.objectType === 'expression');
 
+    // Word-boundary aware identifier match. Power Query identifiers are letters,
+    // digits and underscores; the M language also allows quoted identifiers via
+    // `#"..."`. Using a plain `String.includes` produces false positives when one
+    // identifier is a substring of another (e.g. `silver_SP2_Dim_MRA` matches
+    // `silver_SP2_Dim_MRAFI`). We enforce that the matched name is not preceded
+    // or followed by another identifier character.
+    const IDENT_CHAR = /[A-Za-z0-9_]/;
+    function containsIdentifier(body, name) {
+        if (!body || !name) return false;
+        let from = 0;
+        while (true) {
+            const idx = body.indexOf(name, from);
+            if (idx < 0) return false;
+            const prev = idx === 0 ? '' : body.charAt(idx - 1);
+            const next = idx + name.length >= body.length ? '' : body.charAt(idx + name.length);
+            if (!IDENT_CHAR.test(prev) && !IDENT_CHAR.test(next)) return true;
+            from = idx + 1;
+        }
+    }
+
     // Resolve transitive dependencies: param → expression → ... → partition
     // For each changed expression, find all expressions that (transitively) depend on it
     function findDependentExprNames(changedName) {
@@ -173,8 +193,9 @@ function computeGroups(diffs, devObjects) {
             const name = queue.shift();
             for (const expr of allExpressions) {
                 if (dependents.has(expr.displayName)) continue;
+                if (expr.displayName === name) continue;
                 const body = expr.properties.expression || '';
-                if (body.includes(name)) {
+                if (containsIdentifier(body, name)) {
                     dependents.add(expr.displayName);
                     queue.push(expr.displayName);
                 }
@@ -189,7 +210,7 @@ function computeGroups(diffs, devObjects) {
         for (const part of allPartitions) {
             const partExpr = part.properties.expression || part.properties.type || '';
             for (const depName of exprNames) {
-                if (partExpr.includes(depName)) {
+                if (containsIdentifier(partExpr, depName)) {
                     tables.add(part.parentTable);
                     break;
                 }

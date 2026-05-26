@@ -669,14 +669,34 @@ function executeOperation(op, prodPath) {
 }
 
 /**
- * Create a timestamped backup of the PROD folder.
+ * Create a timestamped backup of the entire .SemanticModel folder (P2 #12).
+ *
+ * `prodPath` points at the `definition/` sub-folder inside `<Model>.SemanticModel`.
+ * Backing up only `definition/` is insufficient — `definition.pbism`, the diagram
+ * layout, cached files and other sibling artifacts must also be preserved so the
+ * model can be restored to a fully working state. We therefore back up the entire
+ * parent (`.SemanticModel`) folder, placing the copy next to it.
+ *
+ * Backup naming:
+ *   <ParentDir>/<SemanticModelFolderName>_backup_<timestamp>/
+ *
+ * Falls back to the legacy `definition_backup_<timestamp>` layout if the parent
+ * folder name does not end with `.SemanticModel` (defensive: keeps behaviour for
+ * non-standard layouts and the test fixtures).
  */
 function createBackup(prodPath) {
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-').substring(0, 19);
-    const parentDir = path.dirname(prodPath);
-    const backupDir = path.join(parentDir, `definition_backup_${timestamp}`);
-    
-    copyDirSync(prodPath, backupDir);
+    const semanticModelDir = path.dirname(prodPath);
+    const semanticModelName = path.basename(semanticModelDir);
+    const grandParent = path.dirname(semanticModelDir);
+
+    const isSemanticModelFolder = /\.SemanticModel$/i.test(semanticModelName);
+    const backupDir = isSemanticModelFolder
+        ? path.join(grandParent, `${semanticModelName}_backup_${timestamp}`)
+        : path.join(semanticModelDir, `definition_backup_${timestamp}`);
+
+    const sourceDir = isSemanticModelFolder ? semanticModelDir : prodPath;
+    copyDirSync(sourceDir, backupDir);
     return backupDir;
 }
 
