@@ -95,7 +95,7 @@ app.post('/api/deploy', async (req, res) => {
 
         if (lastProdPath) {
             // Local deployment — use filesystem deployer
-            const result = deployChanges(selectedDiffs, lastDevModel, lastProdPath, { dryRun, backup });
+            const result = deployChanges(selectedDiffs, lastDevModel, lastProdPath, { dryRun, backup, prodModel: lastProdModel });
             res.json(result);
         } else {
             // Fabric deployment — apply changes via temp dir, then upload
@@ -122,7 +122,7 @@ app.post('/api/deploy/preview', async (req, res) => {
     try {
         const selectedDiffs = lastComparison.diffs.filter(d => selectedKeys.includes(d.identityKey));
         if (lastProdPath) {
-            const result = deployChanges(selectedDiffs, lastDevModel, lastProdPath, { dryRun: true, backup: false });
+            const result = deployChanges(selectedDiffs, lastDevModel, lastProdPath, { dryRun: true, backup: false, prodModel: lastProdModel });
             res.json(result);
         } else {
             const result = await deployToFabric(selectedDiffs, lastDevModel, lastProdModel, lastProdFabricInfo, { dryRun: true });
@@ -174,7 +174,7 @@ async function deployToFabric(selectedDiffs, devModel, prodModel, fabricInfo, op
         }
 
         // Run deployer against temp dir (no backup for Fabric)
-        const deployResult = deployChanges(selectedDiffs, devModel, tmpDir, { dryRun, backup: false });
+        const deployResult = deployChanges(selectedDiffs, devModel, tmpDir, { dryRun, backup: false, prodModel });
 
         if (!deployResult.success) {
             return deployResult;
