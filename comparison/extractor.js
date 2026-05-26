@@ -92,8 +92,8 @@ function extractTable(table, objects) {
             isHidden: table.properties.isHidden || 'false',
             isPrivate: table.properties.isPrivate || 'false',
             description: table.properties.description || '',
-            lineageTag: table.properties.lineageTag || '',
-            sourceLineageTag: table.properties.sourceLineageTag || '',
+            // lineageTag/sourceLineageTag intentionally excluded from comparison —
+            // they are per-environment identifiers preserved by the deployer.
             dataCategory: table.properties.dataCategory || '',
             excludeFromModelRefresh: table.properties.excludeFromModelRefresh || 'false',
             showAsVariationsOnly: table.properties.showAsVariationsOnly || 'false',
@@ -128,8 +128,8 @@ function extractColumn(tableName, col, sourceFile, objects, isCalcGroupTable) {
         dataCategory: col.properties.dataCategory || '',
         summarizeBy: col.properties.summarizeBy || 'default',
         sortByColumn: col.properties.sortByColumn || '',
-        lineageTag: col.properties.lineageTag || '',
-        sourceLineageTag: col.properties.sourceLineageTag || '',
+        // lineageTag/sourceLineageTag intentionally excluded from comparison —
+        // they are per-environment identifiers preserved by the deployer.
         summarizationSetBy: col.properties.summarizationSetBy || '',
         encodingHint: col.properties.encodingHint || '',
         annotations: serializeChildren(col, ['annotation', 'extendedProperty']),
@@ -159,7 +159,8 @@ function extractMeasure(tableName, measure, sourceFile, objects) {
         displayFolder: measure.properties.displayFolder || '',
         isHidden: measure.properties.isHidden || 'false',
         description: measure.properties.description || '',
-        lineageTag: measure.properties.lineageTag || '',
+        // lineageTag intentionally excluded from comparison —
+        // per-environment identifier preserved by the deployer.
         dataCategory: measure.properties.dataCategory || '',
         annotations: serializeChildren(measure, ['annotation', 'extendedProperty']),
         formatStringDefinition: serializeChildren(measure, ['formatStringDefinition']),
