@@ -254,7 +254,7 @@ async function deployToFabric(selectedDiffs, devModel, prodModel, fabricInfo, op
         result.actions.push({ type: 'fabric-upload', message: 'Definition uploaded to Fabric successfully.' });
 
         // Determine which tables need refresh after metadata deploy
-        const tablesNeedingRefresh = detectTablesNeedingRefresh(selectedDiffs);
+        const tablesNeedingRefresh = detectTablesNeedingRefresh(selectedDiffs, lastComparison);
         if (tablesNeedingRefresh !== null) {
             result.tablesNeedingRefresh = tablesNeedingRefresh;
         }
@@ -288,8 +288,9 @@ async function deployToFabric(selectedDiffs, devModel, prodModel, fabricInfo, op
  * - Calculated column expression changed → calculate for that table
  * - Calculated table (mode: calculated) → calculate for that table
  * - Calculation item add/remove/ordinal → calculate for the CG table
+ * - Parameter change → dataOnly for all dependent tables (resolved from comparison groups)
  */
-function detectTablesNeedingRefresh(selectedDiffs) {
+function detectTablesNeedingRefresh(selectedDiffs, comparison) {
     const tableMap = new Map(); // tableName → { refreshType, reasons[] }
 
     // Collect tables being removed — they can't be refreshed
@@ -320,16 +321,36 @@ function detectTablesNeedingRefresh(selectedDiffs) {
 
     let needsFullModel = false;
 
+    // Build lookup of parameter groups from comparison (pre-computed dependency resolution)
+    const paramGroupsByKey = new Map();
+    if (comparison && comparison.groups) {
+        for (const g of comparison.groups) {
+            if (g.isParameterGroup && g.affectedTables) {
+                for (const key of (g.memberKeys || [])) {
+                    paramGroupsByKey.set(key, g.affectedTables);
+                }
+            }
+        }
+    }
+
     for (const diff of selectedDiffs) {
         const objType = diff.objectType;
         const diffType = diff.type; // 0=added, 1=removed, 2=modified
 
         // Named expression / parameter
         if (objType === 'expression') {
-            // Check if this is a parameter (no refresh needed) or a shared query
+            // Check if this is a parameter or a shared query
             const exprValue = getExpressionValue(diff);
             if (isParameterExpression(exprValue)) {
-                // Parameters don't need refresh
+                // Parameter changed → refresh dependent tables.
+                // dataOnly is sufficient when gateway/credentials are properly
+                // configured for the new parameter value.
+                const affectedTables = paramGroupsByKey.get(diff.identityKey);
+                if (affectedTables && affectedTables.length > 0) {
+                    for (const tbl of affectedTables) {
+                        addTable(tbl, 'dataOnly', `parameter '${diff.displayName}' changed`);
+                    }
+                }
                 continue;
             }
             // Shared M query changed → all tables using it need data refresh
