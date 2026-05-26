@@ -280,8 +280,17 @@ async function deployToFabric(selectedDiffs, devModel, prodModel, fabricInfo, op
 function detectTablesNeedingRefresh(selectedDiffs) {
     const tableMap = new Map(); // tableName → { refreshType, reasons[] }
 
+    // Collect tables being removed — they can't be refreshed
+    const tablesBeingRemoved = new Set();
+    for (const d of selectedDiffs) {
+        if (d.objectType === 'table' && d.type === 1) {
+            tablesBeingRemoved.add(d.displayName);
+        }
+    }
+
     function addTable(table, type, reason) {
         if (!table) return;
+        if (tablesBeingRemoved.has(table)) return; // can't refresh a deleted table
         const existing = tableMap.get(table);
         if (!existing) {
             tableMap.set(table, { refreshType: type, reasons: [reason] });
@@ -319,6 +328,7 @@ function detectTablesNeedingRefresh(selectedDiffs) {
 
         // Partition expression changed → check if calculated table or data table
         if (objType === 'partition') {
+            if (diffType === 1) continue; // partition removed → no refresh needed
             const mode = getPartitionMode(diff);
             if (mode === 'calculated') {
                 addTable(diff.parentTable, 'calculate', 'calculated table expression changed');
