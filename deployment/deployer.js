@@ -23,9 +23,10 @@ const {
     appendChildBlock,
     addRefEntry,
     removeRefEntry,
-    ensureModelProperty
+    ensureModelProperty,
+    ensureTopLevelProperty
 } = require('./tmdl-writer');
-const { validateDependencies } = require('./validator');
+const { validateDependencies, COMPAT_LEVEL_REQUIREMENTS, getCompatibilityLevel } = require('./validator');
 const { loadModelFromFolder } = require('../parser/model-loader');
 
 /**
@@ -72,7 +73,7 @@ function deployChanges(selectedDiffs, devModel, prodPath, options = {}) {
     }
 
     // Group diffs by their target file to minimize file I/O
-    const fileOps = planFileOperations(selectedDiffs, devModel, prodPath);
+    const fileOps = planFileOperations(selectedDiffs, devModel, prodPath, options.prodModel);
 
     // Execute operations
     for (const op of fileOps) {
@@ -101,7 +102,7 @@ function deployChanges(selectedDiffs, devModel, prodPath, options = {}) {
  * Otherwise the child append would produce duplicate declarations (e.g. two
  * `column Name` entries in a calculation-group table file).
  */
-function planFileOperations(selectedDiffs, devModel, prodPath) {
+function planFileOperations(selectedDiffs, devModel, prodPath, prodModel) {
     const operations = [];
 
     const tablesBeingAdded = new Set();
@@ -150,6 +151,36 @@ function planFileOperations(selectedDiffs, devModel, prodPath) {
             propValue: 'true',
             description: { action: 'modify', objectType: 'model', name: 'discourageImplicitMeasures', file: 'model.tmdl', reason: 'calculationGroup requires discourageImplicitMeasures=true' }
         });
+    }
+
+    // Detect required compatibilityLevel bumps (e.g. UDF requires >= 1702).
+    // If the target's current compatibilityLevel is below the highest required
+    // level among selected diffs, auto-bump it in database.tmdl so the deploy
+    // succeeds instead of failing with COMPAT_LEVEL_TOO_LOW.
+    let requiredCompat = 0;
+    for (const d of selectedDiffs) {
+        if (d.type === 1) continue;
+        const req = COMPAT_LEVEL_REQUIREMENTS[d.objectType];
+        if (req && req > requiredCompat) requiredCompat = req;
+    }
+    if (requiredCompat > 0) {
+        const currentCompat = prodModel ? getCompatibilityLevel(prodModel) : null;
+        if (currentCompat === null || currentCompat < requiredCompat) {
+            operations.push({
+                action: 'ensureTopLevelProperty',
+                targetPath: path.join(prodPath, 'database.tmdl'),
+                blockKeyword: 'database',
+                propName: 'compatibilityLevel',
+                propValue: String(requiredCompat),
+                description: {
+                    action: 'modify',
+                    objectType: 'database',
+                    name: 'compatibilityLevel',
+                    file: 'database.tmdl',
+                    reason: `auto-bump to ${requiredCompat} (required by deployed object)`
+                }
+            });
+        }
     }
 
     return operations;
@@ -610,6 +641,13 @@ function executeOperation(op, prodPath) {
             if (!fs.existsSync(op.targetPath)) break;
             let content = fs.readFileSync(op.targetPath, 'utf-8');
             const updated = ensureModelProperty(content, op.propName, op.propValue);
+            if (updated !== content) fs.writeFileSync(op.targetPath, updated, 'utf-8');
+            break;
+        }
+        case 'ensureTopLevelProperty': {
+            if (!fs.existsSync(op.targetPath)) break;
+            let content = fs.readFileSync(op.targetPath, 'utf-8');
+            const updated = ensureTopLevelProperty(content, op.blockKeyword, op.propName, op.propValue);
             if (updated !== content) fs.writeFileSync(op.targetPath, updated, 'utf-8');
             break;
         }

@@ -793,3 +793,19 @@ body {
     0% { transform: translateY(0); opacity: 0.7; }
     100% { transform: translateY(-40px); opacity: 0; }
 }
+
+/* Refresh progress spinner (used in deploy result modal during Fabric refresh) */
+.refresh-spinner-inline {
+    display: inline-block;
+    width: 14px;
+    height: 14px;
+    vertical-align: middle;
+    border: 2px solid rgba(78, 154, 241, 0.25);
+    border-top-color: rgba(78, 154, 241, 0.9);
+    border-radius: 50%;
+    animation: spin 0.9s linear infinite;
+}
+.refresh-timer {
+    font-size: 12px;
+    color: var(--color-text-muted);
+}
