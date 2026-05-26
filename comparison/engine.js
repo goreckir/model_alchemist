@@ -337,6 +337,102 @@ function computeGroups(diffs, devObjects) {
         }
     }
 
+    // Column/Table deletions: group with dependent relationship deletions.
+    // When a column is removed and a relationship using that column is also removed,
+    // they should be in the same atomic group (selected/deselected together).
+    const removedColumns = diffs.filter(d => d.type === 1 && d.objectType === 'column');
+    const removedTables = diffs.filter(d => d.type === 1 && d.objectType === 'table');
+    const removedRelationships = diffs.filter(d => d.type === 1 && d.objectType === 'relationship');
+
+    if (removedRelationships.length > 0 && (removedColumns.length > 0 || removedTables.length > 0)) {
+        // Build lookup: column name (Table.Column) → set of relationship identityKeys
+        const colToRelKeys = new Map();
+        for (const rel of removedRelationships) {
+            const fromCol = (rel.propertyDiffs || []).find(p => p.propertyName === 'fromColumn');
+            const toCol = (rel.propertyDiffs || []).find(p => p.propertyName === 'toColumn');
+            const fromName = (fromCol && (fromCol.prodValue || fromCol.devValue) || '').replace(/'/g, '');
+            const toName = (toCol && (toCol.prodValue || toCol.devValue) || '').replace(/'/g, '');
+            if (fromName) {
+                if (!colToRelKeys.has(fromName)) colToRelKeys.set(fromName, new Set());
+                colToRelKeys.get(fromName).add(rel.identityKey);
+            }
+            if (toName) {
+                if (!colToRelKeys.has(toName)) colToRelKeys.set(toName, new Set());
+                colToRelKeys.get(toName).add(rel.identityKey);
+            }
+        }
+
+        // Group: column deletion + its dependent relationship deletions
+        const assignedRelKeys = new Set();
+        for (const colDiff of removedColumns) {
+            const colName = colDiff.displayName; // "Table.Column"
+            const relKeys = colToRelKeys.get(colName);
+            if (!relKeys || relKeys.size === 0) continue;
+
+            const memberKeys = new Set([colDiff.identityKey]);
+            for (const rk of relKeys) {
+                memberKeys.add(rk);
+                assignedRelKeys.add(rk);
+            }
+            // Also include parent table deletion if present
+            const tableDiff = removedTables.find(t => t.displayName === colDiff.parentTable);
+            if (tableDiff) memberKeys.add(tableDiff.identityKey);
+
+            // Check if column is already in a group
+            const existingGroup = groups.find(g => g.memberKeys.includes(colDiff.identityKey));
+            if (existingGroup) {
+                // Merge relationship keys into existing group
+                for (const rk of relKeys) {
+                    if (!existingGroup.memberKeys.includes(rk)) {
+                        existingGroup.memberKeys.push(rk);
+                    }
+                }
+            } else {
+                groups.push({
+                    groupId: `cascade:${colDiff.parentTable}`,
+                    label: `${colDiff.parentTable} (removal)`,
+                    reason: 'Column removal with dependent relationships — must be deployed together',
+                    memberKeys: [...memberKeys],
+                    requiresRefresh: false
+                });
+            }
+        }
+
+        // Table deletions: any remaining relationships referencing this table
+        for (const tblDiff of removedTables) {
+            const tblName = tblDiff.displayName;
+            const relKeys = new Set();
+            for (const [colName, rks] of colToRelKeys) {
+                if (colName.startsWith(tblName + '.')) {
+                    for (const rk of rks) {
+                        if (!assignedRelKeys.has(rk)) relKeys.add(rk);
+                    }
+                }
+            }
+            if (relKeys.size === 0) continue;
+            const existingGroup = groups.find(g => g.memberKeys.includes(tblDiff.identityKey));
+            if (existingGroup) {
+                for (const rk of relKeys) {
+                    if (!existingGroup.memberKeys.includes(rk)) {
+                        existingGroup.memberKeys.push(rk);
+                    }
+                }
+            } else {
+                const memberKeys = new Set([tblDiff.identityKey, ...relKeys]);
+                // Also add child columns/partitions of this table
+                const childDiffs = diffs.filter(d => d.type === 1 && d.parentTable === tblName);
+                for (const cd of childDiffs) memberKeys.add(cd.identityKey);
+                groups.push({
+                    groupId: `cascade:${tblName}`,
+                    label: `${tblName} (removal)`,
+                    reason: 'Table removal with dependent relationships — must be deployed together',
+                    memberKeys: [...memberKeys],
+                    requiresRefresh: false
+                });
+            }
+        }
+    }
+
     // Sort groups alphabetically by label
     groups.sort((a, b) => a.label.localeCompare(b.label));
 
