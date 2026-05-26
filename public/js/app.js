@@ -635,23 +635,28 @@
     }
 
     function selectAllVisible() {
-        // Only select diffs whose checkboxes are currently rendered (i.e., visible
-        // after applying activeGroup + activeFilter + searchTerm). Do NOT expand
-        // through comparisonResult.groups because those may contain members outside
-        // the current filter (e.g., parameter refresh groups pulling in tables when
-        // user is in 'measures' group).
-        const visibleKeys = new Set();
+        // Select diffs whose checkboxes are currently rendered (i.e., visible after
+        // applying activeGroup + activeFilter + searchTerm) AND all member keys of
+        // any group checkbox that is currently displayed — even when the group is
+        // collapsed and its member rows are not yet in the DOM. Without this,
+        // collapsed atomic groups silently get dropped from the deploy payload.
         document.querySelectorAll('.diff-checkbox').forEach(cb => {
             cb.checked = true;
             const key = cb.dataset.key;
             selectedKeys.add(key);
-            visibleKeys.add(key);
             const diffObj = cb.closest('.diff-object');
             if (diffObj) diffObj.classList.add('selected');
         });
+
+        const allGroups = (comparisonResult && comparisonResult.groups) || [];
         document.querySelectorAll('.diff-group-checkbox').forEach(cb => {
             cb.checked = true;
             cb.indeterminate = false;
+            const groupId = cb.closest('.diff-group')?.dataset.groupId;
+            if (!groupId) return;
+            const group = allGroups.find(g => String(g.groupId) === String(groupId));
+            if (!group) return;
+            for (const k of group.memberKeys) selectedKeys.add(k);
         });
         updateDeployButton();
     }
