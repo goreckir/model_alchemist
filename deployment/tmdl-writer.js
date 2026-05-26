@@ -119,6 +119,8 @@ function removeObjectBlock(content, objectType, objectName, parentIndent) {
 
 /**
  * Replace an object block in file content with new content.
+ * Preserves `lineageTag` values from the existing target block to avoid breaking
+ * report bindings (PBIR visuals bind to model objects by lineageTag, not by name).
  * @returns {string} Modified file content
  */
 function replaceObjectBlock(content, objectType, objectName, parentIndent, newBlock) {
@@ -126,9 +128,76 @@ function replaceObjectBlock(content, objectType, objectName, parentIndent, newBl
     if (!location) return content;
 
     const lines = content.replace(/\r\n/g, '\n').split('\n');
-    const newBlockLines = newBlock.split('\n');
-    
+    const oldBlock = lines.slice(location.startLine, location.endLine).join('\n');
+    const mergedBlock = preserveLineageTags(oldBlock, newBlock);
+    const newBlockLines = mergedBlock.split('\n');
+
     lines.splice(location.startLine, location.endLine - location.startLine, ...newBlockLines);
+    return lines.join('\n');
+}
+
+const DECL_KEYWORDS_RE = /^(table|column|measure|hierarchy|level|partition|relationship|role|tablepermission|columnpermission|member|perspective|perspectivetable|perspectivemeasure|perspectivecolumn|perspectivehierarchy|cultureinfo|culture|expression|function|model|calculationgroup|calculationitem|dataSource|annotation|extendedproperty|kpi|alternateof|translations|linguisticmetadata|database)\b/i;
+
+/**
+ * Collect map of "indent|declaration" -> lineageTag value from a TMDL block.
+ */
+function collectLineageTags(block) {
+    const lines = block.replace(/\r\n/g, '\n').split('\n');
+    const tags = new Map();
+    const stack = []; // [[indent, declTrimmed], ...]
+    for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith('//')) continue;
+        const indent = getIndentLevel(line);
+        while (stack.length && stack[stack.length - 1][0] >= indent) stack.pop();
+        const tagMatch = trimmed.match(/^lineageTag:\s*(.+?)\s*$/);
+        if (tagMatch) {
+            const parent = stack.length ? stack[stack.length - 1] : null;
+            if (parent) tags.set(parent[0] + '|' + parent[1], tagMatch[1]);
+            continue;
+        }
+        if (DECL_KEYWORDS_RE.test(trimmed)) {
+            const decl = trimmed.replace(/\s*=.*$/, '').trim();
+            stack.push([indent, decl]);
+        }
+    }
+    return tags;
+}
+
+/**
+ * Rewrite a new block: replace lineageTag values with values from oldTags
+ * where the parent declaration matches (same indent + same declaration line).
+ */
+function preserveLineageTags(oldBlock, newBlock) {
+    if (!oldBlock || !newBlock) return newBlock;
+    const oldTags = collectLineageTags(oldBlock);
+    if (oldTags.size === 0) return newBlock;
+
+    const lines = newBlock.replace(/\r\n/g, '\n').split('\n');
+    const stack = [];
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith('//')) continue;
+        const indent = getIndentLevel(line);
+        while (stack.length && stack[stack.length - 1][0] >= indent) stack.pop();
+        const tagMatch = trimmed.match(/^(lineageTag:\s*)(.+?)\s*$/);
+        if (tagMatch) {
+            const parent = stack.length ? stack[stack.length - 1] : null;
+            if (parent) {
+                const key = parent[0] + '|' + parent[1];
+                if (oldTags.has(key)) {
+                    const indentStr = line.substring(0, line.length - line.trimStart().length);
+                    lines[i] = indentStr + tagMatch[1] + oldTags.get(key);
+                }
+            }
+            continue;
+        }
+        if (DECL_KEYWORDS_RE.test(trimmed)) {
+            const decl = trimmed.replace(/\s*=.*$/, '').trim();
+            stack.push([indent, decl]);
+        }
+    }
     return lines.join('\n');
 }
 
