@@ -21,6 +21,7 @@ const {
     replaceTableHeader,
     appendTopLevelBlock,
     appendChildBlock,
+    appendChildBlockNested,
     addRefEntry,
     removeRefEntry,
     ensureModelProperty,
@@ -303,12 +304,16 @@ function planChildObjectOp(diff, devModel, prodPath) {
     const objectType = diff.objectType;
     const objectName = diff.displayName.split('.').slice(1).join('.');
 
+    // calculationItem lives at indent 2 (child of calculationGroup at indent 1)
+    const parentIndent = (objectType === 'calculationItem') ? 1 : 0;
+
     if (diff.type === 0) {
         // ADD: append the child block to the PROD table file
         return [{
             action: 'appendChild',
             targetPath: targetFile,
             childBlock: diff.rawBlock,
+            parentIndent,
             description: { action: 'add', objectType, name: diff.displayName, file: `tables/${fileName}` }
         }];
     } else if (diff.type === 1) {
@@ -318,6 +323,7 @@ function planChildObjectOp(diff, devModel, prodPath) {
             targetPath: targetFile,
             childType: objectType,
             childName: objectName,
+            parentIndent,
             description: { action: 'remove', objectType, name: diff.displayName, file: `tables/${fileName}` }
         }];
     } else {
@@ -328,6 +334,7 @@ function planChildObjectOp(diff, devModel, prodPath) {
             childType: objectType,
             childName: objectName,
             newBlock: diff.rawBlock,
+            parentIndent,
             description: { action: 'modify', objectType, name: diff.displayName, file: `tables/${fileName}` }
         }];
     }
@@ -599,7 +606,9 @@ function executeOperation(op, prodPath) {
                 return { changed: false, code: 'TARGET_FILE_MISSING', reason: `Plik docelowy nie istnieje: ${op.targetPath}` };
             }
             const before = fs.readFileSync(op.targetPath, 'utf-8');
-            const after = appendChildBlock(before, op.childBlock);
+            const after = (op.parentIndent && op.parentIndent > 0)
+                ? appendChildBlockNested(before, op.childBlock, op.parentIndent)
+                : appendChildBlock(before, op.childBlock);
             fs.writeFileSync(op.targetPath, after, 'utf-8');
             return { changed: after !== before };
         }
@@ -608,7 +617,7 @@ function executeOperation(op, prodPath) {
                 return { changed: false, code: 'TARGET_FILE_MISSING', reason: `Plik docelowy nie istnieje: ${op.targetPath}` };
             }
             const before = fs.readFileSync(op.targetPath, 'utf-8');
-            const after = removeObjectBlock(before, op.childType, op.childName, 0);
+            const after = removeObjectBlock(before, op.childType, op.childName, op.parentIndent || 0);
             fs.writeFileSync(op.targetPath, after, 'utf-8');
             if (after === before) {
                 return { changed: false, code: 'BLOCK_NOT_FOUND', reason: `Nie znaleziono bloku ${op.childType} '${op.childName}' w ${path.basename(op.targetPath)}` };
@@ -620,7 +629,7 @@ function executeOperation(op, prodPath) {
                 return { changed: false, code: 'TARGET_FILE_MISSING', reason: `Plik docelowy nie istnieje: ${op.targetPath}` };
             }
             const before = fs.readFileSync(op.targetPath, 'utf-8');
-            const after = replaceObjectBlock(before, op.childType, op.childName, 0, op.newBlock);
+            const after = replaceObjectBlock(before, op.childType, op.childName, op.parentIndent || 0, op.newBlock);
             fs.writeFileSync(op.targetPath, after, 'utf-8');
             if (after === before) {
                 return { changed: false, code: 'BLOCK_NOT_FOUND', reason: `Nie znaleziono bloku ${op.childType} '${op.childName}' w ${path.basename(op.targetPath)} (PROD nie ma tego obiektu lub uzywa innego wciecia)` };
