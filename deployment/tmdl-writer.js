@@ -295,11 +295,75 @@ function removeRefEntry(content, refType, refName) {
     return filtered.join('\n');
 }
 
+/**
+ * Extract the "header" portion of a table block: lines from the `table <name>` declaration
+ * down to (but excluding) the first child object declaration at parent+1 indent.
+ * Children are: column/measure/hierarchy/partition/calculationGroup/calculationItem.
+ *
+ * @param {string} content - Full file content containing the table block
+ * @param {string} tableName - Table name (used to anchor the start)
+ * @returns {{ headerStart: number, headerEnd: number, firstChildStart: number|null, blockStart: number, blockEnd: number, headerLines: string[] } | null}
+ */
+function findTableHeader(content, tableName) {
+    const block = findTopLevelBlock(content, 'table', tableName);
+    if (!block) return null;
+    const lines = content.replace(/\r\n/g, '\n').split('\n');
+    const childKeywords = ['column', 'measure', 'hierarchy', 'partition', 'calculationGroup', 'calculationItem'];
+    let firstChildStart = null;
+    for (let i = block.startLine + 1; i <= block.endLine; i++) {
+        const ln = lines[i];
+        if (!ln || ln.trim() === '') continue;
+        const indent = getIndentLevel(ln);
+        if (indent !== 1) continue;
+        const trimmed = ln.trim();
+        const firstWord = trimmed.split(/[\s\t]/)[0];
+        if (childKeywords.includes(firstWord)) {
+            firstChildStart = i;
+            break;
+        }
+    }
+    const headerEnd = firstChildStart !== null ? firstChildStart - 1 : block.endLine;
+    return {
+        blockStart: block.startLine,
+        blockEnd: block.endLine,
+        headerStart: block.startLine,
+        headerEnd,
+        firstChildStart,
+        headerLines: lines.slice(block.startLine, headerEnd + 1)
+    };
+}
+
+/**
+ * Replace ONLY the table header (declaration + table-level properties) in target content,
+ * preserving all children (columns, measures, hierarchies, partitions...).
+ *
+ * @param {string} targetContent - Existing target file content
+ * @param {string} devContent - DEV file content (header source)
+ * @param {string} tableName
+ * @returns {string} New target content with header replaced; throws if either block missing
+ */
+function replaceTableHeader(targetContent, devContent, tableName) {
+    const targetH = findTableHeader(targetContent, tableName);
+    const devH = findTableHeader(devContent, tableName);
+    if (!targetH) throw new Error(`Table '${tableName}' not found in target content`);
+    if (!devH) throw new Error(`Table '${tableName}' not found in DEV content`);
+
+    const targetLines = targetContent.replace(/\r\n/g, '\n').split('\n');
+    const newLines = [
+        ...targetLines.slice(0, targetH.headerStart),
+        ...devH.headerLines,
+        ...targetLines.slice(targetH.headerEnd + 1)
+    ];
+    return newLines.join('\n');
+}
+
 module.exports = {
     findObjectBlock,
     findTopLevelBlock,
+    findTableHeader,
     removeObjectBlock,
     replaceObjectBlock,
+    replaceTableHeader,
     appendTopLevelBlock,
     appendChildBlock,
     addRefEntry,
