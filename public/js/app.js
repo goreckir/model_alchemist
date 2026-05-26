@@ -171,20 +171,35 @@
             showError('Sign in to Fabric first (DEV source).');
             return;
         }
-        if (!devIsLocal && !devFabricSelection.semanticModelId) {
-            showError('Verify DEV connection string first (click "Verify Access").');
-            return;
-        }
-        if (prodIsLocal && !prodPath) {
-            showError('Please select a PROD model file.');
-            return;
-        }
         if (!prodIsLocal && !fabricConnected) {
             showError('Sign in to Fabric first (PROD source).');
             return;
         }
-        if (!prodIsLocal && !prodFabricSelection.semanticModelId) {
-            showError('Verify PROD connection string first (click "Verify Access").');
+
+        // Auto-verify Fabric access if not yet verified
+        const needsDevVerify = !devIsLocal && !devFabricSelection.semanticModelId;
+        const needsProdVerify = !prodIsLocal && !prodFabricSelection.semanticModelId;
+        if (needsDevVerify || needsProdVerify) {
+            showLoading();
+            try {
+                if (needsDevVerify) await resolveConnectionString('dev');
+                if (needsProdVerify) await resolveConnectionString('prod');
+            } finally {
+                hideLoading();
+            }
+            // Check again after auto-verify
+            if (!devIsLocal && !devFabricSelection.semanticModelId) {
+                showError('Cannot verify DEV Fabric access. Check connection string.');
+                return;
+            }
+            if (!prodIsLocal && !prodFabricSelection.semanticModelId) {
+                showError('Cannot verify PROD Fabric access. Check connection string.');
+                return;
+            }
+        }
+
+        if (prodIsLocal && !prodPath) {
+            showError('Please select a PROD model file.');
             return;
         }
 
