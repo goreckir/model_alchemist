@@ -9,6 +9,7 @@ const fabricAuth = require('./fabric/auth');
 const fabricApi = require('./fabric/api-client');
 const { loadModelFromFabric } = require('./fabric/model-loader');
 const { parseConnectionString } = require('./fabric/connection-parser');
+const { logEvent, readEvents } = require('./lib/activity-log');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -64,9 +65,18 @@ app.post('/api/compare', (req, res) => {
         lastDevModel = devModel;
         lastProdPath = resolveDefinitionPath(prodPath);
         
+        logEvent('compare', {
+            mode: 'local-local',
+            devSource: devPath,
+            prodSource: prodPath,
+            diffCount: result.diffs ? result.diffs.length : 0,
+            groupCount: result.groups ? result.groups.length : 0,
+            success: true
+        });
         res.json(result);
     } catch (err) {
         console.error('Comparison error:', err);
+        logEvent('compare', { mode: 'local-local', devSource: devPath, prodSource: prodPath, success: false, error: err.message });
         res.status(500).json({ error: err.message });
     }
 });
@@ -96,14 +106,43 @@ app.post('/api/deploy', async (req, res) => {
         if (lastProdPath) {
             // Local deployment — use filesystem deployer
             const result = deployChanges(selectedDiffs, lastDevModel, lastProdPath, { dryRun, backup, prodModel: lastProdModel });
+            logEvent('deploy', {
+                mode: 'local',
+                dryRun,
+                target: lastProdPath,
+                selectedCount: selectedDiffs.length,
+                selectedDiffs: selectedDiffs.map(d => ({ type: d.type, objectType: d.objectType, name: d.displayName, identityKey: d.identityKey })),
+                success: result.success,
+                actionsExecuted: (result.actions || []).filter(a => a.type === 'applied').length,
+                errorCount: (result.errors || []).length,
+                warnings: result.warnings || [],
+                errors: result.errors || [],
+                backupPath: result.backupPath || null,
+                tablesNeedingRefresh: result.tablesNeedingRefresh || null
+            });
             res.json(result);
         } else {
             // Fabric deployment — apply changes via temp dir, then upload
             const result = await deployToFabric(selectedDiffs, lastDevModel, lastProdModel, lastProdFabricInfo, { dryRun, backup, backupPath });
+            logEvent('deploy', {
+                mode: 'fabric',
+                dryRun,
+                target: lastProdFabricInfo ? `workspace:${lastProdFabricInfo.workspaceId}/model:${lastProdFabricInfo.semanticModelId}` : null,
+                selectedCount: selectedDiffs.length,
+                selectedDiffs: selectedDiffs.map(d => ({ type: d.type, objectType: d.objectType, name: d.displayName, identityKey: d.identityKey })),
+                success: result.success,
+                actionsExecuted: (result.actions || []).filter(a => a.type === 'applied').length,
+                errorCount: (result.errors || []).length,
+                warnings: result.warnings || [],
+                errors: result.errors || [],
+                backupPath: result.backupPath || null,
+                tablesNeedingRefresh: result.tablesNeedingRefresh || null
+            });
             res.json(result);
         }
     } catch (err) {
         console.error('Deployment error:', err);
+        logEvent('deploy', { success: false, error: err.message });
         res.status(500).json({ error: err.message });
     }
 });
@@ -430,9 +469,17 @@ app.post('/api/fabric/refresh', async (req, res) => {
 
         const { workspaceId, semanticModelId } = lastProdFabricInfo;
         const result = await fabricApi.refreshSemanticModel(token, workspaceId, semanticModelId, tables || []);
+        logEvent('refresh', {
+            target: `workspace:${workspaceId}/model:${semanticModelId}`,
+            tables: tables || [],
+            tableCount: (tables || []).length,
+            requestId: result.requestId,
+            success: true
+        });
         res.json({ success: true, requestId: result.requestId });
     } catch (err) {
         console.error('Refresh error:', err);
+        logEvent('refresh', { tables: tables || [], success: false, error: err.message });
         res.status(500).json({ error: err.message });
     }
 });
@@ -453,9 +500,17 @@ app.get('/api/fabric/refresh/status/:requestId', async (req, res) => {
 
         const { workspaceId, semanticModelId } = lastProdFabricInfo;
         const status = await fabricApi.getRefreshStatus(token, workspaceId, semanticModelId, requestId);
+        logEvent('refresh-status', {
+            requestId,
+            target: `workspace:${workspaceId}/model:${semanticModelId}`,
+            status: status.status || null,
+            startTime: status.startTime || null,
+            endTime: status.endTime || null
+        });
         res.json(status);
     } catch (err) {
         console.error('Refresh status error:', err);
+        logEvent('refresh-status', { requestId, success: false, error: err.message });
         res.status(500).json({ error: err.message });
     }
 });
@@ -584,9 +639,29 @@ app.post('/api/compare-fabric', async (req, res) => {
             };
         }
 
+        logEvent('compare', {
+            mode: `${devSource.type}-${prodSource.type}`,
+            devSource: devLabel,
+            prodSource: prodLabel,
+            diffCount: result.diffs ? result.diffs.length : 0,
+            groupCount: result.groups ? result.groups.length : 0,
+            success: true
+        });
         res.json(result);
     } catch (err) {
         console.error('Comparison error:', err);
+        logEvent('compare', { mode: `${devSource && devSource.type}-${prodSource && prodSource.type}`, success: false, error: err.message });
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// API: Read recent activity log entries.
+app.get('/api/activity-log', (req, res) => {
+    const limit = Math.min(parseInt(req.query.limit, 10) || 200, 2000);
+    try {
+        const entries = readEvents(limit);
+        res.json({ entries });
+    } catch (err) {
         res.status(500).json({ error: err.message });
     }
 });

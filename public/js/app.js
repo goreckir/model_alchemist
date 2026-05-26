@@ -68,6 +68,15 @@
     document.getElementById('btn-expand-all').addEventListener('click', expandAll);
     document.getElementById('btn-collapse-all').addEventListener('click', collapseAll);
 
+    // Activity log modal
+    const activityLogModal = document.getElementById('activity-log-modal');
+    const activityLogLimit = document.getElementById('activity-log-limit');
+    document.getElementById('btn-activity-log').addEventListener('click', openActivityLog);
+    document.getElementById('activity-log-close').addEventListener('click', () => activityLogModal.classList.add('hidden'));
+    document.getElementById('btn-activity-log-ok').addEventListener('click', () => activityLogModal.classList.add('hidden'));
+    document.getElementById('btn-activity-log-refresh').addEventListener('click', loadActivityLog);
+    activityLogLimit.addEventListener('change', loadActivityLog);
+
     // Export dropdown
     btnExport.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -1077,6 +1086,90 @@
     function hideError() { errorMessage.classList.add('hidden'); }
     function showLoading() { loading.classList.remove('hidden'); btnCompare.disabled = true; }
     function hideLoading() { loading.classList.add('hidden'); btnCompare.disabled = false; }
+
+    // ===== Activity Log =====
+    function openActivityLog() {
+        document.getElementById('activity-log-modal').classList.remove('hidden');
+        loadActivityLog();
+    }
+
+    async function loadActivityLog() {
+        const body = document.getElementById('activity-log-body');
+        const countEl = document.getElementById('activity-log-count');
+        const limit = document.getElementById('activity-log-limit').value || 200;
+        body.innerHTML = '<p style="padding: 12px; color: var(--color-text-dim);">Loading...</p>';
+        try {
+            const resp = await fetch(`/api/activity-log?limit=${encodeURIComponent(limit)}`);
+            const data = await resp.json();
+            const entries = (data.entries || []).slice().reverse(); // newest first
+            countEl.textContent = `${entries.length} entries`;
+            if (entries.length === 0) {
+                body.innerHTML = '<p style="padding: 12px; color: var(--color-text-dim);">Log is empty.</p>';
+                return;
+            }
+            body.innerHTML = entries.map(renderLogEntry).join('');
+        } catch (err) {
+            body.innerHTML = `<p style="padding: 12px; color: var(--color-removed-text);">Failed to load: ${escapeHtml(err.message)}</p>`;
+        }
+    }
+
+    function renderLogEntry(e) {
+        const ts = e.timestamp ? new Date(e.timestamp).toLocaleString() : '';
+        const ok = (e.success === true) ? '✓' : (e.success === false) ? '✗' : '·';
+        const okColor = e.success === false ? 'var(--color-removed-text)' : (e.success === true ? 'var(--color-added-text, #4caf50)' : 'var(--color-text-dim)');
+
+        let summary = '';
+        if (e.event === 'compare') {
+            summary = `mode=${e.mode || '?'} diffs=${e.diffCount ?? '?'} groups=${e.groupCount ?? '?'}`;
+            if (e.devSource) summary += ` · dev=${e.devSource}`;
+            if (e.prodSource) summary += ` · prod=${e.prodSource}`;
+        } else if (e.event === 'deploy') {
+            summary = `mode=${e.mode || '?'} dryRun=${e.dryRun ? 'yes' : 'no'} selected=${e.selectedCount ?? '?'} applied=${e.actionsExecuted ?? '?'} errors=${e.errorCount ?? 0}`;
+            if (e.target) summary += ` · target=${e.target}`;
+            if (e.backupPath) summary += ` · backup=${e.backupPath}`;
+        } else if (e.event === 'refresh') {
+            summary = `tables=${e.tableCount ?? (e.tables ? e.tables.length : '?')}`;
+            if (e.requestId) summary += ` · requestId=${e.requestId}`;
+            if (e.target) summary += ` · target=${e.target}`;
+        } else if (e.event === 'refresh-status') {
+            summary = `requestId=${e.requestId || '?'} status=${e.status || '?'}`;
+        } else {
+            summary = JSON.stringify(e);
+        }
+
+        // Build expandable details (selected diffs / errors / warnings)
+        const detailParts = [];
+        if (Array.isArray(e.selectedDiffs) && e.selectedDiffs.length > 0) {
+            const lines = e.selectedDiffs.slice(0, 200).map(d => {
+                const sign = d.type === 0 ? '+' : d.type === 1 ? '−' : '~';
+                return `${sign} [${d.objectType}] ${d.name}`;
+            }).join('\n');
+            detailParts.push(`<details><summary>Selected diffs (${e.selectedDiffs.length})</summary><pre style="white-space: pre-wrap; margin: 4px 0;">${escapeHtml(lines)}</pre></details>`);
+        }
+        if (Array.isArray(e.errors) && e.errors.length > 0) {
+            const lines = e.errors.map(er => `✗ ${typeof er === 'string' ? er : (er.error || JSON.stringify(er))}`).join('\n');
+            detailParts.push(`<details open><summary style="color: var(--color-removed-text);">Errors (${e.errors.length})</summary><pre style="white-space: pre-wrap; margin: 4px 0;">${escapeHtml(lines)}</pre></details>`);
+        }
+        if (Array.isArray(e.warnings) && e.warnings.length > 0) {
+            const lines = e.warnings.map(w => `⚠ [${w.code || 'WARN'}] ${w.message || JSON.stringify(w)}`).join('\n');
+            detailParts.push(`<details><summary>Warnings (${e.warnings.length})</summary><pre style="white-space: pre-wrap; margin: 4px 0;">${escapeHtml(lines)}</pre></details>`);
+        }
+        if (e.error && !Array.isArray(e.errors)) {
+            detailParts.push(`<pre style="white-space: pre-wrap; margin: 4px 0; color: var(--color-removed-text);">${escapeHtml(e.error)}</pre>`);
+        }
+
+        return `
+            <div style="border-bottom: 1px solid var(--color-border, rgba(255,255,255,0.08)); padding: 8px 4px;">
+                <div style="display: flex; gap: 10px; align-items: baseline;">
+                    <span style="color: var(--color-text-dim); min-width: 160px;">${escapeHtml(ts)}</span>
+                    <span style="color: ${okColor}; min-width: 16px; font-weight: 700;">${ok}</span>
+                    <span style="font-weight: 600; min-width: 110px;">${escapeHtml(e.event || '?')}</span>
+                    <span style="flex: 1;">${escapeHtml(summary)}</span>
+                </div>
+                ${detailParts.join('')}
+            </div>
+        `;
+    }
 
     // ===== Native File Picker =====
 
