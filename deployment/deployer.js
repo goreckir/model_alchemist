@@ -44,10 +44,12 @@ function deployChanges(selectedDiffs, devModel, prodPath, options = {}) {
     const result = { success: true, actions: [], errors: [], warnings: [], backupPath: null };
 
     // Dependency validation (uses prodModel if provided, otherwise loads from prodPath)
+    let cascadeRels = [];
     try {
         const prodModel = options.prodModel || loadModelFromFolder(prodPath);
         const validation = validateDependencies(selectedDiffs, devModel, prodModel);
         result.warnings = validation.warnings;
+        cascadeRels = validation.cascadeRels || [];
         if (validation.errors.length > 0) {
             result.success = false;
             result.errors.push(...validation.errors.map(e => ({
@@ -75,6 +77,18 @@ function deployChanges(selectedDiffs, devModel, prodPath, options = {}) {
 
     // Group diffs by their target file to minimize file I/O
     const fileOps = planFileOperations(selectedDiffs, devModel, prodPath, options.prodModel);
+
+    // Auto-cascade: remove orphaned relationships detected by validator
+    for (const rel of cascadeRels) {
+        const relName = rel.relName || rel.displayName;
+        fileOps.push({
+            action: 'removeTopLevel',
+            targetPath: path.join(prodPath, 'relationships.tmdl'),
+            objectType: 'relationship',
+            objectName: relName,
+            description: { action: 'remove', objectType: 'relationship', name: rel.displayName, file: 'relationships.tmdl', reason: 'auto-cascade: referenced column/table removed' }
+        });
+    }
 
     // Execute operations
     for (const op of fileOps) {
