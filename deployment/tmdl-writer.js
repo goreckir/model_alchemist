@@ -239,29 +239,55 @@ function appendChildBlock(content, childBlock) {
 }
 
 /**
- * Add a ref entry to model.tmdl for a new table/role/culture.
+ * Map our internal refType to the TMDL ref keyword used in model.tmdl.
+ * Power BI uses 'cultureInfo' (not 'culture') for culture references.
+ */
+function refKeyword(refType) {
+    if (refType === 'culture') return 'cultureInfo';
+    return refType; // table, role, perspective
+}
+
+/**
+ * Detect the indentation prefix used by existing top-level `ref` statements.
+ * Power BI Desktop conventionally emits them WITHOUT indentation (column 0),
+ * but some files may indent them under `model Model`. We mirror what the
+ * file currently uses; default to no indent (Power BI Desktop convention).
+ */
+function detectRefIndent(lines) {
+    for (const line of lines) {
+        const m = line.match(/^(\s*)ref\s+\S+\s+/);
+        if (m) return m[1];
+    }
+    return ''; // top-level, matches Power BI Desktop output
+}
+
+/**
+ * Add a ref entry to model.tmdl for a new table/role/culture/perspective.
  * @param {string} content - model.tmdl content
- * @param {string} refType - 'table', 'role', 'culture', 'perspective'
+ * @param {string} refType - 'table', 'role', 'culture' (→ cultureInfo), 'perspective'
  * @param {string} refName - Object name
  * @returns {string} Modified content
  */
 function addRefEntry(content, refType, refName) {
     const lines = content.replace(/\r\n/g, '\n').split('\n');
+    const keyword = refKeyword(refType);
     const quotedName = quoteName(refName);
-    const refLine = `\tref ${refType} ${quotedName}`;
-    
-    // Check if ref already exists
+    const indent = detectRefIndent(lines);
+    const refLine = `${indent}ref ${keyword} ${quotedName}`;
+
+    // Check if ref already exists (any indentation)
     for (const line of lines) {
-        if (line.trim() === `ref ${refType} ${quotedName}` || line.trim() === `ref ${refType} ${refName}`) {
-            return content; // Already exists
+        const t = line.trim();
+        if (t === `ref ${keyword} ${quotedName}` || t === `ref ${keyword} ${refName}`) {
+            return content;
         }
     }
 
-    // Find the last ref line of the same type and insert after it
+    // Find the last ref line of the same keyword and insert after it
     let lastRefIdx = -1;
     for (let i = 0; i < lines.length; i++) {
         const trimmed = lines[i].trim();
-        if (trimmed.startsWith(`ref ${refType} `)) {
+        if (trimmed.startsWith(`ref ${keyword} `)) {
             lastRefIdx = i;
         }
     }
@@ -269,12 +295,21 @@ function addRefEntry(content, refType, refName) {
     if (lastRefIdx >= 0) {
         lines.splice(lastRefIdx + 1, 0, refLine);
     } else {
-        // No existing refs of this type — append at end of file
-        let insertIdx = lines.length;
-        for (let i = lines.length - 1; i >= 0; i--) {
-            if (lines[i].trim()) { insertIdx = i + 1; break; }
+        // No existing refs of this keyword — insert after last ref of any kind,
+        // or append at end of file if none exist.
+        let lastAnyRefIdx = -1;
+        for (let i = 0; i < lines.length; i++) {
+            if (lines[i].trim().startsWith('ref ')) lastAnyRefIdx = i;
         }
-        lines.splice(insertIdx, 0, refLine);
+        if (lastAnyRefIdx >= 0) {
+            lines.splice(lastAnyRefIdx + 1, 0, refLine);
+        } else {
+            let insertIdx = lines.length;
+            for (let i = lines.length - 1; i >= 0; i--) {
+                if (lines[i].trim()) { insertIdx = i + 1; break; }
+            }
+            lines.splice(insertIdx, 0, '', refLine);
+        }
     }
 
     return lines.join('\n');
@@ -285,11 +320,12 @@ function addRefEntry(content, refType, refName) {
  */
 function removeRefEntry(content, refType, refName) {
     const lines = content.replace(/\r\n/g, '\n').split('\n');
+    const keyword = refKeyword(refType);
     const quotedName = quoteName(refName);
-    
+
     const filtered = lines.filter(line => {
         const trimmed = line.trim();
-        return trimmed !== `ref ${refType} ${quotedName}` && trimmed !== `ref ${refType} ${refName}`;
+        return trimmed !== `ref ${keyword} ${quotedName}` && trimmed !== `ref ${keyword} ${refName}`;
     });
 
     return filtered.join('\n');
