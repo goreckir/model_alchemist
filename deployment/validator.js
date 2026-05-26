@@ -14,6 +14,23 @@
 
 const { extractAll } = require('../comparison/extractor');
 
+// Minimum compatibility level required for specific TMDL features.
+const COMPAT_LEVEL_REQUIREMENTS = {
+    function: 1702, // UDF (User Defined Functions) require TOM compatibility level >= 1702
+};
+
+/**
+ * Parse compatibilityLevel from a model's database.tmdl content.
+ * Returns null if not found / not parseable.
+ */
+function getCompatibilityLevel(model) {
+    if (!model || !model.rawFiles) return null;
+    const content = model.rawFiles['database.tmdl'] || model.rawFiles['database'];
+    if (!content) return null;
+    const m = content.match(/compatibilityLevel:\s*(\d+)/);
+    return m ? parseInt(m[1], 10) : null;
+}
+
 /**
  * @param {Array} selectedDiffs
  * @param {object} devModel
@@ -23,6 +40,22 @@ const { extractAll } = require('../comparison/extractor');
 function validateDependencies(selectedDiffs, devModel, prodModel) {
     const warnings = [];
     const errors = [];
+
+    // Compatibility level check (e.g. UDF requires >= 1702)
+    const targetCompat = getCompatibilityLevel(prodModel);
+    if (targetCompat !== null) {
+        for (const d of selectedDiffs) {
+            if (d.type === 1) continue; // remove never needs higher compat
+            const required = COMPAT_LEVEL_REQUIREMENTS[d.objectType];
+            if (required && targetCompat < required) {
+                errors.push({
+                    code: 'COMPAT_LEVEL_TOO_LOW',
+                    identityKey: d.identityKey,
+                    message: `Obiekt ${d.objectType} '${d.displayName}' wymaga compatibilityLevel >= ${required}, target ma ${targetCompat}. Podnies compatibilityLevel w database.tmdl target przed deployem.`
+                });
+            }
+        }
+    }
 
     const prodObjects = extractAll(prodModel);
     const devObjects = extractAll(devModel);
