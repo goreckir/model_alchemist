@@ -231,13 +231,14 @@ async function updateSemanticModelDefinition(accessToken, workspaceId, semanticM
  * @param {string} workspaceId - Workspace (group) ID
  * @param {string} semanticModelId - Dataset ID
  * @param {string[]} tables - Array of table names to refresh (empty = full model)
+ * @param {string} [refreshType='automatic'] - Refresh type: automatic|dataOnly|calculate|full
  * @returns {{ requestId: string }} - The refresh request ID for status polling
  */
-async function refreshSemanticModel(accessToken, workspaceId, semanticModelId, tables = []) {
+async function refreshSemanticModel(accessToken, workspaceId, semanticModelId, tables = [], refreshType = 'automatic') {
     const url = `${POWERBI_API_BASE}/groups/${workspaceId}/datasets/${semanticModelId}/refreshes`;
 
     const body = {
-        type: 'automatic',
+        type: refreshType,
         commitMode: 'transactional',
         maxParallelism: 10,
         retryCount: 1

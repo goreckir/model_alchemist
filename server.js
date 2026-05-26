@@ -259,65 +259,167 @@ async function deployToFabric(selectedDiffs, devModel, prodModel, fabricInfo, op
 
 /**
  * Detect which tables need refresh after deploying metadata changes.
- * Rules: partitions, named expressions, new tables/columns require data refresh.
- * Measures, relationships, column properties (isHidden, format, etc.) do NOT.
- * Calculation groups: adding/removing items or changing ordinal requires refresh;
- *   modifying only the DAX expression does NOT (evaluated at query time).
+ * Returns an object with per-table refresh classification:
+ * {
+ *   refreshType: 'automatic'|'dataOnly'|'calculate',
+ *   tables: [{ table, refreshType, reason }],
+ *   isFullModel: boolean
+ * }
+ * Returns null if no refresh is needed.
+ *
+ * Rules:
+ * - Parameters (IsParameterQuery) → no refresh needed
+ * - Named expression (shared M query) → dataOnly for dependent tables (or all)
+ * - Partition expression changed → dataOnly for that table
+ * - New table added → full for that table
+ * - New column with sourceColumn → dataOnly for that table
+ * - Calculated column expression changed → calculate for that table
+ * - Calculated table (mode: calculated) → calculate for that table
+ * - Calculation item add/remove/ordinal → calculate for the CG table
  */
 function detectTablesNeedingRefresh(selectedDiffs) {
-    const tables = new Set();
+    const tableMap = new Map(); // tableName → { refreshType, reasons[] }
+
+    function addTable(table, type, reason) {
+        if (!table) return;
+        const existing = tableMap.get(table);
+        if (!existing) {
+            tableMap.set(table, { refreshType: type, reasons: [reason] });
+        } else {
+            existing.reasons.push(reason);
+            // Escalate: dataOnly > calculate > full
+            if (type === 'full' || existing.refreshType === 'full') {
+                existing.refreshType = 'full';
+            } else if (type === 'dataOnly' || existing.refreshType === 'dataOnly') {
+                existing.refreshType = 'dataOnly';
+            }
+            // else both calculate — stays calculate
+        }
+    }
+
+    let needsFullModel = false;
 
     for (const diff of selectedDiffs) {
         const objType = diff.objectType;
         const diffType = diff.type; // 0=added, 1=removed, 2=modified
 
-        // Partition expression changed → refresh that table
+        // Named expression / parameter
+        if (objType === 'expression') {
+            // Check if this is a parameter (no refresh needed) or a shared query
+            const exprValue = getExpressionValue(diff);
+            if (isParameterExpression(exprValue)) {
+                // Parameters don't need refresh
+                continue;
+            }
+            // Shared M query changed → all tables using it need data refresh
+            // We can't easily resolve dependencies, so mark as full-model dataOnly
+            needsFullModel = true;
+            continue;
+        }
+
+        // Partition expression changed → check if calculated table or data table
         if (objType === 'partition') {
-            if (diff.parentTable) tables.add(diff.parentTable);
+            const mode = getPartitionMode(diff);
+            if (mode === 'calculated') {
+                addTable(diff.parentTable, 'calculate', 'calculated table expression changed');
+            } else {
+                addTable(diff.parentTable, 'dataOnly', 'partition expression changed');
+            }
         }
-        // Named expression (shared M query) changed → affects tables using it (refresh all)
-        else if (objType === 'expression') {
-            tables.add('__all__');
-        }
-        // New table added → needs refresh
+
+        // New table added → needs full refresh
         else if (objType === 'table' && diffType === 0) {
-            if (diff.displayName) tables.add(diff.displayName);
+            addTable(diff.displayName, 'full', 'new table added');
         }
+
         // New column added (has sourceColumn) → table needs data refresh
         else if (objType === 'column' && diffType === 0) {
-            if (diff.parentTable) tables.add(diff.parentTable);
+            const hasSourceCol = (diff.propertyDiffs || []).some(p => p.propertyName === 'sourceColumn' && p.devValue);
+            const hasExpression = (diff.propertyDiffs || []).some(p => p.propertyName === 'expression' && p.devValue);
+            if (hasExpression) {
+                addTable(diff.parentTable, 'calculate', 'new calculated column');
+            } else if (hasSourceCol) {
+                addTable(diff.parentTable, 'dataOnly', 'new column with sourceColumn');
+            }
         }
-        // Column with expression change (calculated column)
+
+        // Column expression change (calculated column)
         else if (objType === 'column' && diffType === 2) {
             const hasExpr = (diff.propertyDiffs || []).some(p => p.propertyName === 'expression');
-            if (hasExpr && diff.parentTable) tables.add(diff.parentTable);
+            if (hasExpr) {
+                addTable(diff.parentTable, 'calculate', 'calculated column expression changed');
+            }
         }
-        // Calculation item added/removed → refresh the CG table (Name/Ordinal columns are materialized)
+
+        // Calculation item added/removed → recalculate the CG table
         else if (objType === 'calculationItem' && (diffType === 0 || diffType === 1)) {
-            if (diff.parentTable) tables.add(diff.parentTable);
+            addTable(diff.parentTable, 'calculate', `calculationItem ${diffType === 0 ? 'added' : 'removed'}`);
         }
-        // Calculation item modified → only if ordinal changed (expression is query-time)
+
+        // Calculation item modified → only if ordinal changed
         else if (objType === 'calculationItem' && diffType === 2) {
             const hasOrdinalChange = (diff.propertyDiffs || []).some(p => p.propertyName === 'ordinal');
-            if (hasOrdinalChange && diff.parentTable) tables.add(diff.parentTable);
+            if (hasOrdinalChange) {
+                addTable(diff.parentTable, 'calculate', 'calculationItem ordinal changed');
+            }
         }
-        // Calculation group precedence changed → refresh the CG table
+
+        // Calculation group precedence changed
         else if (objType === 'calculationGroup' && diffType === 2) {
             const hasPrecedenceChange = (diff.propertyDiffs || []).some(p => p.propertyName === 'precedence');
-            if (hasPrecedenceChange && diff.parentTable) tables.add(diff.parentTable);
+            if (hasPrecedenceChange) {
+                addTable(diff.parentTable, 'calculate', 'calculationGroup precedence changed');
+            }
         }
     }
 
-    // If __all__ marker → return empty array meaning "full model refresh"
-    if (tables.has('__all__')) {
-        return []; // empty = full model refresh
-    }
-
-    if (tables.size === 0) {
+    if (tableMap.size === 0 && !needsFullModel) {
         return null; // no refresh needed
     }
 
-    return [...tables];
+    // Build tables array
+    const tables = [];
+    for (const [name, info] of tableMap) {
+        tables.push({ table: name, refreshType: info.refreshType, reasons: info.reasons });
+    }
+
+    // Determine overall API refresh type
+    let overallType = 'calculate';
+    if (needsFullModel) {
+        overallType = 'automatic';
+    } else {
+        const types = new Set(tables.map(t => t.refreshType));
+        if (types.has('full')) overallType = 'automatic';
+        else if (types.has('dataOnly') && types.has('calculate')) overallType = 'automatic';
+        else if (types.has('dataOnly')) overallType = 'dataOnly';
+        // else all calculate → 'calculate'
+    }
+
+    return {
+        refreshType: overallType,
+        tables,
+        isFullModel: needsFullModel
+    };
+}
+
+/** Extract expression value from a diff object */
+function getExpressionValue(diff) {
+    const exprProp = (diff.propertyDiffs || []).find(p => p.propertyName === 'expression');
+    if (exprProp) return exprProp.devValue || exprProp.prodValue || '';
+    // Fallback: check rawBlock
+    return diff.rawBlock || '';
+}
+
+/** Check if an expression value is a Power Query parameter */
+function isParameterExpression(exprValue) {
+    return /IsParameterQuery\s*=\s*true/i.test(exprValue);
+}
+
+/** Get partition mode from diff's propertyDiffs */
+function getPartitionMode(diff) {
+    const modeProp = (diff.propertyDiffs || []).find(p => p.propertyName === 'mode');
+    if (modeProp) return (modeProp.devValue || modeProp.prodValue || 'import').toLowerCase();
+    return 'import';
 }
 
 /**
@@ -456,7 +558,10 @@ app.post('/api/fabric/cancel-login', (req, res) => {
 
 // API: Trigger refresh of affected tables after Fabric deployment
 app.post('/api/fabric/refresh', async (req, res) => {
-    const { tables } = req.body; // optional: array of table names
+    const { tables, refreshType, tableDetails } = req.body;
+    // tables: string[] of table names (empty = full model)
+    // refreshType: 'automatic'|'dataOnly'|'calculate' (recommended type)
+    // tableDetails: [{ table, refreshType, reasons }] (for display/logging)
 
     if (!lastProdFabricInfo) {
         return res.status(400).json({ error: 'No Fabric target available. Deploy to Fabric first.' });
@@ -469,16 +574,19 @@ app.post('/api/fabric/refresh', async (req, res) => {
         }
 
         const { workspaceId, semanticModelId, modelName } = lastProdFabricInfo;
-        const result = await fabricApi.refreshSemanticModel(token, workspaceId, semanticModelId, tables || []);
+        const apiRefreshType = refreshType || 'automatic';
+        const result = await fabricApi.refreshSemanticModel(token, workspaceId, semanticModelId, tables || [], apiRefreshType);
 
-        // Store in refresh session
+        // Store in refresh session with detailed table info
         if (result.requestId) {
-            refreshStore.createRefreshRecord(result.requestId, modelName, workspaceId, semanticModelId, tables || []);
+            refreshStore.createRefreshRecord(result.requestId, modelName, workspaceId, semanticModelId, tables || [], tableDetails || [], apiRefreshType);
         }
 
         logEvent('refresh', {
             target: `workspace:${workspaceId}/model:${semanticModelId}`,
             tables: tables || [],
+            refreshType: apiRefreshType,
+            tableDetails: tableDetails || [],
             tableCount: (tables || []).length,
             requestId: result.requestId,
             success: true
@@ -486,7 +594,7 @@ app.post('/api/fabric/refresh', async (req, res) => {
         res.json({ success: true, requestId: result.requestId });
     } catch (err) {
         console.error('Refresh error:', err);
-        logEvent('refresh', { tables: tables || [], success: false, error: err.message });
+        logEvent('refresh', { tables: tables || [], refreshType: refreshType || 'automatic', success: false, error: err.message });
         res.status(500).json({ error: err.message });
     }
 });

@@ -925,17 +925,31 @@
         }
 
         // Offer refresh for Fabric deployments with data-affecting changes
-        if (result.success && result.tablesNeedingRefresh !== undefined) {
-            const tables = result.tablesNeedingRefresh;
-            const isFullRefresh = tables.length === 0;
-            const tableLabel = isFullRefresh
-                ? 'Full model refresh (Named Expressions changed)'
-                : tables.map(t => `<code>${escapeHtml(t)}</code>`).join(', ');
+        if (result.success && result.tablesNeedingRefresh != null) {
+            const refreshInfo = result.tablesNeedingRefresh;
+            const { refreshType, tables: refreshTables, isFullModel } = refreshInfo;
+
+            const typeLabels = { automatic: 'Automatic', dataOnly: 'Data Refresh', calculate: 'Recalculate', full: 'Full Refresh' };
+            const typeIcons = { automatic: '⚡', dataOnly: '📥', calculate: '🔄', full: '🔃' };
 
             html += `<div id="refresh-offer" style="margin-top: 20px; padding: 16px; background: rgba(78, 154, 241, 0.08); border: 1px solid rgba(78, 154, 241, 0.3); border-radius: 8px;">`;
-            html += `<p style="font-weight: 600; margin-bottom: 8px;">↻ Refresh Required</p>`;
-            html += `<p style="font-size: 13px; margin-bottom: 12px;">Deployed changes affect data sources and require a model refresh to take effect.</p>`;
-            html += `<p style="font-size: 12px; margin-bottom: 12px; opacity: 0.8;">Tables: ${tableLabel}</p>`;
+            html += `<p style="font-weight: 600; margin-bottom: 4px;">↻ Refresh Required</p>`;
+            html += `<p style="font-size: 12px; margin-bottom: 12px; opacity: 0.8;">API refresh type: <strong>${typeLabels[refreshType] || refreshType}</strong>${isFullModel ? ' (full model — shared query changed)' : ''}</p>`;
+
+            if (refreshTables && refreshTables.length > 0) {
+                html += `<table class="refresh-objects-table" style="margin-bottom: 12px;">`;
+                html += `<thead><tr><th>Table</th><th>Type</th><th>Reason</th></tr></thead><tbody>`;
+                for (const t of refreshTables) {
+                    const icon = typeIcons[t.refreshType] || '⚡';
+                    const label = typeLabels[t.refreshType] || t.refreshType;
+                    const reasons = (t.reasons || []).join('; ');
+                    html += `<tr><td><code>${escapeHtml(t.table)}</code></td><td>${icon} ${label}</td><td style="font-size: 11px; opacity: 0.8;">${escapeHtml(reasons)}</td></tr>`;
+                }
+                html += `</tbody></table>`;
+            } else if (isFullModel) {
+                html += `<p style="font-size: 12px; margin-bottom: 12px;">All tables will be refreshed (Named Expression dependency).</p>`;
+            }
+
             html += `<button id="btn-trigger-refresh" class="btn btn-primary" style="margin-right: 8px;">🔄 Refresh Now</button>`;
             html += `<button id="btn-skip-refresh" class="btn btn-secondary">Skip</button>`;
             html += `<div id="refresh-status" style="margin-top: 12px; display: none;"></div>`;
@@ -946,12 +960,12 @@
         resultModal.classList.remove('hidden');
 
         // Bind refresh buttons if present
-        const btnRefresh = document.getElementById('btn-trigger-refresh');
-        const btnSkip = document.getElementById('btn-skip-refresh');
-        if (btnRefresh) {
-            const tables = result.tablesNeedingRefresh;
-            btnRefresh.addEventListener('click', () => triggerFabricRefresh(tables));
-            btnSkip.addEventListener('click', () => {
+        const btnTriggerRefresh = document.getElementById('btn-trigger-refresh');
+        const btnSkipRefresh = document.getElementById('btn-skip-refresh');
+        if (btnTriggerRefresh) {
+            const refreshInfo = result.tablesNeedingRefresh;
+            btnTriggerRefresh.addEventListener('click', () => triggerFabricRefresh(refreshInfo));
+            btnSkipRefresh.addEventListener('click', () => {
                 document.getElementById('refresh-offer').style.display = 'none';
             });
         }
@@ -1000,7 +1014,12 @@
         }
     }
 
-    async function triggerFabricRefresh(tables) {
+    async function triggerFabricRefresh(refreshInfo) {
+        // refreshInfo: { refreshType, tables: [{table, refreshType, reasons}], isFullModel }
+        const tableNames = (refreshInfo.tables || []).map(t => t.table);
+        const tableDetails = refreshInfo.tables || [];
+        const refreshType = refreshInfo.refreshType || 'automatic';
+
         // Close result modal — refresh status lives in the refresh panel now
         const statusEl = document.getElementById('refresh-status');
         const btnTrigger = document.getElementById('btn-trigger-refresh');
@@ -1017,7 +1036,11 @@
             const response = await fetch('/api/fabric/refresh', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ tables })
+                body: JSON.stringify({
+                    tables: refreshInfo.isFullModel ? [] : tableNames,
+                    refreshType,
+                    tableDetails
+                })
             });
             const result = await response.json();
 
@@ -1030,14 +1053,20 @@
 
             if (result.requestId) {
                 activeRefreshId = result.requestId;
-                // Add to local history
+                // Add to local history with type info
                 refreshHistory.push({
                     id: result.requestId,
                     status: 'inProgress',
+                    refreshType,
                     startTime: new Date().toISOString(),
                     endTime: null,
-                    requestedTables: tables || [],
-                    objects: (tables || []).map(t => ({ table: t, status: 'inProgress' }))
+                    requestedTables: tableNames,
+                    objects: tableDetails.map(t => ({
+                        table: t.table,
+                        refreshType: t.refreshType,
+                        reasons: t.reasons,
+                        status: 'inProgress'
+                    }))
                 });
                 updateRefreshButton();
                 startRefreshPolling(result.requestId);
@@ -1148,21 +1177,27 @@
             : record.status === 'failed' ? 'Failed'
             : record.status === 'cancelled' ? 'Cancelled' : 'Unknown';
 
+        const typeLabels = { automatic: 'Automatic', dataOnly: 'Data Refresh', calculate: 'Recalculate', full: 'Full Refresh' };
+        const typeIcons = { automatic: '⚡', dataOnly: '📥', calculate: '🔄', full: '🔃' };
+
         const duration = formatDuration(record.startTime, record.endTime);
         const startStr = formatDateTime(record.startTime);
         const tablesLabel = record.requestedTables.length === 0
             ? 'Full model refresh'
             : record.requestedTables.join(', ');
+        const refreshTypeLabel = record.refreshType ? `${typeIcons[record.refreshType] || '⚡'} ${typeLabels[record.refreshType] || record.refreshType}` : '';
 
         let html = `<div class="refresh-record ${isLive ? 'is-active' : ''}">`;
         html += `<div class="refresh-record-header">`;
         html += `<span class="refresh-record-title">${escapeHtml(tablesLabel)}</span>`;
         html += `<span class="refresh-status-pill ${statusClass}">${isLive ? '<span class="refresh-obj-spinner"></span> ' : ''}${statusLabel}</span>`;
         html += `</div>`;
-        html += `<div class="refresh-record-time">Started: ${startStr} &nbsp;|&nbsp; Duration: ${duration}${isLive ? ' (running)' : ''}</div>`;
+        html += `<div class="refresh-record-time">Started: ${startStr} &nbsp;|&nbsp; Duration: ${duration}${isLive ? ' (running)' : ''}`;
+        if (refreshTypeLabel) html += ` &nbsp;|&nbsp; API Type: ${refreshTypeLabel}`;
+        html += `</div>`;
 
         if (record.objects && record.objects.length > 0) {
-            html += `<table class="refresh-objects-table"><thead><tr><th>Table</th><th>Status</th><th>Duration</th></tr></thead><tbody>`;
+            html += `<table class="refresh-objects-table"><thead><tr><th>Table</th><th>Refresh Type</th><th>Status</th><th>Duration</th><th>Reason</th></tr></thead><tbody>`;
             for (const obj of record.objects) {
                 const objStatusClass = obj.status === 'inProgress' ? 'in-progress' : obj.status;
                 const objStatusIcon = obj.status === 'inProgress' ? '<span class="refresh-obj-spinner"></span>'
@@ -1174,10 +1209,15 @@
                     : obj.status === 'completed' ? 'Done'
                     : obj.status === 'failed' ? (obj.message ? `Error: ${typeof obj.message === 'string' ? obj.message.slice(0, 80) : 'see details'}` : 'Failed')
                     : obj.status;
+                const objTypeIcon = typeIcons[obj.refreshType] || '';
+                const objTypeLabel = typeLabels[obj.refreshType] || obj.refreshType || '—';
+                const reasons = (obj.reasons || []).join('; ');
                 html += `<tr>`;
-                html += `<td>${escapeHtml(obj.table || '—')}</td>`;
+                html += `<td><code>${escapeHtml(obj.table || '—')}</code></td>`;
+                html += `<td style="font-size: 11px;">${objTypeIcon} ${escapeHtml(objTypeLabel)}</td>`;
                 html += `<td><span class="refresh-obj-status ${objStatusClass}">${objStatusIcon} ${escapeHtml(objLabel)}</span></td>`;
                 html += `<td>${objDuration}</td>`;
+                html += `<td style="font-size: 11px; opacity: 0.8;">${escapeHtml(reasons)}</td>`;
                 html += `</tr>`;
             }
             html += `</tbody></table>`;
