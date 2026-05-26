@@ -72,6 +72,9 @@ function compareModels(devModel, prodModel, devPath, prodPath) {
                 parentTable: devObj.parentTable || null,
                 sourceFile: devObj.sourceFile,
                 rawBlock: devObj.rawBlock,
+                // For relationships: real TMDL name (GUID) in target — used by deployer
+                // to locate the existing block during replace/remove (DEV's GUID differs).
+                targetRelName: prodObj.relName,
                 propertyDiffs
             });
         }
