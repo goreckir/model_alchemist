@@ -18,6 +18,7 @@ const {
     findTopLevelBlock,
     removeObjectBlock,
     replaceObjectBlock,
+    replaceTableHeader,
     appendTopLevelBlock,
     appendChildBlock,
     addRefEntry,
@@ -184,15 +185,16 @@ function planTableOp(diff, devModel, prodPath) {
             description: { action: 'remove', objectType: 'table', name: tableName, file: `tables/${fileName}` }
         }];
     } else {
-        // MODIFY: for table-level property changes, update the table declaration in PROD
-        // Copy the entire file from DEV (since table structure is controlled by DEV)
-        const content = devModel.rawFiles[sourceFileKey];
-        if (!content) return [];
+        // MODIFY: atomic table-modify — update only table header (declaration + table-level props),
+        // preserving children (columns/measures/hierarchies/partitions) in target.
+        const devContent = devModel.rawFiles[sourceFileKey];
+        if (!devContent) return [];
         return [{
-            action: 'writeFile',
+            action: 'replaceTableHeader',
             targetPath: targetFile,
-            content,
-            description: { action: 'modify', objectType: 'table', name: tableName, file: `tables/${fileName}` }
+            devContent,
+            tableName,
+            description: { action: 'modify', objectType: 'table', name: tableName, file: `tables/${fileName}`, atomic: true }
         }];
     }
 }
@@ -544,6 +546,13 @@ function executeOperation(op, prodPath) {
             if (!fs.existsSync(op.targetPath)) break;
             let content = fs.readFileSync(op.targetPath, 'utf-8');
             content = replaceObjectBlock(content, op.objectType, op.objectName, -1, op.newBlock);
+            fs.writeFileSync(op.targetPath, content, 'utf-8');
+            break;
+        }
+        case 'replaceTableHeader': {
+            if (!fs.existsSync(op.targetPath)) break;
+            let content = fs.readFileSync(op.targetPath, 'utf-8');
+            content = replaceTableHeader(content, op.devContent, op.tableName);
             fs.writeFileSync(op.targetPath, content, 'utf-8');
             break;
         }
