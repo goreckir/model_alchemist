@@ -854,7 +854,14 @@
                 html += `<p style="font-weight: 600; margin-bottom: 8px;">${deployActions.length} operations executed:</p>`;
                 html += '<div class="result-actions">';
                 for (const action of deployActions) {
-                    html += `<div class="result-action-item">✓ ${escapeHtml(action.action || '')} [${escapeHtml(action.objectType || '')}] ${escapeHtml(action.name || '')}</div>`;
+                    // Some actions (e.g. type='fabric-upload') carry only a message
+                    // and have no action/objectType/name — render the message instead
+                    // of an empty "[]" placeholder.
+                    if (action.message && !action.action && !action.objectType && !action.name) {
+                        html += `<div class="result-action-item">✓ ${escapeHtml(action.message)}</div>`;
+                    } else {
+                        html += `<div class="result-action-item">✓ ${escapeHtml(action.action || '')} [${escapeHtml(action.objectType || '')}] ${escapeHtml(action.name || '')}</div>`;
+                    }
                 }
                 html += '</div>';
             }
