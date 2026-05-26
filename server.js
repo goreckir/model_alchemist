@@ -619,9 +619,14 @@ app.post('/api/fabric/refresh', async (req, res) => {
         const apiRefreshType = refreshType || 'automatic';
         const result = await fabricApi.refreshSemanticModel(token, workspaceId, semanticModelId, tables || [], apiRefreshType);
 
+        // Determine if a post-refresh calculate is needed:
+        // dataOnly does NOT recalculate relationships — a follow-up calculate is required
+        const needsPostCalculate = apiRefreshType === 'dataOnly' || 
+            (apiRefreshType === 'automatic' && (tables || []).length > 0);
+
         // Store in refresh session with detailed table info
         if (result.requestId) {
-            refreshStore.createRefreshRecord(result.requestId, modelName, workspaceId, semanticModelId, tables || [], tableDetails || [], apiRefreshType);
+            refreshStore.createRefreshRecord(result.requestId, modelName, workspaceId, semanticModelId, tables || [], tableDetails || [], apiRefreshType, { needsPostCalculate });
         }
 
         logEvent('refresh', {
@@ -669,11 +674,57 @@ app.get('/api/fabric/refresh/status/:requestId', async (req, res) => {
             endTime: apiStatus.endTime || null
         });
 
-        // Return merged response: API data + our tracked objects
+        // Auto-trigger post-calculate when dataOnly refresh completes successfully
+        let postCalculateInfo = null;
+        if (record && record.needsPostCalculate && !record.postCalculateTriggered && record.status === 'completed') {
+            try {
+                const calcResult = await fabricApi.refreshSemanticModel(token, workspaceId, semanticModelId, [], 'calculate');
+                record.postCalculateTriggered = true;
+                record.postCalculateRequestId = calcResult.requestId || null;
+
+                if (calcResult.requestId) {
+                    refreshStore.createRefreshRecord(
+                        calcResult.requestId,
+                        record.modelName,
+                        workspaceId,
+                        semanticModelId,
+                        [],
+                        [{ table: '_model_', refreshType: 'calculate', reasons: ['post-refresh relationship recalculation'] }],
+                        'calculate',
+                        { needsPostCalculate: false }
+                    );
+                }
+
+                logEvent('refresh', {
+                    target: `workspace:${workspaceId}/model:${semanticModelId}`,
+                    tables: [],
+                    refreshType: 'calculate',
+                    tableDetails: [{ table: '_model_', refreshType: 'calculate', reasons: ['post-refresh relationship recalculation'] }],
+                    tableCount: 0,
+                    requestId: calcResult.requestId,
+                    success: true,
+                    trigger: 'auto-post-calculate'
+                });
+
+                postCalculateInfo = { requestId: calcResult.requestId, status: 'inProgress' };
+            } catch (calcErr) {
+                console.error('Auto post-calculate failed:', calcErr.message);
+                logEvent('refresh', {
+                    target: `workspace:${workspaceId}/model:${semanticModelId}`,
+                    refreshType: 'calculate',
+                    success: false,
+                    error: calcErr.message,
+                    trigger: 'auto-post-calculate'
+                });
+            }
+        }
+
+        // Return merged response: API data + our tracked objects + post-calculate info
         res.json({
             ...apiStatus,
             trackedObjects: record ? record.objects : [],
-            requestedTables: record ? record.requestedTables : []
+            requestedTables: record ? record.requestedTables : [],
+            postCalculate: postCalculateInfo
         });
     } catch (err) {
         console.error('Refresh status error:', err);

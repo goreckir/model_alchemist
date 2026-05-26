@@ -1,5 +1,21 @@
 # Model Alchemist — Release Notes
 
+## v4.3.1
+
+### New Features
+- **Auto-calculate after dataOnly refresh** — After a `dataOnly` refresh completes, the server automatically triggers a model-level `calculate` to rebuild relationship indexes. This prevents "relationship does not hold any data" errors that occurred when deploying table changes without a full refresh.
+
+### Improvements
+- **Two-phase refresh UI** — The front-end now displays both phases (data refresh → calculate) with continuous progress tracking. When the data phase completes and calculate is auto-triggered, polling seamlessly continues on the new request.
+- **Refresh offer info** — When a deployment requires `dataOnly` refresh, the UI now shows a note explaining that a post-refresh calculate will run automatically.
+
+### Architecture
+- `server.js` — POST `/api/fabric/refresh` sets `needsPostCalculate` flag; GET `/api/fabric/refresh/status/:requestId` auto-triggers `calculate` when dataOnly completes and returns `postCalculate` info in response.
+- `lib/refresh-store.js` — `createRefreshRecord()` accepts `options` parameter with `needsPostCalculate`, `postCalculateTriggered`, `postCalculateRequestId` fields.
+- `public/js/app.js` — `pollRefreshStatus()` detects `postCalculate` response and chains polling to the calculate requestId; refresh offer panel shows two-phase info.
+
+---
+
 ## v4.3.0
 
 ### New Features

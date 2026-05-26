@@ -971,6 +971,12 @@
             html += `<p style="font-weight: 600; margin-bottom: 4px;">↻ Refresh Required</p>`;
             html += `<p style="font-size: 12px; margin-bottom: 12px; opacity: 0.8;">API refresh type: <strong>${typeLabels[refreshType] || refreshType}</strong>${isFullModel ? ' (full model — shared query changed)' : ''}</p>`;
 
+            // Indicate two-phase refresh when dataOnly tables are present
+            const hasDataOnly = refreshTables && refreshTables.some(t => t.refreshType === 'dataOnly');
+            if (hasDataOnly && !isFullModel) {
+                html += `<p style="font-size: 11px; margin-bottom: 10px; color: var(--color-text-muted);">⚡ After data refresh, a model-level <code>calculate</code> will run automatically to rebuild relationship indexes.</p>`;
+            }
+
             if (refreshTables && refreshTables.length > 0) {
                 html += `<table class="refresh-objects-table" style="margin-bottom: 12px;">`;
                 html += `<thead><tr><th>Table</th><th>Type</th><th>Reason</th></tr></thead><tbody>`;
@@ -1152,9 +1158,30 @@
             // Check if terminal state
             const terminal = ['completed', 'failed', 'cancelled'].includes(record?.status);
             if (terminal) {
-                clearInterval(refreshPollTimer);
-                refreshPollTimer = null;
-                activeRefreshId = null;
+                // Check if server auto-triggered a post-calculate phase
+                if (data.postCalculate && data.postCalculate.requestId) {
+                    const calcRequestId = data.postCalculate.requestId;
+                    // Add calculate phase to refresh history
+                    refreshHistory.push({
+                        id: calcRequestId,
+                        status: 'inProgress',
+                        refreshType: 'calculate',
+                        startTime: new Date().toISOString(),
+                        endTime: null,
+                        requestedTables: [],
+                        objects: [{ table: '_model_', refreshType: 'calculate', reasons: ['post-refresh relationship recalculation'], status: 'inProgress' }],
+                        isPostCalculate: true
+                    });
+                    // Continue polling with new requestId
+                    activeRefreshId = calcRequestId;
+                    clearInterval(refreshPollTimer);
+                    refreshPollTimer = null;
+                    startRefreshPolling(calcRequestId);
+                } else {
+                    clearInterval(refreshPollTimer);
+                    refreshPollTimer = null;
+                    activeRefreshId = null;
+                }
             }
 
             updateRefreshButton();
