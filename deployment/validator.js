@@ -41,17 +41,19 @@ function validateDependencies(selectedDiffs, devModel, prodModel) {
     const warnings = [];
     const errors = [];
 
-    // Compatibility level check (e.g. UDF requires >= 1702)
+    // Compatibility level check (e.g. UDF requires >= 1702).
+    // The deployer auto-bumps compatibilityLevel when needed, so this is a
+    // warning only (informational) — does not block deployment.
     const targetCompat = getCompatibilityLevel(prodModel);
     if (targetCompat !== null) {
         for (const d of selectedDiffs) {
             if (d.type === 1) continue; // remove never needs higher compat
             const required = COMPAT_LEVEL_REQUIREMENTS[d.objectType];
             if (required && targetCompat < required) {
-                errors.push({
-                    code: 'COMPAT_LEVEL_TOO_LOW',
+                warnings.push({
+                    code: 'COMPAT_LEVEL_AUTO_BUMP',
                     identityKey: d.identityKey,
-                    message: `Obiekt ${d.objectType} '${d.displayName}' wymaga compatibilityLevel >= ${required}, target ma ${targetCompat}. Podnies compatibilityLevel w database.tmdl target przed deployem.`
+                    message: `Obiekt ${d.objectType} '${d.displayName}' wymaga compatibilityLevel >= ${required}, target ma ${targetCompat}. compatibilityLevel zostanie automatycznie podniesiony do ${required} w database.tmdl.`
                 });
             }
         }
@@ -189,4 +191,4 @@ function validateDependencies(selectedDiffs, devModel, prodModel) {
     return { warnings, errors };
 }
 
-module.exports = { validateDependencies };
+module.exports = { validateDependencies, COMPAT_LEVEL_REQUIREMENTS, getCompatibilityLevel };

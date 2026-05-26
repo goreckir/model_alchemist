@@ -404,34 +404,35 @@ function replaceTableHeader(targetContent, devContent, tableName) {
  * @param {string} propValue - e.g. 'true'
  * @returns {string} Possibly modified content
  */
-function ensureModelProperty(content, propName, propValue) {
+function ensureTopLevelProperty(content, blockKeyword, propName, propValue) {
     const lines = content.replace(/\r\n/g, '\n').split('\n');
+    const blockRe = new RegExp(`^${blockKeyword}\\b`);
 
-    // Locate `model <name>` declaration at indent 0
-    let modelStart = -1;
+    // Locate `<keyword> <name>` declaration at indent 0
+    let blockStart = -1;
     for (let i = 0; i < lines.length; i++) {
         const indent = getIndentLevel(lines[i]);
         const trimmed = lines[i].trim();
-        if (indent === 0 && /^model\b/.test(trimmed)) {
-            modelStart = i;
+        if (indent === 0 && blockRe.test(trimmed)) {
+            blockStart = i;
             break;
         }
     }
-    if (modelStart < 0) return content; // no model block — bail out
+    if (blockStart < 0) return content; // no matching block — bail out
 
-    // Determine end of model block (first line at indent 0 after declaration, exclusive)
-    let modelEnd = lines.length;
-    for (let i = modelStart + 1; i < lines.length; i++) {
+    // Determine end of block (first line at indent 0 after declaration, exclusive)
+    let blockEnd = lines.length;
+    for (let i = blockStart + 1; i < lines.length; i++) {
         const trimmed = lines[i].trim();
         if (!trimmed) continue;
         if (getIndentLevel(lines[i]) === 0) {
-            modelEnd = i;
+            blockEnd = i;
             break;
         }
     }
 
     const propRe = new RegExp(`^\\s*${propName}\\s*:`);
-    for (let i = modelStart + 1; i < modelEnd; i++) {
+    for (let i = blockStart + 1; i < blockEnd; i++) {
         if (propRe.test(lines[i])) {
             // Already present — replace value if differs
             const expected = `\t${propName}: ${propValue}`;
@@ -441,9 +442,13 @@ function ensureModelProperty(content, propName, propValue) {
         }
     }
 
-    // Not present — insert after model declaration
-    lines.splice(modelStart + 1, 0, `\t${propName}: ${propValue}`);
+    // Not present — insert after block declaration
+    lines.splice(blockStart + 1, 0, `\t${propName}: ${propValue}`);
     return lines.join('\n');
+}
+
+function ensureModelProperty(content, propName, propValue) {
+    return ensureTopLevelProperty(content, 'model', propName, propValue);
 }
 
 module.exports = {
@@ -457,5 +462,6 @@ module.exports = {
     appendChildBlock,
     addRefEntry,
     removeRefEntry,
-    ensureModelProperty
+    ensureModelProperty,
+    ensureTopLevelProperty
 };

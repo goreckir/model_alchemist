@@ -772,11 +772,29 @@
     }
 
     async function handleConfirmDeploy() {
+        const backupPathInput = document.getElementById('backup-path');
+        const backupPathRow = document.getElementById('backup-path-row');
+
+        // When the backup checkbox is checked AND the backup-path input is visible
+        // (Fabric mode), the path must be non-empty — otherwise the user has no
+        // way of knowing where the backup will be stored.
+        if (optBackup.checked && backupPathRow && !backupPathRow.classList.contains('hidden')) {
+            const val = backupPathInput && backupPathInput.value.trim();
+            if (!val) {
+                if (backupPathInput) {
+                    backupPathInput.style.borderColor = 'var(--color-removed-text)';
+                    backupPathInput.focus();
+                }
+                alert('Backup is enabled — please provide a backup folder path, or uncheck "Create backup before deployment".');
+                return;
+            }
+            if (backupPathInput) backupPathInput.style.borderColor = '';
+        }
+
         deployModal.classList.add('hidden');
         showAlchemistAnimation();
 
         try {
-            const backupPathInput = document.getElementById('backup-path');
             const payload = {
                 selectedKeys: [...selectedKeys],
                 dryRun: false,
@@ -911,6 +929,37 @@
 
     // ===== Fabric Refresh =====
 
+    // Build the inner HTML used while a Fabric refresh is running. The caller
+    // owns the elapsed-time interval; we render the spinner + label here.
+    function refreshProgressHtml(label, elapsedSec) {
+        const mm = String(Math.floor(elapsedSec / 60)).padStart(2, '0');
+        const ss = String(elapsedSec % 60).padStart(2, '0');
+        return `<span class="refresh-spinner-inline" aria-hidden="true"></span>` +
+               `<span style="color: var(--color-text-muted); margin-left: 8px;">${escapeHtml(label)}</span>` +
+               `<span class="refresh-timer" style="margin-left: 12px; font-variant-numeric: tabular-nums; opacity: 0.8;">${mm}:${ss}</span>`;
+    }
+
+    function startRefreshTimer(statusEl, label) {
+        // Stop any existing timer attached to this element
+        stopRefreshTimer(statusEl);
+        const startTs = Date.now();
+        const render = () => {
+            const elapsed = Math.floor((Date.now() - startTs) / 1000);
+            statusEl.innerHTML = refreshProgressHtml(label, elapsed);
+        };
+        render();
+        statusEl._refreshTimerId = setInterval(render, 1000);
+        statusEl._refreshTimerLabel = label;
+        statusEl._refreshTimerStart = startTs;
+    }
+
+    function stopRefreshTimer(statusEl) {
+        if (statusEl && statusEl._refreshTimerId) {
+            clearInterval(statusEl._refreshTimerId);
+            statusEl._refreshTimerId = null;
+        }
+    }
+
     async function triggerFabricRefresh(tables) {
         const statusEl = document.getElementById('refresh-status');
         const btnRefresh = document.getElementById('btn-trigger-refresh');
@@ -919,7 +968,7 @@
         btnRefresh.disabled = true;
         btnSkip.style.display = 'none';
         statusEl.style.display = 'block';
-        statusEl.innerHTML = '<span style="color: var(--color-text-muted);">⏳ Starting refresh...</span>';
+        startRefreshTimer(statusEl, 'Starting refresh...');
 
         try {
             const response = await fetch('/api/fabric/refresh', {
@@ -930,6 +979,7 @@
             const result = await response.json();
 
             if (!response.ok || !result.success) {
+                stopRefreshTimer(statusEl);
                 statusEl.innerHTML = `<span style="color: var(--color-removed-text);">✗ ${escapeHtml(result.error || 'Refresh failed')}</span>`;
                 btnRefresh.disabled = false;
                 btnSkip.style.display = '';
@@ -937,12 +987,14 @@
             }
 
             if (result.requestId) {
-                statusEl.innerHTML = '<span style="color: var(--color-text-muted);">⏳ Refresh in progress...</span>';
+                startRefreshTimer(statusEl, 'Refresh in progress...');
                 pollRefreshStatus(result.requestId, statusEl, btnRefresh);
             } else {
+                stopRefreshTimer(statusEl);
                 statusEl.innerHTML = '<span style="color: var(--color-added-text);">✓ Refresh triggered (no tracking ID returned)</span>';
             }
         } catch (err) {
+            stopRefreshTimer(statusEl);
             statusEl.innerHTML = `<span style="color: var(--color-removed-text);">✗ ${escapeHtml(err.message)}</span>`;
             btnRefresh.disabled = false;
             btnSkip.style.display = '';
@@ -955,6 +1007,7 @@
 
         const poll = async () => {
             if (Date.now() - startTime > maxPollTime) {
+                stopRefreshTimer(statusEl);
                 statusEl.innerHTML = '<span style="color: var(--color-text-muted);">⏳ Refresh still running (polling stopped after 60 min) — check Fabric portal for status.</span>';
                 btnRefresh.style.display = 'none';
                 return;
@@ -965,26 +1018,29 @@
                 const data = await response.json();
 
                 if (data.status === 'Completed') {
+                    stopRefreshTimer(statusEl);
                     statusEl.innerHTML = '<span style="color: var(--color-added-text);">✓ Refresh completed successfully!</span>';
                     btnRefresh.style.display = 'none';
                     return;
                 } else if (data.status === 'Failed') {
+                    stopRefreshTimer(statusEl);
                     const errMsg = data.serviceExceptionJson || 'Unknown error';
                     statusEl.innerHTML = `<span style="color: var(--color-removed-text);">✗ Refresh failed: ${escapeHtml(typeof errMsg === 'string' ? errMsg : JSON.stringify(errMsg))}</span>`;
                     btnRefresh.disabled = false;
                     btnRefresh.textContent = '🔄 Retry';
                     return;
                 } else if (data.status === 'Cancelled' || data.status === 'Disabled') {
+                    stopRefreshTimer(statusEl);
                     statusEl.innerHTML = `<span style="color: var(--color-text-muted);">⚠ Refresh ${data.status.toLowerCase()}</span>`;
                     btnRefresh.disabled = false;
                     return;
                 }
 
-                // Still running — poll again
-                statusEl.innerHTML = '<span style="color: var(--color-text-muted);">⏳ Refresh in progress...</span>';
+                // Still running — timer keeps ticking; just schedule the next poll.
                 setTimeout(poll, 5000);
             } catch (err) {
-                statusEl.innerHTML = `<span style="color: var(--color-text-muted);">⏳ Refresh running (status check failed: ${escapeHtml(err.message)})</span>`;
+                // Keep the timer running; surface the polling error briefly via title.
+                if (statusEl) statusEl.title = `status check failed: ${err.message}`;
                 setTimeout(poll, 10000);
             }
         };
