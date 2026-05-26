@@ -104,6 +104,9 @@ function planSingleDiff(diff, devModel, prodPath) {
         case 'expression':
             ops.push(...planExpressionOp(diff, devModel, prodPath));
             break;
+        case 'function':
+            ops.push(...planFunctionOp(diff, devModel, prodPath));
+            break;
         case 'role':
         case 'tablePermission':
             ops.push(...planRoleOp(diff, devModel, prodPath));
@@ -278,6 +281,41 @@ function planExpressionOp(diff, devModel, prodPath) {
             objectName: exprName,
             newBlock: diff.rawBlock,
             description: { action: 'modify', objectType: 'expression', name: exprName, file: 'expressions.tmdl' }
+        }];
+    }
+}
+
+/**
+ * Plan operations for UDF function changes (functions.tmdl, top-level).
+ */
+function planFunctionOp(diff, devModel, prodPath) {
+    const targetFile = path.join(prodPath, 'functions.tmdl');
+    const fnName = diff.displayName;
+
+    if (diff.type === 0) {
+        return [{
+            action: 'appendTopLevel',
+            targetPath: targetFile,
+            block: diff.rawBlock,
+            createIfMissing: true,
+            description: { action: 'add', objectType: 'function', name: fnName, file: 'functions.tmdl' }
+        }];
+    } else if (diff.type === 1) {
+        return [{
+            action: 'removeTopLevel',
+            targetPath: targetFile,
+            objectType: 'function',
+            objectName: fnName,
+            description: { action: 'remove', objectType: 'function', name: fnName, file: 'functions.tmdl' }
+        }];
+    } else {
+        return [{
+            action: 'replaceTopLevel',
+            targetPath: targetFile,
+            objectType: 'function',
+            objectName: fnName,
+            newBlock: diff.rawBlock,
+            description: { action: 'modify', objectType: 'function', name: fnName, file: 'functions.tmdl' }
         }];
     }
 }
