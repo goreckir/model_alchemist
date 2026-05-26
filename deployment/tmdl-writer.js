@@ -451,6 +451,57 @@ function ensureModelProperty(content, propName, propValue) {
     return ensureTopLevelProperty(content, 'model', propName, propValue);
 }
 
+/**
+ * Append a child block nested inside a parent block at a given indent level.
+ * Used for calculationItem (indent 2, inside calculationGroup at indent 1).
+ * @param {string} content - The table file content
+ * @param {string} childBlock - The raw block of the child (already at correct indentation)
+ * @param {number} parentIndent - Indent level of the parent containing block (e.g. 1 for calculationGroup)
+ * @returns {string} Modified file content
+ */
+function appendChildBlockNested(content, childBlock, parentIndent) {
+    const lines = content.replace(/\r\n/g, '\n').split('\n');
+
+    // Find the last occurrence of the parent block at the given indent
+    // For calculationItem, parent is 'calculationGroup' at indent 1
+    let parentStart = -1;
+    for (let i = 0; i < lines.length; i++) {
+        const indent = getIndentLevel(lines[i]);
+        const trimmed = lines[i].trim();
+        if (indent === parentIndent && DECL_KEYWORDS_RE.test(trimmed)) {
+            // Check if this is the type of block that can contain our child
+            const keyword = trimmed.split(/[\s\t]/)[0].toLowerCase();
+            if (keyword === 'calculationgroup') {
+                parentStart = i;
+            }
+        }
+    }
+
+    if (parentStart < 0) {
+        // Fallback: append at end of file like regular appendChildBlock
+        return appendChildBlock(content, childBlock);
+    }
+
+    // Find end of this parent block (first line at indent <= parentIndent after start)
+    let insertPos = parentStart + 1;
+    for (let i = parentStart + 1; i < lines.length; i++) {
+        const trimmed = lines[i].trim();
+        if (!trimmed) { insertPos = i + 1; continue; }
+        const indent = getIndentLevel(lines[i]);
+        if (indent <= parentIndent) break;
+        insertPos = i + 1;
+    }
+
+    // Skip trailing blank lines within the block to insert before them
+    while (insertPos > parentStart + 1 && !lines[insertPos - 1].trim()) {
+        insertPos--;
+    }
+
+    const newLines = ['', ...childBlock.split('\n')];
+    lines.splice(insertPos, 0, ...newLines);
+    return lines.join('\n');
+}
+
 module.exports = {
     findObjectBlock,
     findTopLevelBlock,
@@ -460,6 +511,7 @@ module.exports = {
     replaceTableHeader,
     appendTopLevelBlock,
     appendChildBlock,
+    appendChildBlockNested,
     addRefEntry,
     removeRefEntry,
     ensureModelProperty,
