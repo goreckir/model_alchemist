@@ -809,3 +809,150 @@ body {
     font-size: 12px;
     color: var(--color-text-muted);
 }
+
+/* ===== Model Refresh Button ===== */
+.btn-refresh-status {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 14px;
+    border: 1px solid var(--color-border);
+    border-radius: 6px;
+    background: var(--color-bg-card);
+    color: var(--color-text-dim);
+    cursor: pointer;
+    font-size: 13px;
+    transition: all 0.2s;
+}
+.btn-refresh-status:hover {
+    border-color: rgba(78, 154, 241, 0.5);
+    color: var(--color-text);
+}
+.btn-refresh-status .refresh-icon {
+    font-size: 16px;
+    display: inline-block;
+    transition: transform 0.3s;
+}
+.btn-refresh-status.is-active {
+    border-color: rgba(78, 154, 241, 0.6);
+    background: rgba(78, 154, 241, 0.08);
+    color: var(--color-text);
+}
+.btn-refresh-status.is-active .refresh-icon {
+    animation: spin 1.2s linear infinite;
+    color: #4e9af1;
+}
+.btn-refresh-status.is-completed {
+    border-color: rgba(75, 181, 67, 0.5);
+    color: var(--color-added-text, #4bb543);
+}
+.btn-refresh-status.is-completed .refresh-icon {
+    color: var(--color-added-text, #4bb543);
+}
+.btn-refresh-status.is-failed {
+    border-color: rgba(229, 83, 75, 0.5);
+    color: var(--color-removed-text, #e5534b);
+}
+.btn-refresh-status.is-failed .refresh-icon {
+    color: var(--color-removed-text, #e5534b);
+}
+.refresh-badge {
+    position: absolute;
+    top: -4px;
+    right: -4px;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: #4e9af1;
+    border: 2px solid var(--color-bg-card);
+}
+.refresh-badge.hidden { display: none; }
+.refresh-badge.completed { background: #4bb543; }
+.refresh-badge.failed { background: #e5534b; }
+
+/* ===== Refresh Panel ===== */
+.refresh-history-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+.refresh-record {
+    border: 1px solid var(--color-border);
+    border-radius: 8px;
+    padding: 14px;
+    background: var(--color-bg-card);
+}
+.refresh-record.is-active {
+    border-color: rgba(78, 154, 241, 0.4);
+    background: rgba(78, 154, 241, 0.04);
+}
+.refresh-record-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 10px;
+}
+.refresh-record-title {
+    font-weight: 600;
+    font-size: 14px;
+}
+.refresh-record-time {
+    font-size: 12px;
+    color: var(--color-text-dim);
+    font-variant-numeric: tabular-nums;
+}
+.refresh-objects-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+}
+.refresh-objects-table th,
+.refresh-objects-table td {
+    padding: 5px 10px;
+    text-align: left;
+    border-bottom: 1px solid var(--color-border);
+}
+.refresh-objects-table th {
+    font-weight: 600;
+    color: var(--color-text-dim);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+}
+.refresh-obj-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-weight: 500;
+}
+.refresh-obj-status.in-progress { color: #4e9af1; }
+.refresh-obj-status.completed { color: #4bb543; }
+.refresh-obj-status.failed { color: #e5534b; }
+.refresh-obj-status.cancelled { color: var(--color-text-dim); }
+.refresh-obj-spinner {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border: 2px solid rgba(78, 154, 241, 0.25);
+    border-top-color: rgba(78, 154, 241, 0.9);
+    border-radius: 50%;
+    animation: spin 0.9s linear infinite;
+}
+.refresh-empty-state {
+    text-align: center;
+    padding: 40px 20px;
+    color: var(--color-text-dim);
+    font-size: 14px;
+}
+.refresh-status-pill {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 11px;
+    font-weight: 600;
+}
+.refresh-status-pill.in-progress { background: rgba(78, 154, 241, 0.15); color: #4e9af1; }
+.refresh-status-pill.completed { background: rgba(75, 181, 67, 0.15); color: #4bb543; }
+.refresh-status-pill.failed { background: rgba(229, 83, 75, 0.15); color: #e5534b; }
+.refresh-status-pill.cancelled { background: rgba(150, 150, 150, 0.15); color: var(--color-text-dim); }

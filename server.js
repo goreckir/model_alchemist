@@ -10,6 +10,7 @@ const fabricApi = require('./fabric/api-client');
 const { loadModelFromFabric } = require('./fabric/model-loader');
 const { parseConnectionString } = require('./fabric/connection-parser');
 const { logEvent, readEvents } = require('./lib/activity-log');
+const refreshStore = require('./lib/refresh-store');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -467,8 +468,14 @@ app.post('/api/fabric/refresh', async (req, res) => {
             return res.status(401).json({ error: 'Not authenticated. Login to Fabric first.' });
         }
 
-        const { workspaceId, semanticModelId } = lastProdFabricInfo;
+        const { workspaceId, semanticModelId, modelName } = lastProdFabricInfo;
         const result = await fabricApi.refreshSemanticModel(token, workspaceId, semanticModelId, tables || []);
+
+        // Store in refresh session
+        if (result.requestId) {
+            refreshStore.createRefreshRecord(result.requestId, modelName, workspaceId, semanticModelId, tables || []);
+        }
+
         logEvent('refresh', {
             target: `workspace:${workspaceId}/model:${semanticModelId}`,
             tables: tables || [],
@@ -484,7 +491,7 @@ app.post('/api/fabric/refresh', async (req, res) => {
     }
 });
 
-// API: Check refresh status
+// API: Check refresh status (with per-object detail)
 app.get('/api/fabric/refresh/status/:requestId', async (req, res) => {
     const { requestId } = req.params;
 
@@ -499,20 +506,41 @@ app.get('/api/fabric/refresh/status/:requestId', async (req, res) => {
         }
 
         const { workspaceId, semanticModelId } = lastProdFabricInfo;
-        const status = await fabricApi.getRefreshStatus(token, workspaceId, semanticModelId, requestId);
+        const apiStatus = await fabricApi.getRefreshStatus(token, workspaceId, semanticModelId, requestId);
+
+        // Update the session record with full status (including objects array)
+        const record = refreshStore.updateRefreshRecord(requestId, apiStatus);
+
         logEvent('refresh-status', {
             requestId,
             target: `workspace:${workspaceId}/model:${semanticModelId}`,
-            status: status.status || null,
-            startTime: status.startTime || null,
-            endTime: status.endTime || null
+            status: apiStatus.status || null,
+            startTime: apiStatus.startTime || null,
+            endTime: apiStatus.endTime || null
         });
-        res.json(status);
+
+        // Return merged response: API data + our tracked objects
+        res.json({
+            ...apiStatus,
+            trackedObjects: record ? record.objects : [],
+            requestedTables: record ? record.requestedTables : []
+        });
     } catch (err) {
         console.error('Refresh status error:', err);
         logEvent('refresh-status', { requestId, success: false, error: err.message });
         res.status(500).json({ error: err.message });
     }
+});
+
+// API: Get refresh session history
+app.get('/api/fabric/refresh/history', (req, res) => {
+    res.json(refreshStore.getSessionHistory());
+});
+
+// API: Get active refresh (if any)
+app.get('/api/fabric/refresh/active', (req, res) => {
+    const active = refreshStore.getActiveRefresh();
+    res.json({ active: active || null });
 });
 
 // API: Disconnect from Fabric
@@ -635,7 +663,8 @@ app.post('/api/compare-fabric', async (req, res) => {
             lastProdPath = null;
             lastProdFabricInfo = {
                 workspaceId: prodSource.workspaceId,
-                semanticModelId: prodSource.semanticModelId
+                semanticModelId: prodSource.semanticModelId,
+                modelName: prodModel.name || 'SemanticModel'
             };
         }
 

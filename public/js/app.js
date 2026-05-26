@@ -77,6 +77,19 @@
     document.getElementById('btn-activity-log-refresh').addEventListener('click', loadActivityLog);
     activityLogLimit.addEventListener('change', loadActivityLog);
 
+    // Refresh panel
+    const btnModelRefresh = document.getElementById('btn-model-refresh');
+    const refreshModal = document.getElementById('refresh-modal');
+    const refreshPanelContent = document.getElementById('refresh-panel-content');
+    btnModelRefresh.addEventListener('click', openRefreshPanel);
+    document.getElementById('refresh-modal-close').addEventListener('click', () => refreshModal.classList.add('hidden'));
+    document.getElementById('btn-refresh-modal-ok').addEventListener('click', () => refreshModal.classList.add('hidden'));
+
+    // Refresh state
+    let refreshHistory = []; // session refresh records
+    let activeRefreshId = null;
+    let refreshPollTimer = null;
+
     // Export dropdown
     btnExport.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -277,6 +290,7 @@
         btnRefresh.classList.add('hidden');
         exportDropdown.classList.add('hidden');
         btnDeploy.classList.add('hidden');
+        btnModelRefresh.classList.add('hidden');
         document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
         document.querySelector('.filter-btn[data-filter="all"]').classList.add('active');
         updateDeployButton();
@@ -289,6 +303,8 @@
         btnRefresh.classList.remove('hidden');
         exportDropdown.classList.remove('hidden');
         btnDeploy.classList.remove('hidden');
+        btnModelRefresh.classList.remove('hidden');
+        updateRefreshButton();
 
         setModelInfo(devModelName, comparisonResult.devSource, devPathInput.value);
         setModelInfo(prodModelName, comparisonResult.prodSource, prodPathInput.value);
@@ -941,48 +957,61 @@
         }
     }
 
-    // ===== Fabric Refresh =====
+    // ===== Fabric Refresh (centralized) =====
 
-    // Build the inner HTML used while a Fabric refresh is running. The caller
-    // owns the elapsed-time interval; we render the spinner + label here.
-    function refreshProgressHtml(label, elapsedSec) {
-        const mm = String(Math.floor(elapsedSec / 60)).padStart(2, '0');
-        const ss = String(elapsedSec % 60).padStart(2, '0');
-        return `<span class="refresh-spinner-inline" aria-hidden="true"></span>` +
-               `<span style="color: var(--color-text-muted); margin-left: 8px;">${escapeHtml(label)}</span>` +
-               `<span class="refresh-timer" style="margin-left: 12px; font-variant-numeric: tabular-nums; opacity: 0.8;">${mm}:${ss}</span>`;
+    function formatDuration(startISO, endISO) {
+        const start = new Date(startISO);
+        const end = endISO ? new Date(endISO) : new Date();
+        const sec = Math.max(0, Math.floor((end - start) / 1000));
+        const mm = String(Math.floor(sec / 60)).padStart(2, '0');
+        const ss = String(sec % 60).padStart(2, '0');
+        return `${mm}:${ss}`;
     }
 
-    function startRefreshTimer(statusEl, label) {
-        // Stop any existing timer attached to this element
-        stopRefreshTimer(statusEl);
-        const startTs = Date.now();
-        const render = () => {
-            const elapsed = Math.floor((Date.now() - startTs) / 1000);
-            statusEl.innerHTML = refreshProgressHtml(label, elapsed);
-        };
-        render();
-        statusEl._refreshTimerId = setInterval(render, 1000);
-        statusEl._refreshTimerLabel = label;
-        statusEl._refreshTimerStart = startTs;
+    function formatDateTime(iso) {
+        if (!iso) return '—';
+        const d = new Date(iso);
+        return d.toLocaleString();
     }
 
-    function stopRefreshTimer(statusEl) {
-        if (statusEl && statusEl._refreshTimerId) {
-            clearInterval(statusEl._refreshTimerId);
-            statusEl._refreshTimerId = null;
+    function updateRefreshButton() {
+        const active = refreshHistory.find(r => r.status === 'inProgress');
+        const last = refreshHistory[refreshHistory.length - 1];
+        btnModelRefresh.classList.remove('is-active', 'is-completed', 'is-failed');
+        const badge = document.getElementById('refresh-badge');
+
+        if (active) {
+            btnModelRefresh.classList.add('is-active');
+            badge.classList.remove('hidden', 'completed', 'failed');
+        } else if (last) {
+            if (last.status === 'completed') {
+                btnModelRefresh.classList.add('is-completed');
+                badge.classList.remove('hidden', 'failed');
+                badge.classList.add('completed');
+            } else if (last.status === 'failed') {
+                btnModelRefresh.classList.add('is-failed');
+                badge.classList.remove('hidden', 'completed');
+                badge.classList.add('failed');
+            } else {
+                badge.classList.add('hidden');
+            }
+        } else {
+            badge.classList.add('hidden');
         }
     }
 
     async function triggerFabricRefresh(tables) {
+        // Close result modal — refresh status lives in the refresh panel now
         const statusEl = document.getElementById('refresh-status');
-        const btnRefresh = document.getElementById('btn-trigger-refresh');
+        const btnTrigger = document.getElementById('btn-trigger-refresh');
         const btnSkip = document.getElementById('btn-skip-refresh');
 
-        btnRefresh.disabled = true;
-        btnSkip.style.display = 'none';
-        statusEl.style.display = 'block';
-        startRefreshTimer(statusEl, 'Starting refresh...');
+        if (btnTrigger) btnTrigger.disabled = true;
+        if (btnSkip) btnSkip.style.display = 'none';
+        if (statusEl) {
+            statusEl.style.display = 'block';
+            statusEl.innerHTML = '<span class="refresh-spinner-inline"></span> <span style="color:var(--color-text-muted);">Starting refresh...</span>';
+        }
 
         try {
             const response = await fetch('/api/fabric/refresh', {
@@ -993,73 +1022,180 @@
             const result = await response.json();
 
             if (!response.ok || !result.success) {
-                stopRefreshTimer(statusEl);
-                statusEl.innerHTML = `<span style="color: var(--color-removed-text);">✗ ${escapeHtml(result.error || 'Refresh failed')}</span>`;
-                btnRefresh.disabled = false;
-                btnSkip.style.display = '';
+                if (statusEl) statusEl.innerHTML = `<span style="color: var(--color-removed-text);">✗ ${escapeHtml(result.error || 'Refresh failed')}</span>`;
+                if (btnTrigger) btnTrigger.disabled = false;
+                if (btnSkip) btnSkip.style.display = '';
                 return;
             }
 
             if (result.requestId) {
-                startRefreshTimer(statusEl, 'Refresh in progress...');
-                pollRefreshStatus(result.requestId, statusEl, btnRefresh);
+                activeRefreshId = result.requestId;
+                // Add to local history
+                refreshHistory.push({
+                    id: result.requestId,
+                    status: 'inProgress',
+                    startTime: new Date().toISOString(),
+                    endTime: null,
+                    requestedTables: tables || [],
+                    objects: (tables || []).map(t => ({ table: t, status: 'inProgress' }))
+                });
+                updateRefreshButton();
+                startRefreshPolling(result.requestId);
+
+                if (statusEl) statusEl.innerHTML = '<span class="refresh-spinner-inline"></span> <span style="color:var(--color-text-muted);">Refresh started — track progress via <strong>Model Refresh</strong> button</span>';
             } else {
-                stopRefreshTimer(statusEl);
-                statusEl.innerHTML = '<span style="color: var(--color-added-text);">✓ Refresh triggered (no tracking ID returned)</span>';
+                if (statusEl) statusEl.innerHTML = '<span style="color: var(--color-added-text);">✓ Refresh triggered (no tracking ID)</span>';
             }
         } catch (err) {
-            stopRefreshTimer(statusEl);
-            statusEl.innerHTML = `<span style="color: var(--color-removed-text);">✗ ${escapeHtml(err.message)}</span>`;
-            btnRefresh.disabled = false;
-            btnSkip.style.display = '';
+            if (statusEl) statusEl.innerHTML = `<span style="color: var(--color-removed-text);">✗ ${escapeHtml(err.message)}</span>`;
+            if (btnTrigger) btnTrigger.disabled = false;
+            if (btnSkip) btnSkip.style.display = '';
         }
     }
 
-    async function pollRefreshStatus(requestId, statusEl, btnRefresh) {
-        const startTime = Date.now();
-        const maxPollTime = 60 * 60 * 1000; // 60 minutes max polling
+    function startRefreshPolling(requestId) {
+        if (refreshPollTimer) clearInterval(refreshPollTimer);
+        refreshPollTimer = setInterval(() => pollRefreshStatus(requestId), 5000);
+        // First poll after 3s
+        setTimeout(() => pollRefreshStatus(requestId), 3000);
+    }
 
-        const poll = async () => {
-            if (Date.now() - startTime > maxPollTime) {
-                stopRefreshTimer(statusEl);
-                statusEl.innerHTML = '<span style="color: var(--color-text-muted);">⏳ Refresh still running (polling stopped after 60 min) — check Fabric portal for status.</span>';
-                btnRefresh.style.display = 'none';
-                return;
-            }
+    async function pollRefreshStatus(requestId) {
+        try {
+            const response = await fetch(`/api/fabric/refresh/status/${requestId}`);
+            const data = await response.json();
 
-            try {
-                const response = await fetch(`/api/fabric/refresh/status/${requestId}`);
-                const data = await response.json();
-
-                if (data.status === 'Completed') {
-                    stopRefreshTimer(statusEl);
-                    statusEl.innerHTML = '<span style="color: var(--color-added-text);">✓ Refresh completed successfully!</span>';
-                    btnRefresh.style.display = 'none';
-                    return;
-                } else if (data.status === 'Failed') {
-                    stopRefreshTimer(statusEl);
-                    const errMsg = data.serviceExceptionJson || 'Unknown error';
-                    statusEl.innerHTML = `<span style="color: var(--color-removed-text);">✗ Refresh failed: ${escapeHtml(typeof errMsg === 'string' ? errMsg : JSON.stringify(errMsg))}</span>`;
-                    btnRefresh.disabled = false;
-                    btnRefresh.textContent = '🔄 Retry';
-                    return;
-                } else if (data.status === 'Cancelled' || data.status === 'Disabled') {
-                    stopRefreshTimer(statusEl);
-                    statusEl.innerHTML = `<span style="color: var(--color-text-muted);">⚠ Refresh ${data.status.toLowerCase()}</span>`;
-                    btnRefresh.disabled = false;
-                    return;
+            // Update local record
+            const record = refreshHistory.find(r => r.id === requestId);
+            if (record) {
+                if (data.status) record.status = mapRefreshStatus(data.status);
+                if (data.startTime) record.startTime = data.startTime;
+                if (data.endTime) record.endTime = data.endTime;
+                if (data.trackedObjects && data.trackedObjects.length > 0) {
+                    record.objects = data.trackedObjects;
+                } else if (data.objects && Array.isArray(data.objects)) {
+                    record.objects = data.objects.map(o => ({
+                        table: o.table || '',
+                        partition: o.partition || null,
+                        status: mapRefreshStatus(o.status || 'Unknown'),
+                        startTime: o.startTime || null,
+                        endTime: o.endTime || null,
+                        message: o.serviceExceptionJson || o.message || null
+                    }));
                 }
-
-                // Still running — timer keeps ticking; just schedule the next poll.
-                setTimeout(poll, 5000);
-            } catch (err) {
-                // Keep the timer running; surface the polling error briefly via title.
-                if (statusEl) statusEl.title = `status check failed: ${err.message}`;
-                setTimeout(poll, 10000);
             }
-        };
 
-        setTimeout(poll, 5000); // First check after 5s
+            // Check if terminal state
+            const terminal = ['completed', 'failed', 'cancelled'].includes(record?.status);
+            if (terminal) {
+                clearInterval(refreshPollTimer);
+                refreshPollTimer = null;
+                activeRefreshId = null;
+            }
+
+            updateRefreshButton();
+            // If panel is open, re-render
+            if (!refreshModal.classList.contains('hidden')) {
+                renderRefreshPanel();
+            }
+        } catch (err) {
+            // silently retry on next interval
+            console.warn('Refresh poll error:', err.message);
+        }
+    }
+
+    function mapRefreshStatus(s) {
+        const lower = (s || '').toLowerCase();
+        if (lower === 'completed') return 'completed';
+        if (lower === 'failed') return 'failed';
+        if (lower === 'cancelled' || lower === 'disabled') return 'cancelled';
+        if (lower === 'inprogress' || lower === 'notstarted' || lower === 'unknown') return 'inProgress';
+        return 'inProgress';
+    }
+
+    function openRefreshPanel() {
+        refreshModal.classList.remove('hidden');
+        renderRefreshPanel();
+    }
+
+    function renderRefreshPanel() {
+        if (refreshHistory.length === 0) {
+            refreshPanelContent.innerHTML = `
+                <div class="refresh-empty-state">
+                    <p style="font-size: 24px; margin-bottom: 8px;">↻</p>
+                    <p>No refresh operations in this session.</p>
+                    <p style="font-size: 12px; margin-top: 6px; opacity: 0.7;">
+                        Refresh will be offered after deploying changes that affect data sources.
+                    </p>
+                </div>`;
+            return;
+        }
+
+        // Render newest first
+        let html = '<div class="refresh-history-list">';
+        for (let i = refreshHistory.length - 1; i >= 0; i--) {
+            const r = refreshHistory[i];
+            html += renderRefreshRecord(r, i === refreshHistory.length - 1 && r.status === 'inProgress');
+        }
+        html += '</div>';
+        refreshPanelContent.innerHTML = html;
+    }
+
+    function renderRefreshRecord(record, isLive) {
+        const statusClass = record.status === 'inProgress' ? 'in-progress' : record.status;
+        const statusLabel = record.status === 'inProgress' ? 'In Progress'
+            : record.status === 'completed' ? 'Completed'
+            : record.status === 'failed' ? 'Failed'
+            : record.status === 'cancelled' ? 'Cancelled' : 'Unknown';
+
+        const duration = formatDuration(record.startTime, record.endTime);
+        const startStr = formatDateTime(record.startTime);
+        const tablesLabel = record.requestedTables.length === 0
+            ? 'Full model refresh'
+            : record.requestedTables.join(', ');
+
+        let html = `<div class="refresh-record ${isLive ? 'is-active' : ''}">`;
+        html += `<div class="refresh-record-header">`;
+        html += `<span class="refresh-record-title">${escapeHtml(tablesLabel)}</span>`;
+        html += `<span class="refresh-status-pill ${statusClass}">${isLive ? '<span class="refresh-obj-spinner"></span> ' : ''}${statusLabel}</span>`;
+        html += `</div>`;
+        html += `<div class="refresh-record-time">Started: ${startStr} &nbsp;|&nbsp; Duration: ${duration}${isLive ? ' (running)' : ''}</div>`;
+
+        if (record.objects && record.objects.length > 0) {
+            html += `<table class="refresh-objects-table"><thead><tr><th>Table</th><th>Status</th><th>Duration</th></tr></thead><tbody>`;
+            for (const obj of record.objects) {
+                const objStatusClass = obj.status === 'inProgress' ? 'in-progress' : obj.status;
+                const objStatusIcon = obj.status === 'inProgress' ? '<span class="refresh-obj-spinner"></span>'
+                    : obj.status === 'completed' ? '✓'
+                    : obj.status === 'failed' ? '✗'
+                    : '—';
+                const objDuration = obj.startTime ? formatDuration(obj.startTime, obj.endTime) : '—';
+                const objLabel = obj.status === 'inProgress' ? 'Refreshing...'
+                    : obj.status === 'completed' ? 'Done'
+                    : obj.status === 'failed' ? (obj.message ? `Error: ${typeof obj.message === 'string' ? obj.message.slice(0, 80) : 'see details'}` : 'Failed')
+                    : obj.status;
+                html += `<tr>`;
+                html += `<td>${escapeHtml(obj.table || '—')}</td>`;
+                html += `<td><span class="refresh-obj-status ${objStatusClass}">${objStatusIcon} ${escapeHtml(objLabel)}</span></td>`;
+                html += `<td>${objDuration}</td>`;
+                html += `</tr>`;
+            }
+            html += `</tbody></table>`;
+        }
+
+        if (record.status === 'failed' && record.objects) {
+            const failed = record.objects.filter(o => o.status === 'failed' && o.message);
+            if (failed.length > 0) {
+                html += `<details style="margin-top: 8px; font-size: 12px;"><summary style="cursor:pointer; color: var(--color-removed-text);">Error details</summary>`;
+                for (const f of failed) {
+                    html += `<pre style="white-space: pre-wrap; margin: 4px 0; padding: 8px; background: rgba(229,83,75,0.05); border-radius: 4px;">${escapeHtml(typeof f.message === 'string' ? f.message : JSON.stringify(f.message, null, 2))}</pre>`;
+                }
+                html += `</details>`;
+            }
+        }
+
+        html += `</div>`;
+        return html;
     }
 
     // ===== Utilities =====
