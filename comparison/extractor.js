@@ -18,6 +18,30 @@ const CHANGE_GROUPS = {
 };
 
 /**
+ * Serialize all child blocks of a given type into a deterministic, sorted, normalized
+ * string — used to detect changes in annotation / extendedProperty / refreshPolicy /
+ * formatStringDefinition / detailRowsDefinition without requiring explicit per-property
+ * extraction. Returns '' when no such children.
+ */
+function serializeChildren(obj, types) {
+    if (!obj || !obj.children) return '';
+    const typeSet = new Set(types.map(t => t.toLowerCase()));
+    const blocks = [];
+    for (const child of obj.children) {
+        if (typeSet.has((child.type || '').toLowerCase())) {
+            const raw = (child.rawBlock || '').trim();
+            // Skip PBI_* annotations — these are runtime state set by the Power BI
+            // engine (e.g. PBI_ResultType = Table/Exception after refresh) and must
+            // not be compared or deployed.
+            if (child.type === 'annotation' && /^annotation\s+PBI_/i.test(raw)) continue;
+            blocks.push(raw);
+        }
+    }
+    blocks.sort();
+    return blocks.join('\n');
+}
+
+/**
  * Extract all model objects into an identity-keyed dictionary.
  * Each object includes sourceFile and rawBlock for deployment.
  */
@@ -72,7 +96,14 @@ function extractTable(table, objects) {
         properties: {
             isHidden: table.properties.isHidden || 'false',
             isPrivate: table.properties.isPrivate || 'false',
-            description: table.properties.description || ''
+            description: table.properties.description || '',
+            // lineageTag/sourceLineageTag intentionally excluded from comparison —
+            // they are per-environment identifiers preserved by the deployer.
+            dataCategory: table.properties.dataCategory || '',
+            excludeFromModelRefresh: table.properties.excludeFromModelRefresh || 'false',
+            showAsVariationsOnly: table.properties.showAsVariationsOnly || 'false',
+            annotations: serializeChildren(table, ['annotation', 'extendedProperty']),
+            refreshPolicy: serializeChildren(table, ['refreshPolicy'])
         }
     };
 
@@ -101,7 +132,15 @@ function extractColumn(tableName, col, sourceFile, objects, isCalcGroupTable) {
         description: col.properties.description || '',
         dataCategory: col.properties.dataCategory || '',
         summarizeBy: col.properties.summarizeBy || 'default',
-        sortByColumn: col.properties.sortByColumn || ''
+        sortByColumn: col.properties.sortByColumn || '',
+        // lineageTag/sourceLineageTag intentionally excluded from comparison —
+        // they are per-environment identifiers preserved by the deployer.
+        summarizationSetBy: col.properties.summarizationSetBy || '',
+        encodingHint: col.properties.encodingHint || '',
+        annotations: serializeChildren(col, ['annotation', 'extendedProperty']),
+        formatStringDefinition: serializeChildren(col, ['formatStringDefinition']),
+        detailRowsDefinition: serializeChildren(col, ['detailRowsDefinition']),
+        variations: serializeChildren(col, ['variation'])
     };
     if (col.expression) props.expression = col.expression;
 
@@ -124,7 +163,13 @@ function extractMeasure(tableName, measure, sourceFile, objects) {
         formatString: measure.properties.formatString || '',
         displayFolder: measure.properties.displayFolder || '',
         isHidden: measure.properties.isHidden || 'false',
-        description: measure.properties.description || ''
+        description: measure.properties.description || '',
+        // lineageTag intentionally excluded from comparison —
+        // per-environment identifier preserved by the deployer.
+        dataCategory: measure.properties.dataCategory || '',
+        annotations: serializeChildren(measure, ['annotation', 'extendedProperty']),
+        formatStringDefinition: serializeChildren(measure, ['formatStringDefinition']),
+        detailRowsDefinition: serializeChildren(measure, ['detailRowsDefinition'])
     };
 
     for (const child of measure.children || []) {
@@ -181,7 +226,10 @@ function extractPartition(tableName, partition, sourceFile, objects, isCalcGroup
     const props = {
         mode: partition.properties.mode || 'import',
         type: partitionType,
-        expression: sourceExpression
+        expression: sourceExpression,
+        dataView: partition.properties.dataView || '',
+        queryGroup: partition.properties.queryGroup || '',
+        annotations: serializeChildren(partition, ['annotation', 'extendedProperty'])
     };
 
     objects[key] = {
@@ -229,13 +277,22 @@ function extractCalculationGroup(tableName, calcGroup, sourceFile, objects) {
 function extractRelationship(rel, objects) {
     const fromCol = rel.properties.fromColumn || '';
     const toCol = rel.properties.toColumn || '';
-    const semanticKey = `${fromCol} → ${toCol}`;
-    const key = `relationship:${semanticKey}`;
+    const isActive = rel.properties.isActive || 'true';
+    const crossFilter = rel.properties.crossFilteringBehavior || 'oneDirection';
+    const displayName = `${fromCol} → ${toCol}`;
+    // Composite identity key: same (from,to) can occur multiple times (active+inactive,
+    // different cross-filter directions). Including isActive + crossFilter avoids collision.
+    const keySuffix = isActive === 'true' ? '' : '|inactive';
+    const cfSuffix = crossFilter === 'oneDirection' ? '' : `|cf=${crossFilter}`;
+    const key = `relationship:${displayName}${keySuffix}${cfSuffix}`;
 
     objects[key] = {
         objectType: 'relationship',
         identityKey: key,
-        displayName: semanticKey,
+        displayName,
+        // Real TMDL name (typically a GUID). Different between DEV/PROD, used by deployer
+        // to locate the existing block in target during modify/remove.
+        relName: rel.name,
         changeGroup: CHANGE_GROUPS.TABLES,
         sourceFile: rel.file,
         rawBlock: rel.rawBlock,
@@ -243,9 +300,12 @@ function extractRelationship(rel, objects) {
             fromColumn: fromCol,
             toColumn: toCol,
             cardinality: rel.properties.cardinality || '',
-            crossFilteringBehavior: rel.properties.crossFilteringBehavior || 'oneDirection',
-            isActive: rel.properties.isActive || 'true',
-            securityFilteringBehavior: rel.properties.securityFilteringBehavior || ''
+            crossFilteringBehavior: crossFilter,
+            isActive,
+            securityFilteringBehavior: rel.properties.securityFilteringBehavior || '',
+            joinOnDateBehavior: rel.properties.joinOnDateBehavior || '',
+            relyOnReferentialIntegrity: rel.properties.relyOnReferentialIntegrity || 'false',
+            annotations: serializeChildren(rel, ['annotation', 'extendedProperty'])
         }
     };
 }
@@ -282,7 +342,10 @@ function extractRole(role, objects) {
             sourceFile: role.file,
             rawBlock: child.rawBlock,
             properties: {
-                filterExpression: filterExpr
+                filterExpression: filterExpr,
+                metadataPermission: child.properties.metadataPermission || '',
+                columnPermissions: serializeChildren(child, ['columnpermission']),
+                dataCoveragePermission: serializeChildren(child, ['datacoveragepermission'])
             }
         };
     }
@@ -413,12 +476,19 @@ function extractModelProperties(modelObj, objects) {
         objectType: 'model',
         identityKey: 'model:properties',
         displayName: 'Model Properties',
+        modelName: modelObj.name || 'Model',
         changeGroup: CHANGE_GROUPS.MODEL_PROPERTIES,
         sourceFile: modelObj.file,
         rawBlock: modelObj.rawBlock,
         properties: {
             culture: modelObj.properties.culture || '',
-            defaultPowerBIDataSourceVersion: modelObj.properties.defaultPowerBIDataSourceVersion || ''
+            defaultPowerBIDataSourceVersion: modelObj.properties.defaultPowerBIDataSourceVersion || '',
+            discourageImplicitMeasures: modelObj.properties.discourageImplicitMeasures || 'false',
+            defaultMeasure: modelObj.properties.defaultMeasure || '',
+            sourceQueryCulture: modelObj.properties.sourceQueryCulture || '',
+            collation: modelObj.properties.collation || '',
+            annotations: serializeChildren(modelObj, ['annotation', 'extendedProperty']),
+            dataAccessOptions: serializeChildren(modelObj, ['dataAccessOptions'])
         }
     };
 }

@@ -21,6 +21,7 @@
             </button>
             <button id="btn-new-compare" class="btn btn-secondary hidden">New Comparison</button>
             <button id="btn-refresh" class="btn btn-secondary hidden" title="Refresh comparison">🔄 Refresh</button>
+            <button id="btn-activity-log" class="btn btn-secondary" title="Show activity log">📋 Log</button>
             <div class="export-dropdown hidden" id="export-dropdown">
                 <button id="btn-export" class="btn btn-secondary" title="Export differences">
                     📥 Export
@@ -34,6 +35,11 @@
             <button id="btn-deploy" class="btn btn-deploy hidden" disabled>
                 <span class="deploy-icon">🚀</span>
                 Deploy Selected (<span id="deploy-count">0</span>)
+            </button>
+            <button id="btn-model-refresh" class="btn btn-refresh-status hidden" title="Model Refresh Status">
+                <span class="refresh-icon">↻</span>
+                <span class="btn-refresh-label">Model Refresh</span>
+                <span class="refresh-badge hidden" id="refresh-badge"></span>
             </button>
         </div>
     </header>
@@ -236,6 +242,52 @@
                 </div>
                 <div class="modal-footer">
                     <button id="btn-result-ok" class="btn btn-primary">OK</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Activity Log Modal -->
+        <div id="activity-log-modal" class="modal hidden">
+            <div class="modal-backdrop"></div>
+            <div class="modal-content" style="max-width: 1100px;">
+                <div class="modal-header">
+                    <h2>📋 Activity Log</h2>
+                    <button id="activity-log-close" class="btn-close">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <div style="margin-bottom: 12px; display: flex; gap: 8px; align-items: center;">
+                        <button id="btn-activity-log-refresh" class="btn btn-secondary">🔄 Reload</button>
+                        <label style="font-size: 13px;">Limit:
+                            <select id="activity-log-limit">
+                                <option value="50">50</option>
+                                <option value="200" selected>200</option>
+                                <option value="500">500</option>
+                                <option value="2000">2000</option>
+                            </select>
+                        </label>
+                        <span id="activity-log-count" style="font-size: 13px; color: var(--color-text-dim);"></span>
+                    </div>
+                    <div id="activity-log-body" style="max-height: 65vh; overflow-y: auto; font-family: var(--font-mono, monospace); font-size: 12px;"></div>
+                </div>
+                <div class="modal-footer">
+                    <button id="btn-activity-log-ok" class="btn btn-primary">Close</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Refresh Status Modal -->
+        <div id="refresh-modal" class="modal hidden">
+            <div class="modal-backdrop"></div>
+            <div class="modal-content" style="max-width: 750px;">
+                <div class="modal-header">
+                    <h2>↻ Model Refresh</h2>
+                    <button id="refresh-modal-close" class="btn-close">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <div id="refresh-panel-content"></div>
+                </div>
+                <div class="modal-footer">
+                    <button id="btn-refresh-modal-ok" class="btn btn-primary">Close</button>
                 </div>
             </div>
         </div>

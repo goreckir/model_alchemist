@@ -19,6 +19,7 @@ function compareModels(devModel, prodModel, devPath, prodPath) {
                 objectType: devObj.objectType,
                 identityKey: key,
                 displayName: devObj.displayName,
+                modelName: devObj.modelName,
                 changeGroup: devObj.changeGroup,
                 parentTable: devObj.parentTable || null,
                 sourceFile: devObj.sourceFile,
@@ -40,6 +41,7 @@ function compareModels(devModel, prodModel, devPath, prodPath) {
                 objectType: prodObj.objectType,
                 identityKey: key,
                 displayName: prodObj.displayName,
+                modelName: prodObj.modelName,
                 changeGroup: prodObj.changeGroup,
                 parentTable: prodObj.parentTable || null,
                 sourceFile: prodObj.sourceFile,
@@ -65,10 +67,14 @@ function compareModels(devModel, prodModel, devPath, prodPath) {
                 objectType: devObj.objectType,
                 identityKey: key,
                 displayName: devObj.displayName,
+                modelName: devObj.modelName,
                 changeGroup: devObj.changeGroup,
                 parentTable: devObj.parentTable || null,
                 sourceFile: devObj.sourceFile,
                 rawBlock: devObj.rawBlock,
+                // For relationships: real TMDL name (GUID) in target — used by deployer
+                // to locate the existing block during replace/remove (DEV's GUID differs).
+                targetRelName: prodObj.relName,
                 propertyDiffs
             });
         }
@@ -158,6 +164,26 @@ function computeGroups(diffs, devObjects) {
     // Build complete expressions map (all expressions in DEV model, not just changed ones)
     const allExpressions = Object.values(devObjects).filter(o => o.objectType === 'expression');
 
+    // Word-boundary aware identifier match. Power Query identifiers are letters,
+    // digits and underscores; the M language also allows quoted identifiers via
+    // `#"..."`. Using a plain `String.includes` produces false positives when one
+    // identifier is a substring of another (e.g. `silver_SP2_Dim_MRA` matches
+    // `silver_SP2_Dim_MRAFI`). We enforce that the matched name is not preceded
+    // or followed by another identifier character.
+    const IDENT_CHAR = /[A-Za-z0-9_]/;
+    function containsIdentifier(body, name) {
+        if (!body || !name) return false;
+        let from = 0;
+        while (true) {
+            const idx = body.indexOf(name, from);
+            if (idx < 0) return false;
+            const prev = idx === 0 ? '' : body.charAt(idx - 1);
+            const next = idx + name.length >= body.length ? '' : body.charAt(idx + name.length);
+            if (!IDENT_CHAR.test(prev) && !IDENT_CHAR.test(next)) return true;
+            from = idx + 1;
+        }
+    }
+
     // Resolve transitive dependencies: param → expression → ... → partition
     // For each changed expression, find all expressions that (transitively) depend on it
     function findDependentExprNames(changedName) {
@@ -167,8 +193,9 @@ function computeGroups(diffs, devObjects) {
             const name = queue.shift();
             for (const expr of allExpressions) {
                 if (dependents.has(expr.displayName)) continue;
+                if (expr.displayName === name) continue;
                 const body = expr.properties.expression || '';
-                if (body.includes(name)) {
+                if (containsIdentifier(body, name)) {
                     dependents.add(expr.displayName);
                     queue.push(expr.displayName);
                 }
@@ -183,7 +210,7 @@ function computeGroups(diffs, devObjects) {
         for (const part of allPartitions) {
             const partExpr = part.properties.expression || part.properties.type || '';
             for (const depName of exprNames) {
-                if (partExpr.includes(depName)) {
+                if (containsIdentifier(partExpr, depName)) {
                     tables.add(part.parentTable);
                     break;
                 }
@@ -307,6 +334,102 @@ function computeGroups(diffs, devObjects) {
                 memberKeys: [...memberKeys],
                 requiresRefresh: true
             });
+        }
+    }
+
+    // Column/Table deletions: group with dependent relationship deletions.
+    // When a column is removed and a relationship using that column is also removed,
+    // they should be in the same atomic group (selected/deselected together).
+    const removedColumns = diffs.filter(d => d.type === 1 && d.objectType === 'column');
+    const removedTables = diffs.filter(d => d.type === 1 && d.objectType === 'table');
+    const removedRelationships = diffs.filter(d => d.type === 1 && d.objectType === 'relationship');
+
+    if (removedRelationships.length > 0 && (removedColumns.length > 0 || removedTables.length > 0)) {
+        // Build lookup: column name (Table.Column) → set of relationship identityKeys
+        const colToRelKeys = new Map();
+        for (const rel of removedRelationships) {
+            const fromCol = (rel.propertyDiffs || []).find(p => p.propertyName === 'fromColumn');
+            const toCol = (rel.propertyDiffs || []).find(p => p.propertyName === 'toColumn');
+            const fromName = (fromCol && (fromCol.prodValue || fromCol.devValue) || '').replace(/'/g, '');
+            const toName = (toCol && (toCol.prodValue || toCol.devValue) || '').replace(/'/g, '');
+            if (fromName) {
+                if (!colToRelKeys.has(fromName)) colToRelKeys.set(fromName, new Set());
+                colToRelKeys.get(fromName).add(rel.identityKey);
+            }
+            if (toName) {
+                if (!colToRelKeys.has(toName)) colToRelKeys.set(toName, new Set());
+                colToRelKeys.get(toName).add(rel.identityKey);
+            }
+        }
+
+        // Group: column deletion + its dependent relationship deletions
+        const assignedRelKeys = new Set();
+        for (const colDiff of removedColumns) {
+            const colName = colDiff.displayName; // "Table.Column"
+            const relKeys = colToRelKeys.get(colName);
+            if (!relKeys || relKeys.size === 0) continue;
+
+            const memberKeys = new Set([colDiff.identityKey]);
+            for (const rk of relKeys) {
+                memberKeys.add(rk);
+                assignedRelKeys.add(rk);
+            }
+            // Also include parent table deletion if present
+            const tableDiff = removedTables.find(t => t.displayName === colDiff.parentTable);
+            if (tableDiff) memberKeys.add(tableDiff.identityKey);
+
+            // Check if column is already in a group
+            const existingGroup = groups.find(g => g.memberKeys.includes(colDiff.identityKey));
+            if (existingGroup) {
+                // Merge relationship keys into existing group
+                for (const rk of relKeys) {
+                    if (!existingGroup.memberKeys.includes(rk)) {
+                        existingGroup.memberKeys.push(rk);
+                    }
+                }
+            } else {
+                groups.push({
+                    groupId: `cascade:${colDiff.parentTable}`,
+                    label: `${colDiff.parentTable} (removal)`,
+                    reason: 'Column removal with dependent relationships — must be deployed together',
+                    memberKeys: [...memberKeys],
+                    requiresRefresh: false
+                });
+            }
+        }
+
+        // Table deletions: any remaining relationships referencing this table
+        for (const tblDiff of removedTables) {
+            const tblName = tblDiff.displayName;
+            const relKeys = new Set();
+            for (const [colName, rks] of colToRelKeys) {
+                if (colName.startsWith(tblName + '.')) {
+                    for (const rk of rks) {
+                        if (!assignedRelKeys.has(rk)) relKeys.add(rk);
+                    }
+                }
+            }
+            if (relKeys.size === 0) continue;
+            const existingGroup = groups.find(g => g.memberKeys.includes(tblDiff.identityKey));
+            if (existingGroup) {
+                for (const rk of relKeys) {
+                    if (!existingGroup.memberKeys.includes(rk)) {
+                        existingGroup.memberKeys.push(rk);
+                    }
+                }
+            } else {
+                const memberKeys = new Set([tblDiff.identityKey, ...relKeys]);
+                // Also add child columns/partitions of this table
+                const childDiffs = diffs.filter(d => d.type === 1 && d.parentTable === tblName);
+                for (const cd of childDiffs) memberKeys.add(cd.identityKey);
+                groups.push({
+                    groupId: `cascade:${tblName}`,
+                    label: `${tblName} (removal)`,
+                    reason: 'Table removal with dependent relationships — must be deployed together',
+                    memberKeys: [...memberKeys],
+                    requiresRefresh: false
+                });
+            }
         }
     }
 

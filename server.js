@@ -9,6 +9,8 @@ const fabricAuth = require('./fabric/auth');
 const fabricApi = require('./fabric/api-client');
 const { loadModelFromFabric } = require('./fabric/model-loader');
 const { parseConnectionString } = require('./fabric/connection-parser');
+const { logEvent, readEvents } = require('./lib/activity-log');
+const refreshStore = require('./lib/refresh-store');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -64,9 +66,18 @@ app.post('/api/compare', (req, res) => {
         lastDevModel = devModel;
         lastProdPath = resolveDefinitionPath(prodPath);
         
+        logEvent('compare', {
+            mode: 'local-local',
+            devSource: devPath,
+            prodSource: prodPath,
+            diffCount: result.diffs ? result.diffs.length : 0,
+            groupCount: result.groups ? result.groups.length : 0,
+            success: true
+        });
         res.json(result);
     } catch (err) {
         console.error('Comparison error:', err);
+        logEvent('compare', { mode: 'local-local', devSource: devPath, prodSource: prodPath, success: false, error: err.message });
         res.status(500).json({ error: err.message });
     }
 });
@@ -95,15 +106,44 @@ app.post('/api/deploy', async (req, res) => {
 
         if (lastProdPath) {
             // Local deployment — use filesystem deployer
-            const result = deployChanges(selectedDiffs, lastDevModel, lastProdPath, { dryRun, backup });
+            const result = deployChanges(selectedDiffs, lastDevModel, lastProdPath, { dryRun, backup, prodModel: lastProdModel });
+            logEvent('deploy', {
+                mode: 'local',
+                dryRun,
+                target: lastProdPath,
+                selectedCount: selectedDiffs.length,
+                selectedDiffs: selectedDiffs.map(d => ({ type: d.type, objectType: d.objectType, name: d.displayName, identityKey: d.identityKey })),
+                success: result.success,
+                actionsExecuted: (result.actions || []).filter(a => a.type === 'applied').length,
+                errorCount: (result.errors || []).length,
+                warnings: result.warnings || [],
+                errors: result.errors || [],
+                backupPath: result.backupPath || null,
+                tablesNeedingRefresh: result.tablesNeedingRefresh || null
+            });
             res.json(result);
         } else {
             // Fabric deployment — apply changes via temp dir, then upload
             const result = await deployToFabric(selectedDiffs, lastDevModel, lastProdModel, lastProdFabricInfo, { dryRun, backup, backupPath });
+            logEvent('deploy', {
+                mode: 'fabric',
+                dryRun,
+                target: lastProdFabricInfo ? `workspace:${lastProdFabricInfo.workspaceId}/model:${lastProdFabricInfo.semanticModelId}` : null,
+                selectedCount: selectedDiffs.length,
+                selectedDiffs: selectedDiffs.map(d => ({ type: d.type, objectType: d.objectType, name: d.displayName, identityKey: d.identityKey })),
+                success: result.success,
+                actionsExecuted: (result.actions || []).filter(a => a.type === 'applied').length,
+                errorCount: (result.errors || []).length,
+                warnings: result.warnings || [],
+                errors: result.errors || [],
+                backupPath: result.backupPath || null,
+                tablesNeedingRefresh: result.tablesNeedingRefresh || null
+            });
             res.json(result);
         }
     } catch (err) {
         console.error('Deployment error:', err);
+        logEvent('deploy', { success: false, error: err.message });
         res.status(500).json({ error: err.message });
     }
 });
@@ -122,7 +162,7 @@ app.post('/api/deploy/preview', async (req, res) => {
     try {
         const selectedDiffs = lastComparison.diffs.filter(d => selectedKeys.includes(d.identityKey));
         if (lastProdPath) {
-            const result = deployChanges(selectedDiffs, lastDevModel, lastProdPath, { dryRun: true, backup: false });
+            const result = deployChanges(selectedDiffs, lastDevModel, lastProdPath, { dryRun: true, backup: false, prodModel: lastProdModel });
             res.json(result);
         } else {
             const result = await deployToFabric(selectedDiffs, lastDevModel, lastProdModel, lastProdFabricInfo, { dryRun: true });
@@ -174,7 +214,7 @@ async function deployToFabric(selectedDiffs, devModel, prodModel, fabricInfo, op
         }
 
         // Run deployer against temp dir (no backup for Fabric)
-        const deployResult = deployChanges(selectedDiffs, devModel, tmpDir, { dryRun, backup: false });
+        const deployResult = deployChanges(selectedDiffs, devModel, tmpDir, { dryRun, backup: false, prodModel });
 
         if (!deployResult.success) {
             return deployResult;
@@ -219,65 +259,177 @@ async function deployToFabric(selectedDiffs, devModel, prodModel, fabricInfo, op
 
 /**
  * Detect which tables need refresh after deploying metadata changes.
- * Rules: partitions, named expressions, new tables/columns require data refresh.
- * Measures, relationships, column properties (isHidden, format, etc.) do NOT.
- * Calculation groups: adding/removing items or changing ordinal requires refresh;
- *   modifying only the DAX expression does NOT (evaluated at query time).
+ * Returns an object with per-table refresh classification:
+ * {
+ *   refreshType: 'automatic'|'dataOnly'|'calculate',
+ *   tables: [{ table, refreshType, reason }],
+ *   isFullModel: boolean
+ * }
+ * Returns null if no refresh is needed.
+ *
+ * Rules:
+ * - Parameters (IsParameterQuery) → no refresh needed
+ * - Named expression (shared M query) → dataOnly for dependent tables (or all)
+ * - Partition expression changed → dataOnly for that table
+ * - New table added → full for that table
+ * - New column with sourceColumn → dataOnly for that table
+ * - Calculated column expression changed → calculate for that table
+ * - Calculated table (mode: calculated) → calculate for that table
+ * - Calculation item add/remove/ordinal → calculate for the CG table
  */
 function detectTablesNeedingRefresh(selectedDiffs) {
-    const tables = new Set();
+    const tableMap = new Map(); // tableName → { refreshType, reasons[] }
+
+    // Collect tables being removed — they can't be refreshed
+    const tablesBeingRemoved = new Set();
+    for (const d of selectedDiffs) {
+        if (d.objectType === 'table' && d.type === 1) {
+            tablesBeingRemoved.add(d.displayName);
+        }
+    }
+
+    function addTable(table, type, reason) {
+        if (!table) return;
+        if (tablesBeingRemoved.has(table)) return; // can't refresh a deleted table
+        const existing = tableMap.get(table);
+        if (!existing) {
+            tableMap.set(table, { refreshType: type, reasons: [reason] });
+        } else {
+            existing.reasons.push(reason);
+            // Escalate: dataOnly > calculate > full
+            if (type === 'full' || existing.refreshType === 'full') {
+                existing.refreshType = 'full';
+            } else if (type === 'dataOnly' || existing.refreshType === 'dataOnly') {
+                existing.refreshType = 'dataOnly';
+            }
+            // else both calculate — stays calculate
+        }
+    }
+
+    let needsFullModel = false;
 
     for (const diff of selectedDiffs) {
         const objType = diff.objectType;
         const diffType = diff.type; // 0=added, 1=removed, 2=modified
 
-        // Partition expression changed → refresh that table
+        // Named expression / parameter
+        if (objType === 'expression') {
+            // Check if this is a parameter (no refresh needed) or a shared query
+            const exprValue = getExpressionValue(diff);
+            if (isParameterExpression(exprValue)) {
+                // Parameters don't need refresh
+                continue;
+            }
+            // Shared M query changed → all tables using it need data refresh
+            // We can't easily resolve dependencies, so mark as full-model dataOnly
+            needsFullModel = true;
+            continue;
+        }
+
+        // Partition expression changed → check if calculated table or data table
         if (objType === 'partition') {
-            if (diff.parentTable) tables.add(diff.parentTable);
+            if (diffType === 1) continue; // partition removed → no refresh needed
+            const mode = getPartitionMode(diff);
+            if (mode === 'calculated') {
+                addTable(diff.parentTable, 'calculate', 'calculated table expression changed');
+            } else {
+                addTable(diff.parentTable, 'dataOnly', 'partition expression changed');
+            }
         }
-        // Named expression (shared M query) changed → affects tables using it (refresh all)
-        else if (objType === 'expression') {
-            tables.add('__all__');
-        }
-        // New table added → needs refresh
+
+        // New table added → needs full refresh
         else if (objType === 'table' && diffType === 0) {
-            if (diff.displayName) tables.add(diff.displayName);
+            addTable(diff.displayName, 'full', 'new table added');
         }
+
         // New column added (has sourceColumn) → table needs data refresh
         else if (objType === 'column' && diffType === 0) {
-            if (diff.parentTable) tables.add(diff.parentTable);
+            const hasSourceCol = (diff.propertyDiffs || []).some(p => p.propertyName === 'sourceColumn' && p.devValue);
+            const hasExpression = (diff.propertyDiffs || []).some(p => p.propertyName === 'expression' && p.devValue);
+            if (hasExpression) {
+                addTable(diff.parentTable, 'calculate', 'new calculated column');
+            } else if (hasSourceCol) {
+                addTable(diff.parentTable, 'dataOnly', 'new column with sourceColumn');
+            }
         }
-        // Column with expression change (calculated column)
+
+        // Column expression change (calculated column)
         else if (objType === 'column' && diffType === 2) {
             const hasExpr = (diff.propertyDiffs || []).some(p => p.propertyName === 'expression');
-            if (hasExpr && diff.parentTable) tables.add(diff.parentTable);
+            if (hasExpr) {
+                addTable(diff.parentTable, 'calculate', 'calculated column expression changed');
+            }
         }
-        // Calculation item added/removed → refresh the CG table (Name/Ordinal columns are materialized)
+
+        // Calculation item added/removed → recalculate the CG table
         else if (objType === 'calculationItem' && (diffType === 0 || diffType === 1)) {
-            if (diff.parentTable) tables.add(diff.parentTable);
+            addTable(diff.parentTable, 'calculate', `calculationItem ${diffType === 0 ? 'added' : 'removed'}`);
         }
-        // Calculation item modified → only if ordinal changed (expression is query-time)
+
+        // Calculation item modified → only if ordinal changed
         else if (objType === 'calculationItem' && diffType === 2) {
             const hasOrdinalChange = (diff.propertyDiffs || []).some(p => p.propertyName === 'ordinal');
-            if (hasOrdinalChange && diff.parentTable) tables.add(diff.parentTable);
+            if (hasOrdinalChange) {
+                addTable(diff.parentTable, 'calculate', 'calculationItem ordinal changed');
+            }
         }
-        // Calculation group precedence changed → refresh the CG table
+
+        // Calculation group precedence changed
         else if (objType === 'calculationGroup' && diffType === 2) {
             const hasPrecedenceChange = (diff.propertyDiffs || []).some(p => p.propertyName === 'precedence');
-            if (hasPrecedenceChange && diff.parentTable) tables.add(diff.parentTable);
+            if (hasPrecedenceChange) {
+                addTable(diff.parentTable, 'calculate', 'calculationGroup precedence changed');
+            }
         }
     }
 
-    // If __all__ marker → return empty array meaning "full model refresh"
-    if (tables.has('__all__')) {
-        return []; // empty = full model refresh
-    }
-
-    if (tables.size === 0) {
+    if (tableMap.size === 0 && !needsFullModel) {
         return null; // no refresh needed
     }
 
-    return [...tables];
+    // Build tables array
+    const tables = [];
+    for (const [name, info] of tableMap) {
+        tables.push({ table: name, refreshType: info.refreshType, reasons: info.reasons });
+    }
+
+    // Determine overall API refresh type
+    let overallType = 'calculate';
+    if (needsFullModel) {
+        overallType = 'automatic';
+    } else {
+        const types = new Set(tables.map(t => t.refreshType));
+        if (types.has('full')) overallType = 'automatic';
+        else if (types.has('dataOnly') && types.has('calculate')) overallType = 'automatic';
+        else if (types.has('dataOnly')) overallType = 'dataOnly';
+        // else all calculate → 'calculate'
+    }
+
+    return {
+        refreshType: overallType,
+        tables,
+        isFullModel: needsFullModel
+    };
+}
+
+/** Extract expression value from a diff object */
+function getExpressionValue(diff) {
+    const exprProp = (diff.propertyDiffs || []).find(p => p.propertyName === 'expression');
+    if (exprProp) return exprProp.devValue || exprProp.prodValue || '';
+    // Fallback: check rawBlock
+    return diff.rawBlock || '';
+}
+
+/** Check if an expression value is a Power Query parameter */
+function isParameterExpression(exprValue) {
+    return /IsParameterQuery\s*=\s*true/i.test(exprValue);
+}
+
+/** Get partition mode from diff's propertyDiffs */
+function getPartitionMode(diff) {
+    const modeProp = (diff.propertyDiffs || []).find(p => p.propertyName === 'mode');
+    if (modeProp) return (modeProp.devValue || modeProp.prodValue || 'import').toLowerCase();
+    return 'import';
 }
 
 /**
@@ -416,7 +568,10 @@ app.post('/api/fabric/cancel-login', (req, res) => {
 
 // API: Trigger refresh of affected tables after Fabric deployment
 app.post('/api/fabric/refresh', async (req, res) => {
-    const { tables } = req.body; // optional: array of table names
+    const { tables, refreshType, tableDetails } = req.body;
+    // tables: string[] of table names (empty = full model)
+    // refreshType: 'automatic'|'dataOnly'|'calculate' (recommended type)
+    // tableDetails: [{ table, refreshType, reasons }] (for display/logging)
 
     if (!lastProdFabricInfo) {
         return res.status(400).json({ error: 'No Fabric target available. Deploy to Fabric first.' });
@@ -428,16 +583,33 @@ app.post('/api/fabric/refresh', async (req, res) => {
             return res.status(401).json({ error: 'Not authenticated. Login to Fabric first.' });
         }
 
-        const { workspaceId, semanticModelId } = lastProdFabricInfo;
-        const result = await fabricApi.refreshSemanticModel(token, workspaceId, semanticModelId, tables || []);
+        const { workspaceId, semanticModelId, modelName } = lastProdFabricInfo;
+        const apiRefreshType = refreshType || 'automatic';
+        const result = await fabricApi.refreshSemanticModel(token, workspaceId, semanticModelId, tables || [], apiRefreshType);
+
+        // Store in refresh session with detailed table info
+        if (result.requestId) {
+            refreshStore.createRefreshRecord(result.requestId, modelName, workspaceId, semanticModelId, tables || [], tableDetails || [], apiRefreshType);
+        }
+
+        logEvent('refresh', {
+            target: `workspace:${workspaceId}/model:${semanticModelId}`,
+            tables: tables || [],
+            refreshType: apiRefreshType,
+            tableDetails: tableDetails || [],
+            tableCount: (tables || []).length,
+            requestId: result.requestId,
+            success: true
+        });
         res.json({ success: true, requestId: result.requestId });
     } catch (err) {
         console.error('Refresh error:', err);
+        logEvent('refresh', { tables: tables || [], refreshType: refreshType || 'automatic', success: false, error: err.message });
         res.status(500).json({ error: err.message });
     }
 });
 
-// API: Check refresh status
+// API: Check refresh status (with per-object detail)
 app.get('/api/fabric/refresh/status/:requestId', async (req, res) => {
     const { requestId } = req.params;
 
@@ -452,12 +624,41 @@ app.get('/api/fabric/refresh/status/:requestId', async (req, res) => {
         }
 
         const { workspaceId, semanticModelId } = lastProdFabricInfo;
-        const status = await fabricApi.getRefreshStatus(token, workspaceId, semanticModelId, requestId);
-        res.json(status);
+        const apiStatus = await fabricApi.getRefreshStatus(token, workspaceId, semanticModelId, requestId);
+
+        // Update the session record with full status (including objects array)
+        const record = refreshStore.updateRefreshRecord(requestId, apiStatus);
+
+        logEvent('refresh-status', {
+            requestId,
+            target: `workspace:${workspaceId}/model:${semanticModelId}`,
+            status: apiStatus.status || null,
+            startTime: apiStatus.startTime || null,
+            endTime: apiStatus.endTime || null
+        });
+
+        // Return merged response: API data + our tracked objects
+        res.json({
+            ...apiStatus,
+            trackedObjects: record ? record.objects : [],
+            requestedTables: record ? record.requestedTables : []
+        });
     } catch (err) {
         console.error('Refresh status error:', err);
+        logEvent('refresh-status', { requestId, success: false, error: err.message });
         res.status(500).json({ error: err.message });
     }
+});
+
+// API: Get refresh session history
+app.get('/api/fabric/refresh/history', (req, res) => {
+    res.json(refreshStore.getSessionHistory());
+});
+
+// API: Get active refresh (if any)
+app.get('/api/fabric/refresh/active', (req, res) => {
+    const active = refreshStore.getActiveRefresh();
+    res.json({ active: active || null });
 });
 
 // API: Disconnect from Fabric
@@ -580,13 +781,34 @@ app.post('/api/compare-fabric', async (req, res) => {
             lastProdPath = null;
             lastProdFabricInfo = {
                 workspaceId: prodSource.workspaceId,
-                semanticModelId: prodSource.semanticModelId
+                semanticModelId: prodSource.semanticModelId,
+                modelName: prodModel.name || 'SemanticModel'
             };
         }
 
+        logEvent('compare', {
+            mode: `${devSource.type}-${prodSource.type}`,
+            devSource: devLabel,
+            prodSource: prodLabel,
+            diffCount: result.diffs ? result.diffs.length : 0,
+            groupCount: result.groups ? result.groups.length : 0,
+            success: true
+        });
         res.json(result);
     } catch (err) {
         console.error('Comparison error:', err);
+        logEvent('compare', { mode: `${devSource && devSource.type}-${prodSource && prodSource.type}`, success: false, error: err.message });
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// API: Read recent activity log entries.
+app.get('/api/activity-log', (req, res) => {
+    const limit = Math.min(parseInt(req.query.limit, 10) || 200, 2000);
+    try {
+        const entries = readEvents(limit);
+        res.json({ entries });
+    } catch (err) {
         res.status(500).json({ error: err.message });
     }
 });

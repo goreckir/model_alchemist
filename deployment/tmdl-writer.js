@@ -119,6 +119,8 @@ function removeObjectBlock(content, objectType, objectName, parentIndent) {
 
 /**
  * Replace an object block in file content with new content.
+ * Preserves `lineageTag` values from the existing target block to avoid breaking
+ * report bindings (PBIR visuals bind to model objects by lineageTag, not by name).
  * @returns {string} Modified file content
  */
 function replaceObjectBlock(content, objectType, objectName, parentIndent, newBlock) {
@@ -126,9 +128,76 @@ function replaceObjectBlock(content, objectType, objectName, parentIndent, newBl
     if (!location) return content;
 
     const lines = content.replace(/\r\n/g, '\n').split('\n');
-    const newBlockLines = newBlock.split('\n');
-    
+    const oldBlock = lines.slice(location.startLine, location.endLine).join('\n');
+    const mergedBlock = preserveLineageTags(oldBlock, newBlock);
+    const newBlockLines = mergedBlock.split('\n');
+
     lines.splice(location.startLine, location.endLine - location.startLine, ...newBlockLines);
+    return lines.join('\n');
+}
+
+const DECL_KEYWORDS_RE = /^(table|column|measure|hierarchy|level|partition|relationship|role|tablepermission|columnpermission|member|perspective|perspectivetable|perspectivemeasure|perspectivecolumn|perspectivehierarchy|cultureinfo|culture|expression|function|model|calculationgroup|calculationitem|dataSource|annotation|extendedproperty|kpi|alternateof|translations|linguisticmetadata|database)\b/i;
+
+/**
+ * Collect map of "indent|declaration" -> lineageTag value from a TMDL block.
+ */
+function collectLineageTags(block) {
+    const lines = block.replace(/\r\n/g, '\n').split('\n');
+    const tags = new Map();
+    const stack = []; // [[indent, declTrimmed], ...]
+    for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith('//')) continue;
+        const indent = getIndentLevel(line);
+        while (stack.length && stack[stack.length - 1][0] >= indent) stack.pop();
+        const tagMatch = trimmed.match(/^lineageTag:\s*(.+?)\s*$/);
+        if (tagMatch) {
+            const parent = stack.length ? stack[stack.length - 1] : null;
+            if (parent) tags.set(parent[0] + '|' + parent[1], tagMatch[1]);
+            continue;
+        }
+        if (DECL_KEYWORDS_RE.test(trimmed)) {
+            const decl = trimmed.replace(/\s*=.*$/, '').trim();
+            stack.push([indent, decl]);
+        }
+    }
+    return tags;
+}
+
+/**
+ * Rewrite a new block: replace lineageTag values with values from oldTags
+ * where the parent declaration matches (same indent + same declaration line).
+ */
+function preserveLineageTags(oldBlock, newBlock) {
+    if (!oldBlock || !newBlock) return newBlock;
+    const oldTags = collectLineageTags(oldBlock);
+    if (oldTags.size === 0) return newBlock;
+
+    const lines = newBlock.replace(/\r\n/g, '\n').split('\n');
+    const stack = [];
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith('//')) continue;
+        const indent = getIndentLevel(line);
+        while (stack.length && stack[stack.length - 1][0] >= indent) stack.pop();
+        const tagMatch = trimmed.match(/^(lineageTag:\s*)(.+?)\s*$/);
+        if (tagMatch) {
+            const parent = stack.length ? stack[stack.length - 1] : null;
+            if (parent) {
+                const key = parent[0] + '|' + parent[1];
+                if (oldTags.has(key)) {
+                    const indentStr = line.substring(0, line.length - line.trimStart().length);
+                    lines[i] = indentStr + tagMatch[1] + oldTags.get(key);
+                }
+            }
+            continue;
+        }
+        if (DECL_KEYWORDS_RE.test(trimmed)) {
+            const decl = trimmed.replace(/\s*=.*$/, '').trim();
+            stack.push([indent, decl]);
+        }
+    }
     return lines.join('\n');
 }
 
@@ -170,29 +239,55 @@ function appendChildBlock(content, childBlock) {
 }
 
 /**
- * Add a ref entry to model.tmdl for a new table/role/culture.
+ * Map our internal refType to the TMDL ref keyword used in model.tmdl.
+ * Power BI uses 'cultureInfo' (not 'culture') for culture references.
+ */
+function refKeyword(refType) {
+    if (refType === 'culture') return 'cultureInfo';
+    return refType; // table, role, perspective
+}
+
+/**
+ * Detect the indentation prefix used by existing top-level `ref` statements.
+ * Power BI Desktop conventionally emits them WITHOUT indentation (column 0),
+ * but some files may indent them under `model Model`. We mirror what the
+ * file currently uses; default to no indent (Power BI Desktop convention).
+ */
+function detectRefIndent(lines) {
+    for (const line of lines) {
+        const m = line.match(/^(\s*)ref\s+\S+\s+/);
+        if (m) return m[1];
+    }
+    return ''; // top-level, matches Power BI Desktop output
+}
+
+/**
+ * Add a ref entry to model.tmdl for a new table/role/culture/perspective.
  * @param {string} content - model.tmdl content
- * @param {string} refType - 'table', 'role', 'culture', 'perspective'
+ * @param {string} refType - 'table', 'role', 'culture' (→ cultureInfo), 'perspective'
  * @param {string} refName - Object name
  * @returns {string} Modified content
  */
 function addRefEntry(content, refType, refName) {
     const lines = content.replace(/\r\n/g, '\n').split('\n');
+    const keyword = refKeyword(refType);
     const quotedName = quoteName(refName);
-    const refLine = `\tref ${refType} ${quotedName}`;
-    
-    // Check if ref already exists
+    const indent = detectRefIndent(lines);
+    const refLine = `${indent}ref ${keyword} ${quotedName}`;
+
+    // Check if ref already exists (any indentation)
     for (const line of lines) {
-        if (line.trim() === `ref ${refType} ${quotedName}` || line.trim() === `ref ${refType} ${refName}`) {
-            return content; // Already exists
+        const t = line.trim();
+        if (t === `ref ${keyword} ${quotedName}` || t === `ref ${keyword} ${refName}`) {
+            return content;
         }
     }
 
-    // Find the last ref line of the same type and insert after it
+    // Find the last ref line of the same keyword and insert after it
     let lastRefIdx = -1;
     for (let i = 0; i < lines.length; i++) {
         const trimmed = lines[i].trim();
-        if (trimmed.startsWith(`ref ${refType} `)) {
+        if (trimmed.startsWith(`ref ${keyword} `)) {
             lastRefIdx = i;
         }
     }
@@ -200,12 +295,21 @@ function addRefEntry(content, refType, refName) {
     if (lastRefIdx >= 0) {
         lines.splice(lastRefIdx + 1, 0, refLine);
     } else {
-        // No existing refs of this type — append at end of file
-        let insertIdx = lines.length;
-        for (let i = lines.length - 1; i >= 0; i--) {
-            if (lines[i].trim()) { insertIdx = i + 1; break; }
+        // No existing refs of this keyword — insert after last ref of any kind,
+        // or append at end of file if none exist.
+        let lastAnyRefIdx = -1;
+        for (let i = 0; i < lines.length; i++) {
+            if (lines[i].trim().startsWith('ref ')) lastAnyRefIdx = i;
         }
-        lines.splice(insertIdx, 0, refLine);
+        if (lastAnyRefIdx >= 0) {
+            lines.splice(lastAnyRefIdx + 1, 0, refLine);
+        } else {
+            let insertIdx = lines.length;
+            for (let i = lines.length - 1; i >= 0; i--) {
+                if (lines[i].trim()) { insertIdx = i + 1; break; }
+            }
+            lines.splice(insertIdx, 0, '', refLine);
+        }
     }
 
     return lines.join('\n');
@@ -216,23 +320,200 @@ function addRefEntry(content, refType, refName) {
  */
 function removeRefEntry(content, refType, refName) {
     const lines = content.replace(/\r\n/g, '\n').split('\n');
+    const keyword = refKeyword(refType);
     const quotedName = quoteName(refName);
-    
+
     const filtered = lines.filter(line => {
         const trimmed = line.trim();
-        return trimmed !== `ref ${refType} ${quotedName}` && trimmed !== `ref ${refType} ${refName}`;
+        return trimmed !== `ref ${keyword} ${quotedName}` && trimmed !== `ref ${keyword} ${refName}`;
     });
 
     return filtered.join('\n');
 }
 
+/**
+ * Extract the "header" portion of a table block: lines from the `table <name>` declaration
+ * down to (but excluding) the first child object declaration at parent+1 indent.
+ * Children are: column/measure/hierarchy/partition/calculationGroup/calculationItem.
+ *
+ * @param {string} content - Full file content containing the table block
+ * @param {string} tableName - Table name (used to anchor the start)
+ * @returns {{ headerStart: number, headerEnd: number, firstChildStart: number|null, blockStart: number, blockEnd: number, headerLines: string[] } | null}
+ */
+function findTableHeader(content, tableName) {
+    const block = findTopLevelBlock(content, 'table', tableName);
+    if (!block) return null;
+    const lines = content.replace(/\r\n/g, '\n').split('\n');
+    const childKeywords = ['column', 'measure', 'hierarchy', 'partition', 'calculationGroup', 'calculationItem'];
+    let firstChildStart = null;
+    for (let i = block.startLine + 1; i <= block.endLine; i++) {
+        const ln = lines[i];
+        if (!ln || ln.trim() === '') continue;
+        const indent = getIndentLevel(ln);
+        if (indent !== 1) continue;
+        const trimmed = ln.trim();
+        const firstWord = trimmed.split(/[\s\t]/)[0];
+        if (childKeywords.includes(firstWord)) {
+            firstChildStart = i;
+            break;
+        }
+    }
+    const headerEnd = firstChildStart !== null ? firstChildStart - 1 : block.endLine;
+    return {
+        blockStart: block.startLine,
+        blockEnd: block.endLine,
+        headerStart: block.startLine,
+        headerEnd,
+        firstChildStart,
+        headerLines: lines.slice(block.startLine, headerEnd + 1)
+    };
+}
+
+/**
+ * Replace ONLY the table header (declaration + table-level properties) in target content,
+ * preserving all children (columns, measures, hierarchies, partitions...).
+ *
+ * @param {string} targetContent - Existing target file content
+ * @param {string} devContent - DEV file content (header source)
+ * @param {string} tableName
+ * @returns {string} New target content with header replaced; throws if either block missing
+ */
+function replaceTableHeader(targetContent, devContent, tableName) {
+    const targetH = findTableHeader(targetContent, tableName);
+    const devH = findTableHeader(devContent, tableName);
+    if (!targetH) throw new Error(`Table '${tableName}' not found in target content`);
+    if (!devH) throw new Error(`Table '${tableName}' not found in DEV content`);
+
+    const targetLines = targetContent.replace(/\r\n/g, '\n').split('\n');
+    const newLines = [
+        ...targetLines.slice(0, targetH.headerStart),
+        ...devH.headerLines,
+        ...targetLines.slice(targetH.headerEnd + 1)
+    ];
+    return newLines.join('\n');
+}
+
+/**
+ * Ensure a simple property is present (and set to a given value) inside the
+ * top-level `model Model` block of model.tmdl. Inserts the property right
+ * after the `model` declaration if missing, or replaces the value if present
+ * with a different one. Property must be a single-line `name: value`.
+ *
+ * @param {string} content - model.tmdl content
+ * @param {string} propName - e.g. 'discourageImplicitMeasures'
+ * @param {string} propValue - e.g. 'true'
+ * @returns {string} Possibly modified content
+ */
+function ensureTopLevelProperty(content, blockKeyword, propName, propValue) {
+    const lines = content.replace(/\r\n/g, '\n').split('\n');
+    const blockRe = new RegExp(`^${blockKeyword}\\b`);
+
+    // Locate `<keyword> <name>` declaration at indent 0
+    let blockStart = -1;
+    for (let i = 0; i < lines.length; i++) {
+        const indent = getIndentLevel(lines[i]);
+        const trimmed = lines[i].trim();
+        if (indent === 0 && blockRe.test(trimmed)) {
+            blockStart = i;
+            break;
+        }
+    }
+    if (blockStart < 0) return content; // no matching block — bail out
+
+    // Determine end of block (first line at indent 0 after declaration, exclusive)
+    let blockEnd = lines.length;
+    for (let i = blockStart + 1; i < lines.length; i++) {
+        const trimmed = lines[i].trim();
+        if (!trimmed) continue;
+        if (getIndentLevel(lines[i]) === 0) {
+            blockEnd = i;
+            break;
+        }
+    }
+
+    const propRe = new RegExp(`^\\s*${propName}\\s*:`);
+    for (let i = blockStart + 1; i < blockEnd; i++) {
+        if (propRe.test(lines[i])) {
+            // Already present — replace value if differs
+            const expected = `\t${propName}: ${propValue}`;
+            if (lines[i] === expected) return content;
+            lines[i] = expected;
+            return lines.join('\n');
+        }
+    }
+
+    // Not present — insert after block declaration
+    lines.splice(blockStart + 1, 0, `\t${propName}: ${propValue}`);
+    return lines.join('\n');
+}
+
+function ensureModelProperty(content, propName, propValue) {
+    return ensureTopLevelProperty(content, 'model', propName, propValue);
+}
+
+/**
+ * Append a child block nested inside a parent block at a given indent level.
+ * Used for calculationItem (indent 2, inside calculationGroup at indent 1).
+ * @param {string} content - The table file content
+ * @param {string} childBlock - The raw block of the child (already at correct indentation)
+ * @param {number} parentIndent - Indent level of the parent containing block (e.g. 1 for calculationGroup)
+ * @returns {string} Modified file content
+ */
+function appendChildBlockNested(content, childBlock, parentIndent) {
+    const lines = content.replace(/\r\n/g, '\n').split('\n');
+
+    // Find the last occurrence of the parent block at the given indent
+    // For calculationItem, parent is 'calculationGroup' at indent 1
+    let parentStart = -1;
+    for (let i = 0; i < lines.length; i++) {
+        const indent = getIndentLevel(lines[i]);
+        const trimmed = lines[i].trim();
+        if (indent === parentIndent && DECL_KEYWORDS_RE.test(trimmed)) {
+            // Check if this is the type of block that can contain our child
+            const keyword = trimmed.split(/[\s\t]/)[0].toLowerCase();
+            if (keyword === 'calculationgroup') {
+                parentStart = i;
+            }
+        }
+    }
+
+    if (parentStart < 0) {
+        // Fallback: append at end of file like regular appendChildBlock
+        return appendChildBlock(content, childBlock);
+    }
+
+    // Find end of this parent block (first line at indent <= parentIndent after start)
+    let insertPos = parentStart + 1;
+    for (let i = parentStart + 1; i < lines.length; i++) {
+        const trimmed = lines[i].trim();
+        if (!trimmed) { insertPos = i + 1; continue; }
+        const indent = getIndentLevel(lines[i]);
+        if (indent <= parentIndent) break;
+        insertPos = i + 1;
+    }
+
+    // Skip trailing blank lines within the block to insert before them
+    while (insertPos > parentStart + 1 && !lines[insertPos - 1].trim()) {
+        insertPos--;
+    }
+
+    const newLines = ['', ...childBlock.split('\n')];
+    lines.splice(insertPos, 0, ...newLines);
+    return lines.join('\n');
+}
+
 module.exports = {
     findObjectBlock,
     findTopLevelBlock,
+    findTableHeader,
     removeObjectBlock,
     replaceObjectBlock,
+    replaceTableHeader,
     appendTopLevelBlock,
     appendChildBlock,
+    appendChildBlockNested,
     addRefEntry,
-    removeRefEntry
+    removeRefEntry,
+    ensureModelProperty,
+    ensureTopLevelProperty
 };

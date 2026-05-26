@@ -68,6 +68,28 @@
     document.getElementById('btn-expand-all').addEventListener('click', expandAll);
     document.getElementById('btn-collapse-all').addEventListener('click', collapseAll);
 
+    // Activity log modal
+    const activityLogModal = document.getElementById('activity-log-modal');
+    const activityLogLimit = document.getElementById('activity-log-limit');
+    document.getElementById('btn-activity-log').addEventListener('click', openActivityLog);
+    document.getElementById('activity-log-close').addEventListener('click', () => activityLogModal.classList.add('hidden'));
+    document.getElementById('btn-activity-log-ok').addEventListener('click', () => activityLogModal.classList.add('hidden'));
+    document.getElementById('btn-activity-log-refresh').addEventListener('click', loadActivityLog);
+    activityLogLimit.addEventListener('change', loadActivityLog);
+
+    // Refresh panel
+    const btnModelRefresh = document.getElementById('btn-model-refresh');
+    const refreshModal = document.getElementById('refresh-modal');
+    const refreshPanelContent = document.getElementById('refresh-panel-content');
+    btnModelRefresh.addEventListener('click', openRefreshPanel);
+    document.getElementById('refresh-modal-close').addEventListener('click', () => refreshModal.classList.add('hidden'));
+    document.getElementById('btn-refresh-modal-ok').addEventListener('click', () => refreshModal.classList.add('hidden'));
+
+    // Refresh state
+    let refreshHistory = []; // session refresh records
+    let activeRefreshId = null;
+    let refreshPollTimer = null;
+
     // Export dropdown
     btnExport.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -149,20 +171,35 @@
             showError('Sign in to Fabric first (DEV source).');
             return;
         }
-        if (!devIsLocal && !devFabricSelection.semanticModelId) {
-            showError('Verify DEV connection string first (click "Verify Access").');
-            return;
-        }
-        if (prodIsLocal && !prodPath) {
-            showError('Please select a PROD model file.');
-            return;
-        }
         if (!prodIsLocal && !fabricConnected) {
             showError('Sign in to Fabric first (PROD source).');
             return;
         }
-        if (!prodIsLocal && !prodFabricSelection.semanticModelId) {
-            showError('Verify PROD connection string first (click "Verify Access").');
+
+        // Auto-verify Fabric access if not yet verified
+        const needsDevVerify = !devIsLocal && !devFabricSelection.semanticModelId;
+        const needsProdVerify = !prodIsLocal && !prodFabricSelection.semanticModelId;
+        if (needsDevVerify || needsProdVerify) {
+            showLoading();
+            try {
+                if (needsDevVerify) await resolveConnectionString('dev');
+                if (needsProdVerify) await resolveConnectionString('prod');
+            } finally {
+                hideLoading();
+            }
+            // Check again after auto-verify
+            if (!devIsLocal && !devFabricSelection.semanticModelId) {
+                showError('Cannot verify DEV Fabric access. Check connection string.');
+                return;
+            }
+            if (!prodIsLocal && !prodFabricSelection.semanticModelId) {
+                showError('Cannot verify PROD Fabric access. Check connection string.');
+                return;
+            }
+        }
+
+        if (prodIsLocal && !prodPath) {
+            showError('Please select a PROD model file.');
             return;
         }
 
@@ -268,6 +305,7 @@
         btnRefresh.classList.add('hidden');
         exportDropdown.classList.add('hidden');
         btnDeploy.classList.add('hidden');
+        btnModelRefresh.classList.add('hidden');
         document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
         document.querySelector('.filter-btn[data-filter="all"]').classList.add('active');
         updateDeployButton();
@@ -280,6 +318,8 @@
         btnRefresh.classList.remove('hidden');
         exportDropdown.classList.remove('hidden');
         btnDeploy.classList.remove('hidden');
+        btnModelRefresh.classList.remove('hidden');
+        updateRefreshButton();
 
         setModelInfo(devModelName, comparisonResult.devSource, devPathInput.value);
         setModelInfo(prodModelName, comparisonResult.prodSource, prodPathInput.value);
@@ -635,21 +675,29 @@
     }
 
     function selectAllVisible() {
+        // Select diffs whose checkboxes are currently rendered (i.e., visible after
+        // applying activeGroup + activeFilter + searchTerm) AND all member keys of
+        // any group checkbox that is currently displayed — even when the group is
+        // collapsed and its member rows are not yet in the DOM. Without this,
+        // collapsed atomic groups silently get dropped from the deploy payload.
         document.querySelectorAll('.diff-checkbox').forEach(cb => {
             cb.checked = true;
-            selectedKeys.add(cb.dataset.key);
+            const key = cb.dataset.key;
+            selectedKeys.add(key);
             const diffObj = cb.closest('.diff-object');
             if (diffObj) diffObj.classList.add('selected');
         });
-        // Also select all group checkboxes and their hidden members
+
+        const allGroups = (comparisonResult && comparisonResult.groups) || [];
         document.querySelectorAll('.diff-group-checkbox').forEach(cb => {
             cb.checked = true;
             cb.indeterminate = false;
+            const groupId = cb.closest('.diff-group')?.dataset.groupId;
+            if (!groupId) return;
+            const group = allGroups.find(g => String(g.groupId) === String(groupId));
+            if (!group) return;
+            for (const k of group.memberKeys) selectedKeys.add(k);
         });
-        const groups = comparisonResult.groups || [];
-        for (const group of groups) {
-            for (const key of group.memberKeys) selectedKeys.add(key);
-        }
         updateDeployButton();
     }
 
@@ -769,11 +817,29 @@
     }
 
     async function handleConfirmDeploy() {
+        const backupPathInput = document.getElementById('backup-path');
+        const backupPathRow = document.getElementById('backup-path-row');
+
+        // When the backup checkbox is checked AND the backup-path input is visible
+        // (Fabric mode), the path must be non-empty — otherwise the user has no
+        // way of knowing where the backup will be stored.
+        if (optBackup.checked && backupPathRow && !backupPathRow.classList.contains('hidden')) {
+            const val = backupPathInput && backupPathInput.value.trim();
+            if (!val) {
+                if (backupPathInput) {
+                    backupPathInput.style.borderColor = 'var(--color-removed-text)';
+                    backupPathInput.focus();
+                }
+                alert('Backup is enabled — please provide a backup folder path, or uncheck "Create backup before deployment".');
+                return;
+            }
+            if (backupPathInput) backupPathInput.style.borderColor = '';
+        }
+
         deployModal.classList.add('hidden');
         showAlchemistAnimation();
 
         try {
-            const backupPathInput = document.getElementById('backup-path');
             const payload = {
                 selectedKeys: [...selectedKeys],
                 dryRun: false,
@@ -851,7 +917,14 @@
                 html += `<p style="font-weight: 600; margin-bottom: 8px;">${deployActions.length} operations executed:</p>`;
                 html += '<div class="result-actions">';
                 for (const action of deployActions) {
-                    html += `<div class="result-action-item">✓ ${escapeHtml(action.action || '')} [${escapeHtml(action.objectType || '')}] ${escapeHtml(action.name || '')}</div>`;
+                    // Some actions (e.g. type='fabric-upload') carry only a message
+                    // and have no action/objectType/name — render the message instead
+                    // of an empty "[]" placeholder.
+                    if (action.message && !action.action && !action.objectType && !action.name) {
+                        html += `<div class="result-action-item">✓ ${escapeHtml(action.message)}</div>`;
+                    } else {
+                        html += `<div class="result-action-item">✓ ${escapeHtml(action.action || '')} [${escapeHtml(action.objectType || '')}] ${escapeHtml(action.name || '')}</div>`;
+                    }
                 }
                 html += '</div>';
             }
@@ -867,17 +940,31 @@
         }
 
         // Offer refresh for Fabric deployments with data-affecting changes
-        if (result.success && result.tablesNeedingRefresh !== undefined) {
-            const tables = result.tablesNeedingRefresh;
-            const isFullRefresh = tables.length === 0;
-            const tableLabel = isFullRefresh
-                ? 'Full model refresh (Named Expressions changed)'
-                : tables.map(t => `<code>${escapeHtml(t)}</code>`).join(', ');
+        if (result.success && result.tablesNeedingRefresh != null) {
+            const refreshInfo = result.tablesNeedingRefresh;
+            const { refreshType, tables: refreshTables, isFullModel } = refreshInfo;
+
+            const typeLabels = { automatic: 'Automatic', dataOnly: 'Data Refresh', calculate: 'Recalculate', full: 'Full Refresh' };
+            const typeIcons = { automatic: '⚡', dataOnly: '📥', calculate: '🔄', full: '🔃' };
 
             html += `<div id="refresh-offer" style="margin-top: 20px; padding: 16px; background: rgba(78, 154, 241, 0.08); border: 1px solid rgba(78, 154, 241, 0.3); border-radius: 8px;">`;
-            html += `<p style="font-weight: 600; margin-bottom: 8px;">↻ Refresh Required</p>`;
-            html += `<p style="font-size: 13px; margin-bottom: 12px;">Deployed changes affect data sources and require a model refresh to take effect.</p>`;
-            html += `<p style="font-size: 12px; margin-bottom: 12px; opacity: 0.8;">Tables: ${tableLabel}</p>`;
+            html += `<p style="font-weight: 600; margin-bottom: 4px;">↻ Refresh Required</p>`;
+            html += `<p style="font-size: 12px; margin-bottom: 12px; opacity: 0.8;">API refresh type: <strong>${typeLabels[refreshType] || refreshType}</strong>${isFullModel ? ' (full model — shared query changed)' : ''}</p>`;
+
+            if (refreshTables && refreshTables.length > 0) {
+                html += `<table class="refresh-objects-table" style="margin-bottom: 12px;">`;
+                html += `<thead><tr><th>Table</th><th>Type</th><th>Reason</th></tr></thead><tbody>`;
+                for (const t of refreshTables) {
+                    const icon = typeIcons[t.refreshType] || '⚡';
+                    const label = typeLabels[t.refreshType] || t.refreshType;
+                    const reasons = (t.reasons || []).join('; ');
+                    html += `<tr><td><code>${escapeHtml(t.table)}</code></td><td>${icon} ${label}</td><td style="font-size: 11px; opacity: 0.8;">${escapeHtml(reasons)}</td></tr>`;
+                }
+                html += `</tbody></table>`;
+            } else if (isFullModel) {
+                html += `<p style="font-size: 12px; margin-bottom: 12px;">All tables will be refreshed (Named Expression dependency).</p>`;
+            }
+
             html += `<button id="btn-trigger-refresh" class="btn btn-primary" style="margin-right: 8px;">🔄 Refresh Now</button>`;
             html += `<button id="btn-skip-refresh" class="btn btn-secondary">Skip</button>`;
             html += `<div id="refresh-status" style="margin-top: 12px; display: none;"></div>`;
@@ -888,98 +975,282 @@
         resultModal.classList.remove('hidden');
 
         // Bind refresh buttons if present
-        const btnRefresh = document.getElementById('btn-trigger-refresh');
-        const btnSkip = document.getElementById('btn-skip-refresh');
-        if (btnRefresh) {
-            const tables = result.tablesNeedingRefresh;
-            btnRefresh.addEventListener('click', () => triggerFabricRefresh(tables));
-            btnSkip.addEventListener('click', () => {
+        const btnTriggerRefresh = document.getElementById('btn-trigger-refresh');
+        const btnSkipRefresh = document.getElementById('btn-skip-refresh');
+        if (btnTriggerRefresh) {
+            const refreshInfo = result.tablesNeedingRefresh;
+            btnTriggerRefresh.addEventListener('click', () => triggerFabricRefresh(refreshInfo));
+            btnSkipRefresh.addEventListener('click', () => {
                 document.getElementById('refresh-offer').style.display = 'none';
             });
         }
     }
 
-    // ===== Fabric Refresh =====
+    // ===== Fabric Refresh (centralized) =====
 
-    async function triggerFabricRefresh(tables) {
+    function formatDuration(startISO, endISO) {
+        const start = new Date(startISO);
+        const end = endISO ? new Date(endISO) : new Date();
+        const sec = Math.max(0, Math.floor((end - start) / 1000));
+        const mm = String(Math.floor(sec / 60)).padStart(2, '0');
+        const ss = String(sec % 60).padStart(2, '0');
+        return `${mm}:${ss}`;
+    }
+
+    function formatDateTime(iso) {
+        if (!iso) return '—';
+        const d = new Date(iso);
+        return d.toLocaleString();
+    }
+
+    function updateRefreshButton() {
+        const active = refreshHistory.find(r => r.status === 'inProgress');
+        const last = refreshHistory[refreshHistory.length - 1];
+        btnModelRefresh.classList.remove('is-active', 'is-completed', 'is-failed');
+        const badge = document.getElementById('refresh-badge');
+
+        if (active) {
+            btnModelRefresh.classList.add('is-active');
+            badge.classList.remove('hidden', 'completed', 'failed');
+        } else if (last) {
+            if (last.status === 'completed') {
+                btnModelRefresh.classList.add('is-completed');
+                badge.classList.remove('hidden', 'failed');
+                badge.classList.add('completed');
+            } else if (last.status === 'failed') {
+                btnModelRefresh.classList.add('is-failed');
+                badge.classList.remove('hidden', 'completed');
+                badge.classList.add('failed');
+            } else {
+                badge.classList.add('hidden');
+            }
+        } else {
+            badge.classList.add('hidden');
+        }
+    }
+
+    async function triggerFabricRefresh(refreshInfo) {
+        // refreshInfo: { refreshType, tables: [{table, refreshType, reasons}], isFullModel }
+        const tableNames = (refreshInfo.tables || []).map(t => t.table);
+        const tableDetails = refreshInfo.tables || [];
+        const refreshType = refreshInfo.refreshType || 'automatic';
+
+        // Close result modal — refresh status lives in the refresh panel now
         const statusEl = document.getElementById('refresh-status');
-        const btnRefresh = document.getElementById('btn-trigger-refresh');
+        const btnTrigger = document.getElementById('btn-trigger-refresh');
         const btnSkip = document.getElementById('btn-skip-refresh');
 
-        btnRefresh.disabled = true;
-        btnSkip.style.display = 'none';
-        statusEl.style.display = 'block';
-        statusEl.innerHTML = '<span style="color: var(--color-text-muted);">⏳ Starting refresh...</span>';
+        if (btnTrigger) btnTrigger.disabled = true;
+        if (btnSkip) btnSkip.style.display = 'none';
+        if (statusEl) {
+            statusEl.style.display = 'block';
+            statusEl.innerHTML = '<span class="refresh-spinner-inline"></span> <span style="color:var(--color-text-muted);">Starting refresh...</span>';
+        }
 
         try {
             const response = await fetch('/api/fabric/refresh', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ tables })
+                body: JSON.stringify({
+                    tables: refreshInfo.isFullModel ? [] : tableNames,
+                    refreshType,
+                    tableDetails
+                })
             });
             const result = await response.json();
 
             if (!response.ok || !result.success) {
-                statusEl.innerHTML = `<span style="color: var(--color-removed-text);">✗ ${escapeHtml(result.error || 'Refresh failed')}</span>`;
-                btnRefresh.disabled = false;
-                btnSkip.style.display = '';
+                if (statusEl) statusEl.innerHTML = `<span style="color: var(--color-removed-text);">✗ ${escapeHtml(result.error || 'Refresh failed')}</span>`;
+                if (btnTrigger) btnTrigger.disabled = false;
+                if (btnSkip) btnSkip.style.display = '';
                 return;
             }
 
             if (result.requestId) {
-                statusEl.innerHTML = '<span style="color: var(--color-text-muted);">⏳ Refresh in progress...</span>';
-                pollRefreshStatus(result.requestId, statusEl, btnRefresh);
+                activeRefreshId = result.requestId;
+                // Add to local history with type info
+                refreshHistory.push({
+                    id: result.requestId,
+                    status: 'inProgress',
+                    refreshType,
+                    startTime: new Date().toISOString(),
+                    endTime: null,
+                    requestedTables: tableNames,
+                    objects: tableDetails.map(t => ({
+                        table: t.table,
+                        refreshType: t.refreshType,
+                        reasons: t.reasons,
+                        status: 'inProgress'
+                    }))
+                });
+                updateRefreshButton();
+                startRefreshPolling(result.requestId);
+
+                if (statusEl) statusEl.innerHTML = '<span class="refresh-spinner-inline"></span> <span style="color:var(--color-text-muted);">Refresh started — track progress via <strong>Model Refresh</strong> button</span>';
             } else {
-                statusEl.innerHTML = '<span style="color: var(--color-added-text);">✓ Refresh triggered (no tracking ID returned)</span>';
+                if (statusEl) statusEl.innerHTML = '<span style="color: var(--color-added-text);">✓ Refresh triggered (no tracking ID)</span>';
             }
         } catch (err) {
-            statusEl.innerHTML = `<span style="color: var(--color-removed-text);">✗ ${escapeHtml(err.message)}</span>`;
-            btnRefresh.disabled = false;
-            btnSkip.style.display = '';
+            if (statusEl) statusEl.innerHTML = `<span style="color: var(--color-removed-text);">✗ ${escapeHtml(err.message)}</span>`;
+            if (btnTrigger) btnTrigger.disabled = false;
+            if (btnSkip) btnSkip.style.display = '';
         }
     }
 
-    async function pollRefreshStatus(requestId, statusEl, btnRefresh) {
-        const startTime = Date.now();
-        const maxPollTime = 60 * 60 * 1000; // 60 minutes max polling
+    function startRefreshPolling(requestId) {
+        if (refreshPollTimer) clearInterval(refreshPollTimer);
+        refreshPollTimer = setInterval(() => pollRefreshStatus(requestId), 5000);
+        // First poll after 3s
+        setTimeout(() => pollRefreshStatus(requestId), 3000);
+    }
 
-        const poll = async () => {
-            if (Date.now() - startTime > maxPollTime) {
-                statusEl.innerHTML = '<span style="color: var(--color-text-muted);">⏳ Refresh still running (polling stopped after 60 min) — check Fabric portal for status.</span>';
-                btnRefresh.style.display = 'none';
-                return;
-            }
+    async function pollRefreshStatus(requestId) {
+        try {
+            const response = await fetch(`/api/fabric/refresh/status/${requestId}`);
+            const data = await response.json();
 
-            try {
-                const response = await fetch(`/api/fabric/refresh/status/${requestId}`);
-                const data = await response.json();
-
-                if (data.status === 'Completed') {
-                    statusEl.innerHTML = '<span style="color: var(--color-added-text);">✓ Refresh completed successfully!</span>';
-                    btnRefresh.style.display = 'none';
-                    return;
-                } else if (data.status === 'Failed') {
-                    const errMsg = data.serviceExceptionJson || 'Unknown error';
-                    statusEl.innerHTML = `<span style="color: var(--color-removed-text);">✗ Refresh failed: ${escapeHtml(typeof errMsg === 'string' ? errMsg : JSON.stringify(errMsg))}</span>`;
-                    btnRefresh.disabled = false;
-                    btnRefresh.textContent = '🔄 Retry';
-                    return;
-                } else if (data.status === 'Cancelled' || data.status === 'Disabled') {
-                    statusEl.innerHTML = `<span style="color: var(--color-text-muted);">⚠ Refresh ${data.status.toLowerCase()}</span>`;
-                    btnRefresh.disabled = false;
-                    return;
+            // Update local record
+            const record = refreshHistory.find(r => r.id === requestId);
+            if (record) {
+                if (data.status) record.status = mapRefreshStatus(data.status);
+                if (data.startTime) record.startTime = data.startTime;
+                if (data.endTime) record.endTime = data.endTime;
+                if (data.trackedObjects && data.trackedObjects.length > 0) {
+                    record.objects = data.trackedObjects;
+                } else if (data.objects && Array.isArray(data.objects)) {
+                    record.objects = data.objects.map(o => ({
+                        table: o.table || '',
+                        partition: o.partition || null,
+                        status: mapRefreshStatus(o.status || 'Unknown'),
+                        startTime: o.startTime || null,
+                        endTime: o.endTime || null,
+                        message: o.serviceExceptionJson || o.message || null
+                    }));
                 }
-
-                // Still running — poll again
-                statusEl.innerHTML = '<span style="color: var(--color-text-muted);">⏳ Refresh in progress...</span>';
-                setTimeout(poll, 5000);
-            } catch (err) {
-                statusEl.innerHTML = `<span style="color: var(--color-text-muted);">⏳ Refresh running (status check failed: ${escapeHtml(err.message)})</span>`;
-                setTimeout(poll, 10000);
             }
-        };
 
-        setTimeout(poll, 5000); // First check after 5s
+            // Check if terminal state
+            const terminal = ['completed', 'failed', 'cancelled'].includes(record?.status);
+            if (terminal) {
+                clearInterval(refreshPollTimer);
+                refreshPollTimer = null;
+                activeRefreshId = null;
+            }
+
+            updateRefreshButton();
+            // If panel is open, re-render
+            if (!refreshModal.classList.contains('hidden')) {
+                renderRefreshPanel();
+            }
+        } catch (err) {
+            // silently retry on next interval
+            console.warn('Refresh poll error:', err.message);
+        }
+    }
+
+    function mapRefreshStatus(s) {
+        const lower = (s || '').toLowerCase();
+        if (lower === 'completed') return 'completed';
+        if (lower === 'failed') return 'failed';
+        if (lower === 'cancelled' || lower === 'disabled') return 'cancelled';
+        if (lower === 'inprogress' || lower === 'notstarted' || lower === 'unknown') return 'inProgress';
+        return 'inProgress';
+    }
+
+    function openRefreshPanel() {
+        refreshModal.classList.remove('hidden');
+        renderRefreshPanel();
+    }
+
+    function renderRefreshPanel() {
+        if (refreshHistory.length === 0) {
+            refreshPanelContent.innerHTML = `
+                <div class="refresh-empty-state">
+                    <p style="font-size: 24px; margin-bottom: 8px;">↻</p>
+                    <p>No refresh operations in this session.</p>
+                    <p style="font-size: 12px; margin-top: 6px; opacity: 0.7;">
+                        Refresh will be offered after deploying changes that affect data sources.
+                    </p>
+                </div>`;
+            return;
+        }
+
+        // Render newest first
+        let html = '<div class="refresh-history-list">';
+        for (let i = refreshHistory.length - 1; i >= 0; i--) {
+            const r = refreshHistory[i];
+            html += renderRefreshRecord(r, i === refreshHistory.length - 1 && r.status === 'inProgress');
+        }
+        html += '</div>';
+        refreshPanelContent.innerHTML = html;
+    }
+
+    function renderRefreshRecord(record, isLive) {
+        const statusClass = record.status === 'inProgress' ? 'in-progress' : record.status;
+        const statusLabel = record.status === 'inProgress' ? 'In Progress'
+            : record.status === 'completed' ? 'Completed'
+            : record.status === 'failed' ? 'Failed'
+            : record.status === 'cancelled' ? 'Cancelled' : 'Unknown';
+
+        const typeLabels = { automatic: 'Automatic', dataOnly: 'Data Refresh', calculate: 'Recalculate', full: 'Full Refresh' };
+        const typeIcons = { automatic: '⚡', dataOnly: '📥', calculate: '🔄', full: '🔃' };
+
+        const duration = formatDuration(record.startTime, record.endTime);
+        const startStr = formatDateTime(record.startTime);
+        const tablesLabel = record.requestedTables.length === 0
+            ? 'Full model refresh'
+            : record.requestedTables.join(', ');
+        const refreshTypeLabel = record.refreshType ? `${typeIcons[record.refreshType] || '⚡'} ${typeLabels[record.refreshType] || record.refreshType}` : '';
+
+        let html = `<div class="refresh-record ${isLive ? 'is-active' : ''}">`;
+        html += `<div class="refresh-record-header">`;
+        html += `<span class="refresh-record-title">${escapeHtml(tablesLabel)}</span>`;
+        html += `<span class="refresh-status-pill ${statusClass}">${isLive ? '<span class="refresh-obj-spinner"></span> ' : ''}${statusLabel}</span>`;
+        html += `</div>`;
+        html += `<div class="refresh-record-time">Started: ${startStr} &nbsp;|&nbsp; Duration: ${duration}${isLive ? ' (running)' : ''}`;
+        if (refreshTypeLabel) html += ` &nbsp;|&nbsp; API Type: ${refreshTypeLabel}`;
+        html += `</div>`;
+
+        if (record.objects && record.objects.length > 0) {
+            html += `<table class="refresh-objects-table"><thead><tr><th>Table</th><th>Refresh Type</th><th>Status</th><th>Duration</th><th>Reason</th></tr></thead><tbody>`;
+            for (const obj of record.objects) {
+                const objStatusClass = obj.status === 'inProgress' ? 'in-progress' : obj.status;
+                const objStatusIcon = obj.status === 'inProgress' ? '<span class="refresh-obj-spinner"></span>'
+                    : obj.status === 'completed' ? '✓'
+                    : obj.status === 'failed' ? '✗'
+                    : '—';
+                const objDuration = obj.startTime ? formatDuration(obj.startTime, obj.endTime) : '—';
+                const objLabel = obj.status === 'inProgress' ? 'Refreshing...'
+                    : obj.status === 'completed' ? 'Done'
+                    : obj.status === 'failed' ? (obj.message ? `Error: ${typeof obj.message === 'string' ? obj.message.slice(0, 80) : 'see details'}` : 'Failed')
+                    : obj.status;
+                const objTypeIcon = typeIcons[obj.refreshType] || '';
+                const objTypeLabel = typeLabels[obj.refreshType] || obj.refreshType || '—';
+                const reasons = (obj.reasons || []).join('; ');
+                html += `<tr>`;
+                html += `<td><code>${escapeHtml(obj.table || '—')}</code></td>`;
+                html += `<td style="font-size: 11px;">${objTypeIcon} ${escapeHtml(objTypeLabel)}</td>`;
+                html += `<td><span class="refresh-obj-status ${objStatusClass}">${objStatusIcon} ${escapeHtml(objLabel)}</span></td>`;
+                html += `<td>${objDuration}</td>`;
+                html += `<td style="font-size: 11px; opacity: 0.8;">${escapeHtml(reasons)}</td>`;
+                html += `</tr>`;
+            }
+            html += `</tbody></table>`;
+        }
+
+        if (record.status === 'failed' && record.objects) {
+            const failed = record.objects.filter(o => o.status === 'failed' && o.message);
+            if (failed.length > 0) {
+                html += `<details style="margin-top: 8px; font-size: 12px;"><summary style="cursor:pointer; color: var(--color-removed-text);">Error details</summary>`;
+                for (const f of failed) {
+                    html += `<pre style="white-space: pre-wrap; margin: 4px 0; padding: 8px; background: rgba(229,83,75,0.05); border-radius: 4px;">${escapeHtml(typeof f.message === 'string' ? f.message : JSON.stringify(f.message, null, 2))}</pre>`;
+                }
+                html += `</details>`;
+            }
+        }
+
+        html += `</div>`;
+        return html;
     }
 
     // ===== Utilities =====
@@ -1006,6 +1277,90 @@
     function hideError() { errorMessage.classList.add('hidden'); }
     function showLoading() { loading.classList.remove('hidden'); btnCompare.disabled = true; }
     function hideLoading() { loading.classList.add('hidden'); btnCompare.disabled = false; }
+
+    // ===== Activity Log =====
+    function openActivityLog() {
+        document.getElementById('activity-log-modal').classList.remove('hidden');
+        loadActivityLog();
+    }
+
+    async function loadActivityLog() {
+        const body = document.getElementById('activity-log-body');
+        const countEl = document.getElementById('activity-log-count');
+        const limit = document.getElementById('activity-log-limit').value || 200;
+        body.innerHTML = '<p style="padding: 12px; color: var(--color-text-dim);">Loading...</p>';
+        try {
+            const resp = await fetch(`/api/activity-log?limit=${encodeURIComponent(limit)}`);
+            const data = await resp.json();
+            const entries = (data.entries || []).slice().reverse(); // newest first
+            countEl.textContent = `${entries.length} entries`;
+            if (entries.length === 0) {
+                body.innerHTML = '<p style="padding: 12px; color: var(--color-text-dim);">Log is empty.</p>';
+                return;
+            }
+            body.innerHTML = entries.map(renderLogEntry).join('');
+        } catch (err) {
+            body.innerHTML = `<p style="padding: 12px; color: var(--color-removed-text);">Failed to load: ${escapeHtml(err.message)}</p>`;
+        }
+    }
+
+    function renderLogEntry(e) {
+        const ts = e.timestamp ? new Date(e.timestamp).toLocaleString() : '';
+        const ok = (e.success === true) ? '✓' : (e.success === false) ? '✗' : '·';
+        const okColor = e.success === false ? 'var(--color-removed-text)' : (e.success === true ? 'var(--color-added-text, #4caf50)' : 'var(--color-text-dim)');
+
+        let summary = '';
+        if (e.event === 'compare') {
+            summary = `mode=${e.mode || '?'} diffs=${e.diffCount ?? '?'} groups=${e.groupCount ?? '?'}`;
+            if (e.devSource) summary += ` · dev=${e.devSource}`;
+            if (e.prodSource) summary += ` · prod=${e.prodSource}`;
+        } else if (e.event === 'deploy') {
+            summary = `mode=${e.mode || '?'} dryRun=${e.dryRun ? 'yes' : 'no'} selected=${e.selectedCount ?? '?'} applied=${e.actionsExecuted ?? '?'} errors=${e.errorCount ?? 0}`;
+            if (e.target) summary += ` · target=${e.target}`;
+            if (e.backupPath) summary += ` · backup=${e.backupPath}`;
+        } else if (e.event === 'refresh') {
+            summary = `tables=${e.tableCount ?? (e.tables ? e.tables.length : '?')}`;
+            if (e.requestId) summary += ` · requestId=${e.requestId}`;
+            if (e.target) summary += ` · target=${e.target}`;
+        } else if (e.event === 'refresh-status') {
+            summary = `requestId=${e.requestId || '?'} status=${e.status || '?'}`;
+        } else {
+            summary = JSON.stringify(e);
+        }
+
+        // Build expandable details (selected diffs / errors / warnings)
+        const detailParts = [];
+        if (Array.isArray(e.selectedDiffs) && e.selectedDiffs.length > 0) {
+            const lines = e.selectedDiffs.slice(0, 200).map(d => {
+                const sign = d.type === 0 ? '+' : d.type === 1 ? '−' : '~';
+                return `${sign} [${d.objectType}] ${d.name}`;
+            }).join('\n');
+            detailParts.push(`<details><summary>Selected diffs (${e.selectedDiffs.length})</summary><pre style="white-space: pre-wrap; margin: 4px 0;">${escapeHtml(lines)}</pre></details>`);
+        }
+        if (Array.isArray(e.errors) && e.errors.length > 0) {
+            const lines = e.errors.map(er => `✗ ${typeof er === 'string' ? er : (er.error || JSON.stringify(er))}`).join('\n');
+            detailParts.push(`<details open><summary style="color: var(--color-removed-text);">Errors (${e.errors.length})</summary><pre style="white-space: pre-wrap; margin: 4px 0;">${escapeHtml(lines)}</pre></details>`);
+        }
+        if (Array.isArray(e.warnings) && e.warnings.length > 0) {
+            const lines = e.warnings.map(w => `⚠ [${w.code || 'WARN'}] ${w.message || JSON.stringify(w)}`).join('\n');
+            detailParts.push(`<details><summary>Warnings (${e.warnings.length})</summary><pre style="white-space: pre-wrap; margin: 4px 0;">${escapeHtml(lines)}</pre></details>`);
+        }
+        if (e.error && !Array.isArray(e.errors)) {
+            detailParts.push(`<pre style="white-space: pre-wrap; margin: 4px 0; color: var(--color-removed-text);">${escapeHtml(e.error)}</pre>`);
+        }
+
+        return `
+            <div style="border-bottom: 1px solid var(--color-border, rgba(255,255,255,0.08)); padding: 8px 4px;">
+                <div style="display: flex; gap: 10px; align-items: baseline;">
+                    <span style="color: var(--color-text-dim); min-width: 160px;">${escapeHtml(ts)}</span>
+                    <span style="color: ${okColor}; min-width: 16px; font-weight: 700;">${ok}</span>
+                    <span style="font-weight: 600; min-width: 110px;">${escapeHtml(e.event || '?')}</span>
+                    <span style="flex: 1;">${escapeHtml(summary)}</span>
+                </div>
+                ${detailParts.join('')}
+            </div>
+        `;
+    }
 
     // ===== Native File Picker =====
 

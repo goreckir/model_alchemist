@@ -155,7 +155,30 @@ function loadModelFromFolder(folderPath) {
 }
 
 function readFile(filePath) {
-    return fs.readFileSync(filePath, 'utf-8');
+    const content = fs.readFileSync(filePath, 'utf-8');
+    validateTmdlIndentation(content, filePath);
+    return content;
+}
+
+/**
+ * Validate that the TMDL file uses tab indentation (required by TMDL spec).
+ * Throws if any non-empty line starts with space characters where indentation is expected.
+ * This prevents silent failures in parser/writer that count only \t for indent levels.
+ */
+function validateTmdlIndentation(content, filePath) {
+    const lines = content.replace(/\r\n/g, '\n').split('\n');
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        if (!line) continue;
+        // Only flag lines that start with a space AND have non-whitespace content (i.e. indented content)
+        if (line[0] === ' ' && line.trim().length > 0) {
+            throw new Error(
+                `Invalid TMDL indentation in ${path.basename(filePath)} (line ${i + 1}): ` +
+                `file uses space indentation but TMDL requires tab characters (\\t). ` +
+                `Convert leading spaces to tabs (Power BI Desktop TMDL editor uses tabs by default).`
+            );
+        }
+    }
 }
 
 module.exports = { loadModelFromFolder };
