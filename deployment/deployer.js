@@ -93,11 +93,32 @@ function deployChanges(selectedDiffs, devModel, prodPath, options = {}) {
 
 /**
  * Plan all file operations from selected diffs.
+ *
+ * When a table is being Added or Removed in the same batch, its child diffs
+ * (column/measure/hierarchy/partition/calculationGroup/calculationItem) are
+ * skipped because the whole table file is being written/deleted in one op.
+ * Otherwise the child append would produce duplicate declarations (e.g. two
+ * `column Name` entries in a calculation-group table file).
  */
 function planFileOperations(selectedDiffs, devModel, prodPath) {
     const operations = [];
 
+    const tablesBeingAdded = new Set();
+    const tablesBeingRemoved = new Set();
+    for (const d of selectedDiffs) {
+        if (d.objectType === 'table') {
+            if (d.type === 0) tablesBeingAdded.add(d.displayName);
+            else if (d.type === 1) tablesBeingRemoved.add(d.displayName);
+        }
+    }
+
+    const CHILD_OBJECT_TYPES = new Set(['column', 'measure', 'hierarchy', 'partition', 'calculationGroup', 'calculationItem']);
+
     for (const diff of selectedDiffs) {
+        if (CHILD_OBJECT_TYPES.has(diff.objectType) && diff.parentTable) {
+            if (diff.type === 0 && tablesBeingAdded.has(diff.parentTable)) continue;
+            if (diff.type === 1 && tablesBeingRemoved.has(diff.parentTable)) continue;
+        }
         const ops = planSingleDiff(diff, devModel, prodPath);
         operations.push(...ops);
     }
