@@ -1,4 +1,4 @@
-// Model Alchemist v4.1 — Frontend Application with Deploy, File Browser & Fabric
+// Model Alchemist — Frontend Application with Deploy, File Browser & Fabric
 (function () {
     'use strict';
 
@@ -130,6 +130,25 @@
 
     // Restore saved selections from localStorage
     restoreSavedPaths();
+
+    // Fetch version and defaults from server (single source of truth: package.json)
+    (async function loadDefaults() {
+        try {
+            const res = await fetch('/api/defaults');
+            const data = await res.json();
+            const versionEl = document.getElementById('app-version');
+            if (versionEl && data.version) {
+                versionEl.textContent = `v${data.version}`;
+                document.title = `Model Alchemist v${data.version} — Compare & Deploy`;
+            }
+            // Set default backup path if user hasn't overridden it
+            const backupInput = document.getElementById('backup-path');
+            if (backupInput && !backupInput.value.trim()) {
+                const savedBackup = localStorage.getItem('ma_backupPath');
+                backupInput.value = savedBackup || data.backupPath || '';
+            }
+        } catch { /* non-critical */ }
+    })();
 
     document.querySelectorAll('.filter-btn').forEach(btn => {
         btn.addEventListener('click', () => {
@@ -785,7 +804,8 @@
         // Show/hide backup path input based on source mode
         const backupPathRow = document.getElementById('backup-path-row');
         if (backupPathRow) {
-            backupPathRow.classList.toggle('hidden', prodSourceMode === 'local');
+            // Always visible — user can customise backup location for both local and Fabric
+            backupPathRow.classList.remove('hidden');
         }
 
         // Get preview
@@ -820,10 +840,8 @@
         const backupPathInput = document.getElementById('backup-path');
         const backupPathRow = document.getElementById('backup-path-row');
 
-        // When the backup checkbox is checked AND the backup-path input is visible
-        // (Fabric mode), the path must be non-empty — otherwise the user has no
-        // way of knowing where the backup will be stored.
-        if (optBackup.checked && backupPathRow && !backupPathRow.classList.contains('hidden')) {
+        // When the backup checkbox is checked, the backup-path must be non-empty
+        if (optBackup.checked) {
             const val = backupPathInput && backupPathInput.value.trim();
             if (!val) {
                 if (backupPathInput) {
@@ -834,6 +852,8 @@
                 return;
             }
             if (backupPathInput) backupPathInput.style.borderColor = '';
+            // Persist user's backup path choice
+            localStorage.setItem('ma_backupPath', val);
         }
 
         deployModal.classList.add('hidden');
@@ -845,7 +865,7 @@
                 dryRun: false,
                 backup: optBackup.checked
             };
-            if (prodSourceMode === 'fabric' && optBackup.checked && backupPathInput && backupPathInput.value.trim()) {
+            if (optBackup.checked && backupPathInput && backupPathInput.value.trim()) {
                 payload.backupPath = backupPathInput.value.trim();
             }
 
@@ -1408,10 +1428,10 @@
 
         try {
             // Get initial directory from current input value (only if non-empty)
-            const currentFile = (target === 'dev' ? devPathInput : prodPathInput).value.trim();
-            const initialdir = currentFile ? currentFile.replace(/[/\\][^/\\]*$/, '') : '';
+            const currentPath = (target === 'dev' ? devPathInput : prodPathInput).value.trim();
+            const initialdir = currentPath || '';
 
-            // Open native file dialog via Python/tkinter
+            // Open native folder dialog
             let url = `/api/pick-file?target=${target}`;
             if (initialdir) url += `&initialdir=${encodeURIComponent(initialdir)}`;
             const pickRes = await fetch(url);
@@ -1419,7 +1439,7 @@
 
             if (pickData.cancelled || !pickData.filePath) return;
 
-            // Resolve the .pbip file to definition path
+            // Resolve the selected folder to definition path
             const resolveRes = await fetch('/api/resolve-model', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -1436,10 +1456,10 @@
             const targetInput = target === 'dev' ? devPathInput : prodPathInput;
             targetInput.value = pickData.filePath;
 
-            // Update label with filename
-            const fileName = pickData.filePath.split(/[/\\]/).pop();
+            // Update label with folder name
+            const folderName = pickData.filePath.split(/[/\\]/).pop();
             const labelEl = document.getElementById(target === 'dev' ? 'label-dev-file' : 'label-prod-file');
-            labelEl.textContent = fileName;
+            labelEl.textContent = folderName;
 
             if (target === 'dev') {
                 devPath = result.definitionPath;

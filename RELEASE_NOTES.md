@@ -1,5 +1,23 @@
 # Model Alchemist — Release Notes
 
+## v4.3.0
+
+### New Features
+- **Folder picker** — File browser now opens a folder dialog (`FolderBrowserDialog`) instead of a file picker. Users select the `.SemanticModel` directory directly — this supports working with repository-based models that may not have `.pbip` starter files. The resolver intelligently handles: `.SemanticModel` folders, parent folders containing `.SemanticModel`, and `definition/` subfolders.
+- **Default backup directory** — Backups are stored in an application-local `backups/` folder by default (added to `.gitignore`). Users can override the path in the UI; the choice is persisted to `localStorage`.
+
+### Improvements
+- **Version single source of truth (TD4)** — Version is now defined only in `package.json`. The server exposes `/api/defaults` (includes version); the frontend fetches it on load and updates the page title and version badge dynamically. No more hardcoded version strings in HTML, JS, or console output.
+- **Backup path always visible** — The backup path input is always displayed in the deploy panel (previously hidden until deploy click), making it discoverable and editable at any time.
+
+### Architecture
+- `server.js` — New endpoints: `GET /api/version`, `GET /api/defaults`; `APP_VERSION` constant read from `package.json`; `BACKUP_DIR` defaults to `./backups`; PowerShell dialog switched to `FolderBrowserDialog`; `resolveModelFromFile()` rewritten for directory-based resolution.
+- `deployment/deployer.js` — `createBackup()` accepts optional `customBackupPath` parameter.
+- `public/js/app.js` — New `loadDefaults()` on startup; backup path logic decoupled from Fabric-only mode.
+- `.gitignore` — Added `backups/` entry.
+
+---
+
 ## v4.2.0
 
 ### New Features
