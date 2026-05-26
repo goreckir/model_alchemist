@@ -36,6 +36,11 @@
                 <span class="deploy-icon">🚀</span>
                 Deploy Selected (<span id="deploy-count">0</span>)
             </button>
+            <button id="btn-model-refresh" class="btn btn-refresh-status hidden" title="Model Refresh Status">
+                <span class="refresh-icon">↻</span>
+                <span class="btn-refresh-label">Model Refresh</span>
+                <span class="refresh-badge hidden" id="refresh-badge"></span>
+            </button>
         </div>
     </header>
 
@@ -266,6 +271,23 @@
                 </div>
                 <div class="modal-footer">
                     <button id="btn-activity-log-ok" class="btn btn-primary">Close</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Refresh Status Modal -->
+        <div id="refresh-modal" class="modal hidden">
+            <div class="modal-backdrop"></div>
+            <div class="modal-content" style="max-width: 750px;">
+                <div class="modal-header">
+                    <h2>↻ Model Refresh</h2>
+                    <button id="refresh-modal-close" class="btn-close">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <div id="refresh-panel-content"></div>
+                </div>
+                <div class="modal-footer">
+                    <button id="btn-refresh-modal-ok" class="btn btn-primary">Close</button>
                 </div>
             </div>
         </div>
