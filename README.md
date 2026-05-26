@@ -1,4 +1,4 @@
-# Model Alchemist v4.2
+# Model Alchemist v4.3
 
 A tool for comparing and deploying changes in Power BI semantic models (TMDL/PBIP format) — locally or via Microsoft Fabric REST API.
 
@@ -55,8 +55,8 @@ The app will start at **http://localhost:3001**.
 
 ## Usage
 
-1. **Select Source model** — click "Browse" and pick the `.pbip` file, or switch to Fabric tab and paste a connection string.
-2. **Select Target model** — same options: local file or Fabric connection string.
+1. **Select Source model** — click "Browse" and pick the `.SemanticModel` folder (or any parent containing it), or switch to Fabric tab and paste a connection string.
+2. **Select Target model** — same options: local folder or Fabric connection string.
 3. **Click "Compare Models"** — the app compares both models and displays a list of differences.
 4. **Review differences** — click an object to expand details. Use "Expand All" to open all at once.
 5. **Select changes to deploy** — use checkboxes next to each diff. "Select All Visible" checks all.

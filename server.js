@@ -12,6 +12,10 @@ const { parseConnectionString } = require('./fabric/connection-parser');
 const { logEvent, readEvents } = require('./lib/activity-log');
 const refreshStore = require('./lib/refresh-store');
 
+const pkg = require('./package.json');
+const APP_VERSION = pkg.version;
+const BACKUP_DIR = path.join(__dirname, 'backups');
+
 const app = express();
 const PORT = process.env.PORT || 3001;
 
@@ -24,6 +28,14 @@ app.use(express.static(path.join(__dirname, 'public'), {
         res.setHeader('Pragma', 'no-cache');
     }
 }));
+
+// API: App version and defaults (single source of truth from package.json)
+app.get('/api/version', (req, res) => {
+    res.json({ version: APP_VERSION });
+});
+app.get('/api/defaults', (req, res) => {
+    res.json({ version: APP_VERSION, backupPath: BACKUP_DIR });
+});
 
 // State: store last comparison result for deployment reference
 let lastComparison = null;
@@ -106,7 +118,7 @@ app.post('/api/deploy', async (req, res) => {
 
         if (lastProdPath) {
             // Local deployment — use filesystem deployer
-            const result = deployChanges(selectedDiffs, lastDevModel, lastProdPath, { dryRun, backup, prodModel: lastProdModel });
+            const result = deployChanges(selectedDiffs, lastDevModel, lastProdPath, { dryRun, backup, backupPath, prodModel: lastProdModel });
             logEvent('deploy', {
                 mode: 'local',
                 dryRun,
@@ -448,13 +460,13 @@ function readDirRecursive(baseDir, currentDir, result) {
     }
 }
 
-// API: Open native file dialog (via Python/tkinter)
+// API: Open native folder dialog (via PowerShell WinForms)
 app.get('/api/pick-file', (req, res) => {
     const target = req.query.target || 'model';
     const initialdir = req.query.initialdir || '';
-    const title = `Select ${target.toUpperCase()} model file (.pbip)`;
+    const title = `Select ${target.toUpperCase()} model folder (.SemanticModel)`;
 
-    // Use PowerShell with WinForms file dialog + forced foreground activation
+    // Use PowerShell with WinForms folder browser dialog + forced foreground activation
     const psScript = `
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type @'
@@ -474,14 +486,13 @@ $form.WindowState = 'Minimized'
 $form.ShowInTaskbar = $false
 $form.Show()
 [Win32]::SetForegroundWindow($form.Handle) | Out-Null
-$dlg = New-Object System.Windows.Forms.OpenFileDialog
-$dlg.Title = '${title.replace(/'/g, "''")}'
-$dlg.Filter = 'Power BI Project (*.pbip)|*.pbip|All files (*.*)|*.*'
-${initialdir ? `$dlg.InitialDirectory = '${initialdir.replace(/'/g, "''")}'` : ''}
-$dlg.RestoreDirectory = $true
+$dlg = New-Object System.Windows.Forms.FolderBrowserDialog
+$dlg.Description = '${title.replace(/'/g, "''")}'
+$dlg.ShowNewFolderButton = $false
+${initialdir ? `$dlg.SelectedPath = '${initialdir.replace(/'/g, "''")}'` : ''}
 $result = $dlg.ShowDialog($form)
 $form.Close()
-if ($result -eq 'OK') { $dlg.FileName } else { '' }
+if ($result -eq 'OK') { $dlg.SelectedPath } else { '' }
 `.trim();
 
     execFile('powershell', ['-NoProfile', '-STA', '-Command', psScript], { timeout: 60000 }, (err, stdout, stderr) => {
@@ -814,10 +825,50 @@ app.get('/api/activity-log', (req, res) => {
 });
 
 /**
- * Resolve a .pbip or .pbism file to the definition/ folder path.
+ * Resolve a .pbip, .pbism file OR a folder path to the definition/ folder path.
+ * Supports:
+ *  - .pbip file → finds .SemanticModel/definition/ next to it
+ *  - .pbism file → finds definition/ in same directory
+ *  - .SemanticModel folder → finds definition/ inside
+ *  - Any folder containing a .SemanticModel subfolder → resolves it
+ *  - Any folder containing definition/model.tmdl → uses it directly
  */
 function resolveModelFromFile(filePath) {
     const resolved = path.resolve(filePath);
+
+    // Check if it's a directory
+    if (fs.existsSync(resolved) && fs.statSync(resolved).isDirectory()) {
+        // Case 1: The folder itself IS a .SemanticModel folder
+        if (/\.SemanticModel$/i.test(resolved)) {
+            const defFolder = path.join(resolved, 'definition');
+            if (fs.existsSync(defFolder) && fs.existsSync(path.join(defFolder, 'model.tmdl'))) {
+                return defFolder;
+            }
+            // Maybe it's a flat structure without definition/ subfolder
+            if (fs.existsSync(path.join(resolved, 'model.tmdl'))) {
+                return resolved;
+            }
+            throw new Error(`Folder "${path.basename(resolved)}" does not contain a valid TMDL definition.`);
+        }
+
+        // Case 2: The folder is a definition/ folder itself (contains model.tmdl)
+        if (fs.existsSync(path.join(resolved, 'model.tmdl'))) {
+            return resolved;
+        }
+
+        // Case 3: The folder contains a .SemanticModel subfolder
+        const entries = fs.readdirSync(resolved);
+        const smDir = entries.find(e => e.endsWith('.SemanticModel') && fs.statSync(path.join(resolved, e)).isDirectory());
+        if (smDir) {
+            const defFolder = path.join(resolved, smDir, 'definition');
+            if (fs.existsSync(defFolder)) return defFolder;
+            return path.join(resolved, smDir);
+        }
+
+        throw new Error(`No .SemanticModel folder or TMDL definition found in "${path.basename(resolved)}". Select a .SemanticModel folder or a folder containing one.`);
+    }
+
+    // File path handling
     const ext = path.extname(resolved).toLowerCase();
     const dir = path.dirname(resolved);
 
@@ -832,11 +883,11 @@ function resolveModelFromFile(filePath) {
         }
         // Try any .SemanticModel folder in the same directory
         const entries = fs.readdirSync(dir);
-        const smDir = entries.find(e => e.endsWith('.SemanticModel') && fs.statSync(path.join(dir, e)).isDirectory());
-        if (smDir) {
-            const defFolder = path.join(dir, smDir, 'definition');
+        const smDirEntry = entries.find(e => e.endsWith('.SemanticModel') && fs.statSync(path.join(dir, e)).isDirectory());
+        if (smDirEntry) {
+            const defFolder = path.join(dir, smDirEntry, 'definition');
             if (fs.existsSync(defFolder)) return defFolder;
-            return path.join(dir, smDir);
+            return path.join(dir, smDirEntry);
         }
         throw new Error(`No .SemanticModel folder found next to ${path.basename(resolved)}`);
     }
@@ -848,7 +899,7 @@ function resolveModelFromFile(filePath) {
         return dir;
     }
 
-    throw new Error(`Unsupported file type: ${ext}. Select a .pbip or .pbism file.`);
+    throw new Error(`Unsupported path: "${path.basename(resolved)}". Select a .SemanticModel folder, .pbip file, or .pbism file.`);
 }
 
 // SPA fallback
@@ -859,7 +910,7 @@ app.get('*', (req, res) => {
 function startServer(port, maxAttempts = 20) {
     const server = app.listen(port, () => {
         const url = `http://localhost:${port}`;
-        console.log(`Model Alchemist v4.1 running at ${url}`);
+        console.log(`Model Alchemist v${APP_VERSION} running at ${url}`);
         const { exec } = require('child_process');
         exec(`start "" "${url}"`);
     });

@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Model Alchemist v4.1 — Compare & Deploy</title>
+    <title>Model Alchemist — Compare & Deploy</title>
     <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
@@ -11,7 +11,7 @@
         <div class="logo">
             <span class="logo-icon">⚗️</span>
             <h1>Model Alchemist</h1>
-            <span class="version">v4.1</span>
+            <span class="version" id="app-version"></span>
         </div>
         <div class="header-actions">
             <span id="fabric-account-badge" class="fabric-account-badge hidden"></span>
@@ -49,7 +49,7 @@
         <section id="connection-panel" class="connection-panel">
             <div class="connection-card">
                 <h2>Compare & Deploy Semantic Models</h2>
-                <p class="subtitle">Select local .pbip files or connect to Microsoft Fabric</p>
+                <p class="subtitle">Select local .SemanticModel folders or connect to Microsoft Fabric</p>
                 
                 <div class="connection-form">
                     <div class="form-group">
@@ -64,7 +64,7 @@
                             </div>
                             <div class="source-content source-local active" data-target="dev">
                                 <div class="file-picker-row">
-                                    <input type="text" id="dev-path" placeholder="Select .pbip file or paste path..." />
+                                    <input type="text" id="dev-path" placeholder="Select .SemanticModel folder or paste path..." />
                                     <button id="btn-browse-dev" class="btn btn-secondary btn-browse">Browse...</button>
                                 </div>
                             </div>
@@ -102,7 +102,7 @@
                             </div>
                             <div class="source-content source-local active" data-target="prod">
                                 <div class="file-picker-row">
-                                    <input type="text" id="prod-path" placeholder="Select .pbip file or paste path..." />
+                                    <input type="text" id="prod-path" placeholder="Select .SemanticModel folder or paste path..." />
                                     <button id="btn-browse-prod" class="btn btn-secondary btn-browse">Browse...</button>
                                 </div>
                             </div>
@@ -213,7 +213,7 @@
                             <input type="checkbox" id="opt-backup" checked />
                             Create backup before deployment
                         </label>
-                        <div id="backup-path-row" class="backup-path-row hidden" style="margin-top: 8px; display: flex; align-items: center; gap: 8px;">
+                        <div id="backup-path-row" class="backup-path-row" style="margin-top: 8px; display: flex; align-items: center; gap: 8px;">
                             <label for="backup-path" style="font-size: 13px; white-space: nowrap;">Backup folder:</label>
                             <input type="text" id="backup-path" placeholder="Enter backup destination path..." style="flex: 1; padding: 4px 8px; border: 1px solid var(--color-border); border-radius: 4px; font-size: 13px; background: var(--color-bg-input); color: var(--color-text);" />
                         </div>

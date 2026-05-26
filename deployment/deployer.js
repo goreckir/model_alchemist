@@ -40,7 +40,7 @@ const { loadModelFromFolder } = require('../parser/model-loader');
  * @returns {object} Deployment result { success, actions, errors, warnings, backupPath }
  */
 function deployChanges(selectedDiffs, devModel, prodPath, options = {}) {
-    const { dryRun = false, backup = true } = options;
+    const { dryRun = false, backup = true, backupPath } = options;
     const result = { success: true, actions: [], errors: [], warnings: [], backupPath: null };
 
     // Dependency validation (uses prodModel if provided, otherwise loads from prodPath)
@@ -70,7 +70,7 @@ function deployChanges(selectedDiffs, devModel, prodPath, options = {}) {
 
     // Create backup if requested
     if (backup && !dryRun) {
-        const backupDir = createBackup(prodPath);
+        const backupDir = createBackup(prodPath, backupPath);
         result.backupPath = backupDir;
         result.actions.push({ type: 'backup', message: `Backup created: ${backupDir}` });
     }
@@ -740,16 +740,25 @@ function executeOperation(op, prodPath) {
  * folder name does not end with `.SemanticModel` (defensive: keeps behaviour for
  * non-standard layouts and the test fixtures).
  */
-function createBackup(prodPath) {
+function createBackup(prodPath, customBackupPath) {
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-').substring(0, 19);
     const semanticModelDir = path.dirname(prodPath);
     const semanticModelName = path.basename(semanticModelDir);
-    const grandParent = path.dirname(semanticModelDir);
 
     const isSemanticModelFolder = /\.SemanticModel$/i.test(semanticModelName);
-    const backupDir = isSemanticModelFolder
-        ? path.join(grandParent, `${semanticModelName}_backup_${timestamp}`)
-        : path.join(semanticModelDir, `definition_backup_${timestamp}`);
+
+    let backupDir;
+    if (customBackupPath) {
+        // Custom backup destination — place named backup inside provided folder
+        const folderName = isSemanticModelFolder ? semanticModelName : path.basename(prodPath);
+        backupDir = path.join(customBackupPath, `${folderName}_backup_${timestamp}`);
+    } else {
+        // Default: next to the semantic model folder
+        const grandParent = path.dirname(semanticModelDir);
+        backupDir = isSemanticModelFolder
+            ? path.join(grandParent, `${semanticModelName}_backup_${timestamp}`)
+            : path.join(semanticModelDir, `definition_backup_${timestamp}`);
+    }
 
     const sourceDir = isSemanticModelFolder ? semanticModelDir : prodPath;
     copyDirSync(sourceDir, backupDir);
