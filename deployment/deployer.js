@@ -81,8 +81,19 @@ function deployChanges(selectedDiffs, devModel, prodPath, options = {}) {
             if (dryRun) {
                 result.actions.push({ type: 'dryrun', ...op.description });
             } else {
-                executeOperation(op, prodPath);
-                result.actions.push({ type: 'applied', ...op.description });
+                const opResult = executeOperation(op, prodPath) || { changed: true };
+                if (opResult.changed === false) {
+                    // Silent no-op: target block was not located in PROD file.
+                    // Surface as warning + error so the deploy doesn't falsely report success.
+                    const code = opResult.code || 'OPERATION_NOOP';
+                    const message = opResult.reason
+                        || `Operacja ${op.action} nie zmodyfikowala pliku (blok nie znaleziony w PROD).`;
+                    result.warnings.push({ code, operation: op.description, message });
+                    result.errors.push({ operation: op.description, error: message });
+                    result.success = false;
+                } else {
+                    result.actions.push({ type: 'applied', ...op.description });
+                }
             }
         } catch (err) {
             result.errors.push({ operation: op.description, error: err.message });
@@ -584,25 +595,37 @@ function executeOperation(op, prodPath) {
             break;
         }
         case 'appendChild': {
-            if (!fs.existsSync(op.targetPath)) break;
-            let content = fs.readFileSync(op.targetPath, 'utf-8');
-            content = appendChildBlock(content, op.childBlock);
-            fs.writeFileSync(op.targetPath, content, 'utf-8');
-            break;
+            if (!fs.existsSync(op.targetPath)) {
+                return { changed: false, code: 'TARGET_FILE_MISSING', reason: `Plik docelowy nie istnieje: ${op.targetPath}` };
+            }
+            const before = fs.readFileSync(op.targetPath, 'utf-8');
+            const after = appendChildBlock(before, op.childBlock);
+            fs.writeFileSync(op.targetPath, after, 'utf-8');
+            return { changed: after !== before };
         }
         case 'removeChild': {
-            if (!fs.existsSync(op.targetPath)) break;
-            let content = fs.readFileSync(op.targetPath, 'utf-8');
-            content = removeObjectBlock(content, op.childType, op.childName, 0);
-            fs.writeFileSync(op.targetPath, content, 'utf-8');
-            break;
+            if (!fs.existsSync(op.targetPath)) {
+                return { changed: false, code: 'TARGET_FILE_MISSING', reason: `Plik docelowy nie istnieje: ${op.targetPath}` };
+            }
+            const before = fs.readFileSync(op.targetPath, 'utf-8');
+            const after = removeObjectBlock(before, op.childType, op.childName, 0);
+            fs.writeFileSync(op.targetPath, after, 'utf-8');
+            if (after === before) {
+                return { changed: false, code: 'BLOCK_NOT_FOUND', reason: `Nie znaleziono bloku ${op.childType} '${op.childName}' w ${path.basename(op.targetPath)}` };
+            }
+            return { changed: true };
         }
         case 'replaceChild': {
-            if (!fs.existsSync(op.targetPath)) break;
-            let content = fs.readFileSync(op.targetPath, 'utf-8');
-            content = replaceObjectBlock(content, op.childType, op.childName, 0, op.newBlock);
-            fs.writeFileSync(op.targetPath, content, 'utf-8');
-            break;
+            if (!fs.existsSync(op.targetPath)) {
+                return { changed: false, code: 'TARGET_FILE_MISSING', reason: `Plik docelowy nie istnieje: ${op.targetPath}` };
+            }
+            const before = fs.readFileSync(op.targetPath, 'utf-8');
+            const after = replaceObjectBlock(before, op.childType, op.childName, 0, op.newBlock);
+            fs.writeFileSync(op.targetPath, after, 'utf-8');
+            if (after === before) {
+                return { changed: false, code: 'BLOCK_NOT_FOUND', reason: `Nie znaleziono bloku ${op.childType} '${op.childName}' w ${path.basename(op.targetPath)} (PROD nie ma tego obiektu lub uzywa innego wciecia)` };
+            }
+            return { changed: true };
         }
         case 'appendTopLevel': {
             if (!fs.existsSync(op.targetPath)) {
@@ -617,18 +640,28 @@ function executeOperation(op, prodPath) {
             break;
         }
         case 'removeTopLevel': {
-            if (!fs.existsSync(op.targetPath)) break;
-            let content = fs.readFileSync(op.targetPath, 'utf-8');
-            content = removeObjectBlock(content, op.objectType, op.objectName, -1);
-            fs.writeFileSync(op.targetPath, content, 'utf-8');
-            break;
+            if (!fs.existsSync(op.targetPath)) {
+                return { changed: false, code: 'TARGET_FILE_MISSING', reason: `Plik docelowy nie istnieje: ${op.targetPath}` };
+            }
+            const before = fs.readFileSync(op.targetPath, 'utf-8');
+            const after = removeObjectBlock(before, op.objectType, op.objectName, -1);
+            fs.writeFileSync(op.targetPath, after, 'utf-8');
+            if (after === before) {
+                return { changed: false, code: 'BLOCK_NOT_FOUND', reason: `Nie znaleziono bloku ${op.objectType} '${op.objectName}' w ${path.basename(op.targetPath)}` };
+            }
+            return { changed: true };
         }
         case 'replaceTopLevel': {
-            if (!fs.existsSync(op.targetPath)) break;
-            let content = fs.readFileSync(op.targetPath, 'utf-8');
-            content = replaceObjectBlock(content, op.objectType, op.objectName, -1, op.newBlock);
-            fs.writeFileSync(op.targetPath, content, 'utf-8');
-            break;
+            if (!fs.existsSync(op.targetPath)) {
+                return { changed: false, code: 'TARGET_FILE_MISSING', reason: `Plik docelowy nie istnieje: ${op.targetPath}` };
+            }
+            const before = fs.readFileSync(op.targetPath, 'utf-8');
+            const after = replaceObjectBlock(before, op.objectType, op.objectName, -1, op.newBlock);
+            fs.writeFileSync(op.targetPath, after, 'utf-8');
+            if (after === before) {
+                return { changed: false, code: 'BLOCK_NOT_FOUND', reason: `Nie znaleziono bloku ${op.objectType} '${op.objectName}' w ${path.basename(op.targetPath)} (PROD nie ma tego obiektu lub uzywa innego wciecia)` };
+            }
+            return { changed: true };
         }
         case 'replaceTableHeader': {
             if (!fs.existsSync(op.targetPath)) break;
