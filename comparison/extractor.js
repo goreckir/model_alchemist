@@ -29,7 +29,12 @@ function serializeChildren(obj, types) {
     const blocks = [];
     for (const child of obj.children) {
         if (typeSet.has((child.type || '').toLowerCase())) {
-            blocks.push((child.rawBlock || '').trim());
+            const raw = (child.rawBlock || '').trim();
+            // Skip PBI_* annotations — these are runtime state set by the Power BI
+            // engine (e.g. PBI_ResultType = Table/Exception after refresh) and must
+            // not be compared or deployed.
+            if (child.type === 'annotation' && /^annotation\s+PBI_/i.test(raw)) continue;
+            blocks.push(raw);
         }
     }
     blocks.sort();
