@@ -219,9 +219,15 @@ function planChildObjectOp(diff, devModel, prodPath) {
  */
 function planRelationshipOp(diff, devModel, prodPath) {
     const targetFile = path.join(prodPath, 'relationships.tmdl');
-    // Extract the relationship name (GUID) from rawBlock first line
-    const relNameMatch = diff.rawBlock ? diff.rawBlock.match(/^relationship\s+(.+)$/m) : null;
-    const relName = relNameMatch ? relNameMatch[1].trim().replace(/^'|'$/g, '') : diff.displayName;
+    // For modify/remove we must locate the existing relationship in the target file.
+    // TMDL names are usually GUIDs and differ across environments — use targetRelName
+    // (set by engine from prod object) when available, otherwise fall back to parsing
+    // the rawBlock first line (which is correct for Remove diffs whose rawBlock = prod).
+    function extractRelName(rawBlock) {
+        const m = rawBlock ? rawBlock.match(/^relationship\s+(.+)$/m) : null;
+        return m ? m[1].trim().replace(/^'|'$/g, '') : diff.displayName;
+    }
+    const relName = diff.targetRelName || extractRelName(diff.rawBlock);
 
     if (diff.type === 0) {
         // ADD: append relationship block to relationships.tmdl
@@ -241,7 +247,7 @@ function planRelationshipOp(diff, devModel, prodPath) {
             description: { action: 'remove', objectType: 'relationship', name: diff.displayName, file: 'relationships.tmdl' }
         }];
     } else {
-        // MODIFY: replace relationship block
+        // MODIFY: replace relationship block (use TARGET's GUID to locate, DEV rawBlock as content)
         return [{
             action: 'replaceTopLevel',
             targetPath: targetFile,

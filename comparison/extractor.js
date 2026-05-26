@@ -271,13 +271,22 @@ function extractCalculationGroup(tableName, calcGroup, sourceFile, objects) {
 function extractRelationship(rel, objects) {
     const fromCol = rel.properties.fromColumn || '';
     const toCol = rel.properties.toColumn || '';
-    const semanticKey = `${fromCol} → ${toCol}`;
-    const key = `relationship:${semanticKey}`;
+    const isActive = rel.properties.isActive || 'true';
+    const crossFilter = rel.properties.crossFilteringBehavior || 'oneDirection';
+    const displayName = `${fromCol} → ${toCol}`;
+    // Composite identity key: same (from,to) can occur multiple times (active+inactive,
+    // different cross-filter directions). Including isActive + crossFilter avoids collision.
+    const keySuffix = isActive === 'true' ? '' : '|inactive';
+    const cfSuffix = crossFilter === 'oneDirection' ? '' : `|cf=${crossFilter}`;
+    const key = `relationship:${displayName}${keySuffix}${cfSuffix}`;
 
     objects[key] = {
         objectType: 'relationship',
         identityKey: key,
-        displayName: semanticKey,
+        displayName,
+        // Real TMDL name (typically a GUID). Different between DEV/PROD, used by deployer
+        // to locate the existing block in target during modify/remove.
+        relName: rel.name,
         changeGroup: CHANGE_GROUPS.TABLES,
         sourceFile: rel.file,
         rawBlock: rel.rawBlock,
@@ -285,8 +294,8 @@ function extractRelationship(rel, objects) {
             fromColumn: fromCol,
             toColumn: toCol,
             cardinality: rel.properties.cardinality || '',
-            crossFilteringBehavior: rel.properties.crossFilteringBehavior || 'oneDirection',
-            isActive: rel.properties.isActive || 'true',
+            crossFilteringBehavior: crossFilter,
+            isActive,
             securityFilteringBehavior: rel.properties.securityFilteringBehavior || '',
             joinOnDateBehavior: rel.properties.joinOnDateBehavior || '',
             relyOnReferentialIntegrity: rel.properties.relyOnReferentialIntegrity || 'false',
