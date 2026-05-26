@@ -22,7 +22,8 @@ const {
     appendTopLevelBlock,
     appendChildBlock,
     addRefEntry,
-    removeRefEntry
+    removeRefEntry,
+    ensureModelProperty
 } = require('./tmdl-writer');
 const { validateDependencies } = require('./validator');
 const { loadModelFromFolder } = require('../parser/model-loader');
@@ -114,6 +115,24 @@ function planFileOperations(selectedDiffs, devModel, prodPath) {
 
     const CHILD_OBJECT_TYPES = new Set(['column', 'measure', 'hierarchy', 'partition', 'calculationGroup', 'calculationItem']);
 
+    // Detect whether any selected diff introduces a calculation group into the
+    // target. Calculation groups require `discourageImplicitMeasures: true` on
+    // the model; otherwise Fabric/AS rejects the model with:
+    // "The Model 'Model' property DiscourageImplicitMeasures must be set to true
+    //  in order to create any calculation groups."
+    let needsDiscourageImplicit = false;
+    for (const d of selectedDiffs) {
+        if (d.type === 1) continue; // remove doesn't introduce a CG
+        if (d.objectType === 'calculationGroup' || d.objectType === 'calculationItem') {
+            needsDiscourageImplicit = true;
+            break;
+        }
+        if (d.objectType === 'table' && d.type === 0 && typeof d.rawBlock === 'string' && /\bcalculationGroup\b/.test(d.rawBlock)) {
+            needsDiscourageImplicit = true;
+            break;
+        }
+    }
+
     for (const diff of selectedDiffs) {
         if (CHILD_OBJECT_TYPES.has(diff.objectType) && diff.parentTable) {
             if (diff.type === 0 && tablesBeingAdded.has(diff.parentTable)) continue;
@@ -121,6 +140,16 @@ function planFileOperations(selectedDiffs, devModel, prodPath) {
         }
         const ops = planSingleDiff(diff, devModel, prodPath);
         operations.push(...ops);
+    }
+
+    if (needsDiscourageImplicit) {
+        operations.push({
+            action: 'ensureModelProperty',
+            targetPath: path.join(prodPath, 'model.tmdl'),
+            propName: 'discourageImplicitMeasures',
+            propValue: 'true',
+            description: { action: 'modify', objectType: 'model', name: 'discourageImplicitMeasures', file: 'model.tmdl', reason: 'calculationGroup requires discourageImplicitMeasures=true' }
+        });
     }
 
     return operations;
@@ -575,6 +604,13 @@ function executeOperation(op, prodPath) {
             let content = fs.readFileSync(op.targetPath, 'utf-8');
             content = replaceTableHeader(content, op.devContent, op.tableName);
             fs.writeFileSync(op.targetPath, content, 'utf-8');
+            break;
+        }
+        case 'ensureModelProperty': {
+            if (!fs.existsSync(op.targetPath)) break;
+            let content = fs.readFileSync(op.targetPath, 'utf-8');
+            const updated = ensureModelProperty(content, op.propName, op.propValue);
+            if (updated !== content) fs.writeFileSync(op.targetPath, updated, 'utf-8');
             break;
         }
     }
