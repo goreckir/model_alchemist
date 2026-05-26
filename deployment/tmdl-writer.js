@@ -393,6 +393,59 @@ function replaceTableHeader(targetContent, devContent, tableName) {
     return newLines.join('\n');
 }
 
+/**
+ * Ensure a simple property is present (and set to a given value) inside the
+ * top-level `model Model` block of model.tmdl. Inserts the property right
+ * after the `model` declaration if missing, or replaces the value if present
+ * with a different one. Property must be a single-line `name: value`.
+ *
+ * @param {string} content - model.tmdl content
+ * @param {string} propName - e.g. 'discourageImplicitMeasures'
+ * @param {string} propValue - e.g. 'true'
+ * @returns {string} Possibly modified content
+ */
+function ensureModelProperty(content, propName, propValue) {
+    const lines = content.replace(/\r\n/g, '\n').split('\n');
+
+    // Locate `model <name>` declaration at indent 0
+    let modelStart = -1;
+    for (let i = 0; i < lines.length; i++) {
+        const indent = getIndentLevel(lines[i]);
+        const trimmed = lines[i].trim();
+        if (indent === 0 && /^model\b/.test(trimmed)) {
+            modelStart = i;
+            break;
+        }
+    }
+    if (modelStart < 0) return content; // no model block — bail out
+
+    // Determine end of model block (first line at indent 0 after declaration, exclusive)
+    let modelEnd = lines.length;
+    for (let i = modelStart + 1; i < lines.length; i++) {
+        const trimmed = lines[i].trim();
+        if (!trimmed) continue;
+        if (getIndentLevel(lines[i]) === 0) {
+            modelEnd = i;
+            break;
+        }
+    }
+
+    const propRe = new RegExp(`^\\s*${propName}\\s*:`);
+    for (let i = modelStart + 1; i < modelEnd; i++) {
+        if (propRe.test(lines[i])) {
+            // Already present — replace value if differs
+            const expected = `\t${propName}: ${propValue}`;
+            if (lines[i] === expected) return content;
+            lines[i] = expected;
+            return lines.join('\n');
+        }
+    }
+
+    // Not present — insert after model declaration
+    lines.splice(modelStart + 1, 0, `\t${propName}: ${propValue}`);
+    return lines.join('\n');
+}
+
 module.exports = {
     findObjectBlock,
     findTopLevelBlock,
@@ -403,5 +456,6 @@ module.exports = {
     appendTopLevelBlock,
     appendChildBlock,
     addRefEntry,
-    removeRefEntry
+    removeRefEntry,
+    ensureModelProperty
 };
