@@ -1,5 +1,48 @@
 # Model Alchemist — Release Notes
 
+## v4.2.0
+
+### New Features
+- **Model Refresh panel** — New dedicated panel for triggering and monitoring Enhanced Refreshes on Fabric semantic models. Tracks refresh status in real-time with session history persisted to local JSONL files.
+- **Per-table refresh type classification** — Engine determines optimal refresh type (`full` vs `dataOnly`) per table based on structural vs data-only changes, with detailed reasoning displayed in the UI.
+- **Activity log** — All compare, deploy, and refresh operations are logged to `logs/activity.jsonl` with timestamps. New UI viewer accessible from the header.
+- **Auto-verify Fabric on Compare** — Clicking "Compare" with a Fabric source automatically resolves the connection (verifies access) without requiring a manual "Verify Access" click first.
+- **Cascade groups** — Column/table deletions and their dependent relationship deletions are automatically grouped into a single atomic UI group, preventing partial deployments that would break the model.
+
+### Improvements
+- **Filter PBI_* annotations** — Internal Power BI annotations (`PBI_*`) are excluded from comparison results to reduce noise.
+- **Ignore lineageTag** — `lineageTag` and `sourceLineageTag` properties are filtered out during property comparison (auto-generated, not meaningful for diffs).
+- **Select All includes collapsed groups** — "Select All" now correctly selects members of collapsed atomic groups.
+- **Auto-cascade relationship removal** — When a column is removed, dependent relationships are automatically included in the deployment plan (previously caused Fabric rejection).
+- **Word-boundary dependency matching** — Expression dependency detection uses word-boundary regex to avoid false positives on partial name matches.
+- **Full .SemanticModel backup** — Backup now copies the entire `.SemanticModel` folder, not just modified files.
+- **Auto discourageImplicitMeasures** — Deploying a calculation group automatically sets `discourageImplicitMeasures = true` on the model if not already set.
+- **Skip removed tables from refresh** — Tables being deleted are no longer flagged for data refresh (which would fail immediately).
+
+### Bug Fixes
+- **Refresh status crash** — `mapStatus` crashed when API returned numeric HTTP status (e.g. 202) instead of string. Fixed with `String()` coercion.
+- **calculationItem parentIndent** — Fixed deploy using wrong indentation depth (1→2) for calculation items inside calculation groups.
+- **Silent no-op detection** — Deploy now detects when a write operation silently did nothing (block not found in target file) and reports it as a warning/error.
+- **Perspective ref validation** — Validates perspective references before deploy to prevent orphaned entries.
+- **Empty action result line** — Removed spurious empty `[]` from Fabric deploy success summary.
+- **Skip child diffs on table add/remove** — When a whole table is added or removed, individual child diffs (columns, measures) are no longer processed separately.
+- **Select All Visible scope** — "Select All Visible" now respects the current search filter.
+- **Block UDF deploy on old compat** — UDF deployment is blocked when target `compatibilityLevel` < 1702.
+- **Ref entries indentation** — Fixed `ref` entries in `model.tmdl` being written with incorrect indentation + `culture` → `cultureInfo` key fix.
+- **Backup path required** — Backup path field is now properly validated before deploy.
+
+### Core / Architecture (P0–P2 critical fixes)
+- **P0.1** — UDF (function) deploy support in `planSingleDiff`.
+- **P0.2** — Model-level changes (`model.tmdl`) now handled in `planSingleDiff`.
+- **P0.3** — TMDL indent validation at load time (rejects spaces, requires tabs).
+- **P0.4** — `lineageTag` from Target is preserved during object modification (prevents Fabric regeneration).
+- **P1.5** — Extractor expanded with critical TMDL properties (formatString, summarizeBy, etc.).
+- **P1.6** — Composite identity key for relationships (fromTable+fromColumn+toTable+toColumn) replaces unreliable GUID matching.
+- **P1.7** — Dependency validation at deployment time (blocks deploy if referenced objects are missing).
+- **P1.8** — Atomic table-modify: modifying a table preserves all child objects in the target that are not explicitly changed.
+
+---
+
 ## v4.1.0
 
 ### New Features
