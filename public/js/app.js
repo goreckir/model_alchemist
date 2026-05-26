@@ -635,21 +635,24 @@
     }
 
     function selectAllVisible() {
+        // Only select diffs whose checkboxes are currently rendered (i.e., visible
+        // after applying activeGroup + activeFilter + searchTerm). Do NOT expand
+        // through comparisonResult.groups because those may contain members outside
+        // the current filter (e.g., parameter refresh groups pulling in tables when
+        // user is in 'measures' group).
+        const visibleKeys = new Set();
         document.querySelectorAll('.diff-checkbox').forEach(cb => {
             cb.checked = true;
-            selectedKeys.add(cb.dataset.key);
+            const key = cb.dataset.key;
+            selectedKeys.add(key);
+            visibleKeys.add(key);
             const diffObj = cb.closest('.diff-object');
             if (diffObj) diffObj.classList.add('selected');
         });
-        // Also select all group checkboxes and their hidden members
         document.querySelectorAll('.diff-group-checkbox').forEach(cb => {
             cb.checked = true;
             cb.indeterminate = false;
         });
-        const groups = comparisonResult.groups || [];
-        for (const group of groups) {
-            for (const key of group.memberKeys) selectedKeys.add(key);
-        }
         updateDeployButton();
     }
 
