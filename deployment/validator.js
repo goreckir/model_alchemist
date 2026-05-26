@@ -125,18 +125,23 @@ function validateDependencies(selectedDiffs, devModel, prodModel) {
     }
 
     // 3. Removing a column referenced by relationships in target not also being removed.
+    //    → Auto-cascade: collect orphaned relationships for automatic removal.
     const targetRels = Object.values(prodObjects).filter(o => o.objectType === 'relationship');
+    const cascadeRels = []; // relationships to auto-remove (will be handled by deployer)
+    const cascadedRelKeys = new Set();
     for (const d of selectedDiffs) {
         if (d.type === 1 && d.objectType === 'column') {
             const colName = d.displayName; // "Table.Column"
             for (const rel of targetRels) {
                 const fromCol = (rel.properties.fromColumn || '').replace(/'/g, '');
                 const toCol = (rel.properties.toColumn || '').replace(/'/g, '');
-                if ((fromCol === colName || toCol === colName) && !removedKeys.has(rel.identityKey)) {
+                if ((fromCol === colName || toCol === colName) && !removedKeys.has(rel.identityKey) && !cascadedRelKeys.has(rel.identityKey)) {
+                    cascadedRelKeys.add(rel.identityKey);
+                    cascadeRels.push(rel);
                     warnings.push({
-                        code: 'ORPHAN_RELATIONSHIP',
-                        identityKey: d.identityKey,
-                        message: `Usuwana kolumna '${colName}' jest uzywana w relacji ${rel.displayName} \u2014 nie zaznaczono jej do usuniecia. Relacja stanie sie nieprawidlowa.`
+                        code: 'CASCADE_RELATIONSHIP_REMOVE',
+                        identityKey: rel.identityKey,
+                        message: `Relacja '${rel.displayName}' zostanie automatycznie usunieta (kolumna '${colName}' jest usuwana).`
                     });
                 }
             }
@@ -148,11 +153,13 @@ function validateDependencies(selectedDiffs, devModel, prodModel) {
                 const fromCol = (rel.properties.fromColumn || '').replace(/'/g, '');
                 const toCol = (rel.properties.toColumn || '').replace(/'/g, '');
                 const refsTable = fromCol.startsWith(tbl + '.') || toCol.startsWith(tbl + '.');
-                if (refsTable && !removedKeys.has(rel.identityKey)) {
+                if (refsTable && !removedKeys.has(rel.identityKey) && !cascadedRelKeys.has(rel.identityKey)) {
+                    cascadedRelKeys.add(rel.identityKey);
+                    cascadeRels.push(rel);
                     warnings.push({
-                        code: 'ORPHAN_RELATIONSHIP',
-                        identityKey: d.identityKey,
-                        message: `Usuwana tabela '${tbl}' jest uzywana w relacji ${rel.displayName} \u2014 relacja nie zaznaczona do usuniecia.`
+                        code: 'CASCADE_RELATIONSHIP_REMOVE',
+                        identityKey: rel.identityKey,
+                        message: `Relacja '${rel.displayName}' zostanie automatycznie usunieta (tabela '${tbl}' jest usuwana).`
                     });
                 }
             }
@@ -210,7 +217,7 @@ function validateDependencies(selectedDiffs, devModel, prodModel) {
         }
     }
 
-    return { warnings, errors };
+    return { warnings, errors, cascadeRels };
 }
 
 /**
