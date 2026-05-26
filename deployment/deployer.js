@@ -107,6 +107,9 @@ function planSingleDiff(diff, devModel, prodPath) {
         case 'function':
             ops.push(...planFunctionOp(diff, devModel, prodPath));
             break;
+        case 'model':
+            ops.push(...planModelOp(diff, devModel, prodPath));
+            break;
         case 'role':
         case 'tablePermission':
             ops.push(...planRoleOp(diff, devModel, prodPath));
@@ -283,6 +286,34 @@ function planExpressionOp(diff, devModel, prodPath) {
             description: { action: 'modify', objectType: 'expression', name: exprName, file: 'expressions.tmdl' }
         }];
     }
+}
+
+/**
+ * Plan operations for model-level property changes (model.tmdl, the `model X` declaration).
+ * Only replace the model block itself; refs and other top-level entries are preserved.
+ */
+function planModelOp(diff, devModel, prodPath) {
+    const targetFile = path.join(prodPath, 'model.tmdl');
+    // Derive model name from diff (set by extractor) or fall back to parsing rawBlock first line.
+    let modelName = diff.modelName;
+    if (!modelName && diff.rawBlock) {
+        const m = diff.rawBlock.match(/^\s*model\s+(.+?)\s*$/m);
+        if (m) modelName = m[1].trim().replace(/^'|'$/g, '');
+    }
+    if (!modelName) modelName = 'Model';
+
+    // Only modify is meaningful for the model object (add/remove of model itself isn't supported)
+    if (diff.type === 2) {
+        return [{
+            action: 'replaceTopLevel',
+            targetPath: targetFile,
+            objectType: 'model',
+            objectName: modelName,
+            newBlock: diff.rawBlock,
+            description: { action: 'modify', objectType: 'model', name: diff.displayName, file: 'model.tmdl' }
+        }];
+    }
+    return [];
 }
 
 /**

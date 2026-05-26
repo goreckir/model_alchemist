@@ -413,6 +413,7 @@ function extractModelProperties(modelObj, objects) {
         objectType: 'model',
         identityKey: 'model:properties',
         displayName: 'Model Properties',
+        modelName: modelObj.name || 'Model',
         changeGroup: CHANGE_GROUPS.MODEL_PROPERTIES,
         sourceFile: modelObj.file,
         rawBlock: modelObj.rawBlock,
