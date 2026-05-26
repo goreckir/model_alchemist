@@ -188,7 +188,76 @@ function validateDependencies(selectedDiffs, devModel, prodModel) {
         }
     }
 
+    // 6. Perspective references: every perspectiveTable/Column/Measure/Hierarchy
+    // referenced inside a perspective file must exist in the target after deploy.
+    // Otherwise Fabric AS rejects the model with:
+    //   "Property Column of object 'perspective column' refers to an object
+    //    which cannot be found"
+    for (const d of selectedDiffs) {
+        if (d.type === 1) continue; // removing a perspective is always safe
+        if (d.objectType !== 'perspective') continue;
+        const devObj = devObjects[d.identityKey];
+        if (!devObj || !devObj.rawBlock) continue;
+        const missing = findMissingPerspectiveRefs(devObj.rawBlock, afterKeys);
+        if (missing.length > 0) {
+            const list = missing.slice(0, 8).map(r => `${r.type} '${r.path}'`).join(', ');
+            const more = missing.length > 8 ? ` (+${missing.length - 8} wiecej)` : '';
+            errors.push({
+                code: 'PERSPECTIVE_REF_MISSING',
+                identityKey: d.identityKey,
+                message: `Perspektywa '${d.displayName}' odwoluje sie do nieistniejacych w targecie obiektow: ${list}${more}. Dodaj brakujace obiekty do deployu, albo usun te referencje z perspektywy w DEV i wykonaj porownanie ponownie.`
+            });
+        }
+    }
+
     return { warnings, errors };
+}
+
+/**
+ * Scan a perspective rawBlock and return refs (perspectiveTable / perspectiveColumn
+ * / perspectiveMeasure / perspectiveHierarchy) that don't resolve in `afterKeys`.
+ *
+ * @param {string} rawBlock
+ * @param {Set<string>} afterKeys
+ * @returns {Array<{type: 'table'|'column'|'measure'|'hierarchy', path: string}>}
+ */
+function findMissingPerspectiveRefs(rawBlock, afterKeys) {
+    const missing = [];
+    const lines = rawBlock.replace(/\r\n/g, '\n').split('\n');
+    const stripName = s => s.replace(/^'+|'+$/g, '').trim();
+    let currentTable = null;
+    let currentTableMissing = false;
+
+    for (const line of lines) {
+        const trimmed = line.trim();
+        let m;
+        if ((m = trimmed.match(/^perspectiveTable\s+(.+?)\s*$/i))) {
+            currentTable = stripName(m[1]);
+            currentTableMissing = !afterKeys.has(`table:${currentTable}`);
+            if (currentTableMissing) {
+                missing.push({ type: 'table', path: currentTable });
+            }
+            continue;
+        }
+        if (!currentTable || currentTableMissing) continue; // skip children of missing table to avoid noise
+        if ((m = trimmed.match(/^perspectiveColumn\s+(.+?)\s*$/i))) {
+            const col = stripName(m[1]);
+            if (!afterKeys.has(`column:${currentTable}.${col}`)) {
+                missing.push({ type: 'column', path: `${currentTable}.${col}` });
+            }
+        } else if ((m = trimmed.match(/^perspectiveMeasure\s+(.+?)\s*$/i))) {
+            const meas = stripName(m[1]);
+            if (!afterKeys.has(`measure:${currentTable}.${meas}`)) {
+                missing.push({ type: 'measure', path: `${currentTable}.${meas}` });
+            }
+        } else if ((m = trimmed.match(/^perspectiveHierarchy\s+(.+?)\s*$/i))) {
+            const hier = stripName(m[1]);
+            if (!afterKeys.has(`hierarchy:${currentTable}.${hier}`)) {
+                missing.push({ type: 'hierarchy', path: `${currentTable}.${hier}` });
+            }
+        }
+    }
+    return missing;
 }
 
 module.exports = { validateDependencies, COMPAT_LEVEL_REQUIREMENTS, getCompatibilityLevel };
