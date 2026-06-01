@@ -299,7 +299,11 @@ function extractRelationship(rel, objects) {
         properties: {
             fromColumn: fromCol,
             toColumn: toCol,
-            cardinality: rel.properties.cardinality || '',
+            // TMDL uses fromCardinality / toCardinality (not a single "cardinality").
+            // Defaults: fromCardinality = 'many', toCardinality = 'one' (standard many-to-one).
+            // These fields are omitted in TMDL when they hold the default value.
+            fromCardinality: rel.properties.fromCardinality || 'many',
+            toCardinality: rel.properties.toCardinality || 'one',
             crossFilteringBehavior: crossFilter,
             isActive,
             securityFilteringBehavior: rel.properties.securityFilteringBehavior || '',

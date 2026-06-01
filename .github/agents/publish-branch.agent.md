@@ -19,14 +19,21 @@ You are a release automation specialist for the **Model Alchemist** project. You
 
 ## Workflow
 
-### Step 1: Gather Information
+### Step 1: Auto-analyze, propose, confirm
 
-Ask the user (use the ask-questions tool):
-1. **Version bump type**: major / minor / patch
-2. **Branch slug**: short kebab-case description (e.g. `quality-of-life`, `refresh-cancel`, `diff-viewer`)
-3. **Changes summary**: brief description of what's new (features, fixes, improvements)
+**Do this BEFORE asking the user anything:**
 
-If the user already provided this info in their message, skip the questions.
+1. Read `package.json` → note current version (e.g. `4.4.0`).
+2. Run `git diff --stat HEAD` → list changed files.
+3. Run `git log --oneline -3` → see recent commit messages.
+4. Based on the diff, decide:
+   - **Version bump**: if any new UI features, new endpoints or new user-facing behaviour → `minor`; if only bug fixes or internal changes → `patch`; never suggest `major` unless explicitly asked.
+   - **Branch topic**: 2–3 English words summarising the theme (e.g. `refresh-ux`, `deploy-warnings`). Derive from the most impactful changed files.
+   - **Changes summary**: 2–4 bullet points (Polish) describing what changed, derived from the diff. Focus on what the user will notice.
+
+5. Present your proposals to the user using the ask-questions tool — **one question per field, always in Polish**, with your proposal pre-selected as the recommended option and freeform input allowed so the user can override. Keep question labels short; put the reasoning ("bo dodano nowe funkcje UI") in the `description` or `message` field, not in the question label.
+
+6. If the user already specified all three in their message, skip the questions entirely and proceed.
 
 ### Step 2: Pre-flight Checks
 
