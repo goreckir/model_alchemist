@@ -81,9 +81,11 @@
     const btnModelRefresh = document.getElementById('btn-model-refresh');
     const refreshModal = document.getElementById('refresh-modal');
     const refreshPanelContent = document.getElementById('refresh-panel-content');
+    const btnManualCalculate = document.getElementById('btn-manual-calculate');
     btnModelRefresh.addEventListener('click', openRefreshPanel);
     document.getElementById('refresh-modal-close').addEventListener('click', () => refreshModal.classList.add('hidden'));
     document.getElementById('btn-refresh-modal-ok').addEventListener('click', () => refreshModal.classList.add('hidden'));
+    btnManualCalculate.addEventListener('click', handleManualCalculate);
 
     // Refresh state
     let refreshHistory = []; // session refresh records
@@ -195,9 +197,11 @@
             return;
         }
 
-        // Auto-verify Fabric access if not yet verified
-        const needsDevVerify = !devIsLocal && !devFabricSelection.semanticModelId;
-        const needsProdVerify = !prodIsLocal && !prodFabricSelection.semanticModelId;
+        // Auto-verify Fabric access if not yet verified OR if the connection string was changed manually
+        const currentDevConn = !devIsLocal ? document.getElementById('dev-conn-string').value.trim() : null;
+        const currentProdConn = !prodIsLocal ? document.getElementById('prod-conn-string').value.trim() : null;
+        const needsDevVerify = !devIsLocal && (!devFabricSelection.semanticModelId || currentDevConn !== devFabricSelection.connectionString);
+        const needsProdVerify = !prodIsLocal && (!prodFabricSelection.semanticModelId || currentProdConn !== prodFabricSelection.connectionString);
         if (needsDevVerify || needsProdVerify) {
             showLoading();
             try {
@@ -817,8 +821,30 @@
             });
             const preview = await response.json();
 
+            let previewHtml = '';
+
+            // Warnings from validator — show prominently ABOVE the action list
+            if (Array.isArray(preview.warnings) && preview.warnings.length > 0) {
+                previewHtml += preview.warnings.map(w =>
+                    `<div style="background: rgba(255,180,0,0.08); border-left: 3px solid #f0b400; border-radius: 4px; padding: 8px 10px; margin-bottom: 8px; font-size: 12px;">
+                        <span style="font-weight: 700; color: #f0b400;">⚠ ${escapeHtml(w.code || 'WARNING')}</span><br>
+                        <span style="color: var(--color-text);">${escapeHtml(w.message || JSON.stringify(w))}</span>
+                    </div>`
+                ).join('');
+            }
+
+            // Errors from validator
+            if (Array.isArray(preview.errors) && preview.errors.length > 0) {
+                previewHtml += preview.errors.map(e =>
+                    `<div style="background: rgba(229,83,75,0.08); border-left: 3px solid var(--color-removed-text); border-radius: 4px; padding: 8px 10px; margin-bottom: 8px; font-size: 12px;">
+                        <span style="font-weight: 700; color: var(--color-removed-text);">✗ ${escapeHtml(e.code || 'ERROR')}</span><br>
+                        <span style="color: var(--color-text);">${escapeHtml(e.message || JSON.stringify(e))}</span>
+                    </div>`
+                ).join('');
+            }
+
             if (preview.actions && preview.actions.length > 0) {
-                deployPreview.innerHTML = preview.actions.map(a => {
+                previewHtml += preview.actions.map(a => {
                     const cls = a.action === 'add' ? 'action-add' : a.action === 'remove' ? 'action-remove' : 'action-modify';
                     const icon = a.action === 'add' ? '+' : a.action === 'remove' ? '−' : '~';
                     return `<div class="deploy-action ${cls}">
@@ -826,9 +852,11 @@
                         <span class="deploy-action-text">[${escapeHtml(a.objectType)}] ${escapeHtml(a.name)} → ${escapeHtml(a.file || '')}</span>
                     </div>`;
                 }).join('');
-            } else {
-                deployPreview.innerHTML = '<p style="color: var(--color-text-dim);">No file operations planned.</p>';
+            } else if (!previewHtml) {
+                previewHtml = '<p style="color: var(--color-text-dim);">No file operations planned.</p>';
             }
+
+            deployPreview.innerHTML = previewHtml;
         } catch {
             deployPreview.innerHTML = '<p style="color: var(--color-removed-text);">Failed to load preview.</p>';
         }
@@ -878,6 +906,12 @@
             const result = await response.json();
             hideAlchemistAnimation();
             showDeployResult(result);
+
+            // Auto-refresh the comparison after a successful deployment so the
+            // diff list reflects the new target state when the user closes this modal.
+            if (result.success) {
+                handleCompare();
+            }
         } catch (err) {
             hideAlchemistAnimation();
             showDeployResult({ success: false, errors: [{ error: err.message }], actions: [] });
@@ -1033,6 +1067,8 @@
         const active = refreshHistory.find(r => r.status === 'inProgress');
         const last = refreshHistory[refreshHistory.length - 1];
         btnModelRefresh.classList.remove('is-active', 'is-completed', 'is-failed');
+        // Disable manual-calculate while any refresh is running
+        btnManualCalculate.disabled = !!active;
         const badge = document.getElementById('refresh-badge');
 
         if (active) {
@@ -1141,6 +1177,7 @@
                 if (data.status) record.status = mapRefreshStatus(data.status);
                 if (data.startTime) record.startTime = data.startTime;
                 if (data.endTime) record.endTime = data.endTime;
+                if (data.topLevelError) record.topLevelError = data.topLevelError;
                 if (data.trackedObjects && data.trackedObjects.length > 0) {
                     record.objects = data.trackedObjects;
                 } else if (data.objects && Array.isArray(data.objects)) {
@@ -1207,6 +1244,53 @@
     function openRefreshPanel() {
         refreshModal.classList.remove('hidden');
         renderRefreshPanel();
+    }
+
+    async function handleManualCalculate() {
+        if (activeRefreshId) return; // already running
+
+        btnManualCalculate.disabled = true;
+        btnManualCalculate.textContent = '🔄 Starting…';
+
+        try {
+            const response = await fetch('/api/fabric/refresh', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    tables: [],
+                    refreshType: 'calculate',
+                    tableDetails: [{ table: '_model_', refreshType: 'calculate', reasons: ['manual recalculate'] }]
+                })
+            });
+            const result = await response.json();
+
+            if (!response.ok || !result.success) {
+                alert(`Recalculate failed: ${result.error || 'Unknown error'}`);
+                btnManualCalculate.disabled = false;
+                btnManualCalculate.textContent = '🔄 Recalculate';
+                return;
+            }
+
+            if (result.requestId) {
+                activeRefreshId = result.requestId;
+                refreshHistory.push({
+                    id: result.requestId,
+                    status: 'inProgress',
+                    refreshType: 'calculate',
+                    startTime: new Date().toISOString(),
+                    endTime: null,
+                    requestedTables: [],
+                    objects: [{ table: '_model_', refreshType: 'calculate', reasons: ['manual recalculate'], status: 'inProgress' }]
+                });
+                updateRefreshButton();
+                renderRefreshPanel();
+                startRefreshPolling(result.requestId);
+            }
+        } catch (err) {
+            alert(`Recalculate error: ${err.message}`);
+            btnManualCalculate.disabled = false;
+        }
+        btnManualCalculate.textContent = '🔄 Recalculate';
     }
 
     function renderRefreshPanel() {
@@ -1285,14 +1369,25 @@
             html += `</tbody></table>`;
         }
 
-        if (record.status === 'failed' && record.objects) {
-            const failed = record.objects.filter(o => o.status === 'failed' && o.message);
-            if (failed.length > 0) {
-                html += `<details style="margin-top: 8px; font-size: 12px;"><summary style="cursor:pointer; color: var(--color-removed-text);">Error details</summary>`;
-                for (const f of failed) {
-                    html += `<pre style="white-space: pre-wrap; margin: 4px 0; padding: 8px; background: rgba(229,83,75,0.05); border-radius: 4px;">${escapeHtml(typeof f.message === 'string' ? f.message : JSON.stringify(f.message, null, 2))}</pre>`;
+        if (record.status === 'failed') {
+            const failed = (record.objects || []).filter(o => o.status === 'failed' && o.message);
+            const topErr = record.topLevelError;
+            // Collect all error texts to display (de-duplicate)
+            const errorTexts = [];
+            if (topErr) errorTexts.push(typeof topErr === 'string' ? topErr : JSON.stringify(topErr, null, 2));
+            for (const f of failed) {
+                const txt = typeof f.message === 'string' ? f.message : JSON.stringify(f.message, null, 2);
+                if (!errorTexts.includes(txt)) errorTexts.push(txt);
+            }
+            if (errorTexts.length > 0) {
+                // Open by default so the user sees the cause immediately
+                html += `<details open style="margin-top: 8px; font-size: 12px;"><summary style="cursor:pointer; color: var(--color-removed-text); font-weight:600;">⚠ Error details</summary>`;
+                for (const txt of errorTexts) {
+                    html += `<pre style="white-space: pre-wrap; margin: 4px 0; padding: 8px; background: rgba(229,83,75,0.05); border-radius: 4px;">${escapeHtml(txt)}</pre>`;
                 }
                 html += `</details>`;
+            } else {
+                html += `<p style="margin-top: 8px; font-size: 12px; color: var(--color-removed-text);">⚠ Refresh failed — no detailed error was returned by Fabric. Check the model's refresh history in the Fabric portal for more information.</p>`;
             }
         }
 

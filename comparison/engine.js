@@ -337,99 +337,132 @@ function computeGroups(diffs, devObjects) {
         }
     }
 
-    // Column/Table deletions: group with dependent relationship deletions.
-    // When a column is removed and a relationship using that column is also removed,
-    // they should be in the same atomic group (selected/deselected together).
-    const removedColumns = diffs.filter(d => d.type === 1 && d.objectType === 'column');
-    const removedTables = diffs.filter(d => d.type === 1 && d.objectType === 'table');
-    const removedRelationships = diffs.filter(d => d.type === 1 && d.objectType === 'relationship');
+    // ── Relationship changes ────────────────────────────────────────────────────────────
+    // For every relationship diff (added / removed / modified):
+    //  1. Group it atomically with any column diffs whose columns are the key endpoints
+    //     (fromColumn / toColumn) — e.g. when a table key column is renamed and the
+    //     relationship is rewired accordingly.
+    //  2. Set requiresRefresh: true on the endpoint tables — the AS engine must
+    //     recalculate after any structural relationship change.
+    //
+    // Supersedes the previous "Column/Table deletions" cascade-only logic and extends it
+    // to cover all relationship change types (added / removed / modified).
 
-    if (removedRelationships.length > 0 && (removedColumns.length > 0 || removedTables.length > 0)) {
-        // Build lookup: column name (Table.Column) → set of relationship identityKeys
-        const colToRelKeys = new Map();
-        for (const rel of removedRelationships) {
-            const fromCol = (rel.propertyDiffs || []).find(p => p.propertyName === 'fromColumn');
-            const toCol = (rel.propertyDiffs || []).find(p => p.propertyName === 'toColumn');
-            const fromName = (fromCol && (fromCol.prodValue || fromCol.devValue) || '').replace(/'/g, '');
-            const toName = (toCol && (toCol.prodValue || toCol.devValue) || '').replace(/'/g, '');
-            if (fromName) {
-                if (!colToRelKeys.has(fromName)) colToRelKeys.set(fromName, new Set());
-                colToRelKeys.get(fromName).add(rel.identityKey);
+    // Helpers: parse TMDL column reference ("'Table Name'.Col" or "Table.Col")
+    function tableFromColRef(colRef) {
+        if (!colRef) return null;
+        const m = colRef.match(/^'([^']+)'\./);
+        if (m) return m[1];
+        const dot = colRef.lastIndexOf('.');
+        return dot > 0 ? colRef.substring(0, dot) : null;
+    }
+    function colFromRef(colRef) {
+        if (!colRef) return null;
+        const m = colRef.match(/^'[^']+'\.(.*)/);
+        if (m) return m[1];
+        const dot = colRef.lastIndexOf('.');
+        return dot >= 0 ? colRef.substring(dot + 1) : colRef;
+    }
+
+    const allRelDiffs  = diffs.filter(d => d.objectType === 'relationship');
+    const allColDiffs  = diffs.filter(d => d.objectType === 'column');
+    const allTblDiffs  = diffs.filter(d => d.objectType === 'table');
+    // Tables being fully removed in this diff set → don't need refresh after removal
+    const removedTblNames = new Set(allTblDiffs.filter(t => t.type === 1).map(t => t.displayName));
+
+    const assignedRelKeys = new Set();
+
+    for (const relDiff of allRelDiffs) {
+        if (assignedRelKeys.has(relDiff.identityKey)) continue;
+
+        // ── Extract fromColumn / toColumn reference strings ──────────────────────────
+        let fromRef, toRef;
+        if (relDiff.type === 2) {
+            // Modified: from/to columns are the composite identity key → read from displayName
+            [fromRef, toRef] = relDiff.displayName.split(' → ');
+        } else {
+            const valProp = relDiff.type === 0 ? 'devValue' : 'prodValue';
+            const fp = (relDiff.propertyDiffs || []).find(p => p.propertyName === 'fromColumn');
+            const tp = (relDiff.propertyDiffs || []).find(p => p.propertyName === 'toColumn');
+            fromRef = fp ? fp[valProp] : null;
+            toRef   = tp ? tp[valProp] : null;
+            // Fallback: parse from displayName
+            if (!fromRef && !toRef) [fromRef, toRef] = relDiff.displayName.split(' → ');
+        }
+
+        const fromTable = tableFromColRef(fromRef);
+        const toTable   = tableFromColRef(toRef);
+        const fromCol   = colFromRef(fromRef);
+        const toCol     = colFromRef(toRef);
+
+        // ── Collect atomic members ───────────────────────────────────────────────────
+        const memberKeys = new Set([relDiff.identityKey]);
+
+        // Key column diffs on the endpoint columns (any change type: added / removed / modified)
+        for (const cd of allColDiffs) {
+            if (fromTable && cd.parentTable === fromTable && cd.displayName === `${fromTable}.${fromCol}`) {
+                memberKeys.add(cd.identityKey);
             }
-            if (toName) {
-                if (!colToRelKeys.has(toName)) colToRelKeys.set(toName, new Set());
-                colToRelKeys.get(toName).add(rel.identityKey);
+            if (toTable && cd.parentTable === toTable && cd.displayName === `${toTable}.${toCol}`) {
+                memberKeys.add(cd.identityKey);
             }
         }
 
-        // Group: column deletion + its dependent relationship deletions
-        const assignedRelKeys = new Set();
-        for (const colDiff of removedColumns) {
-            const colName = colDiff.displayName; // "Table.Column"
-            const relKeys = colToRelKeys.get(colName);
-            if (!relKeys || relKeys.size === 0) continue;
-
-            const memberKeys = new Set([colDiff.identityKey]);
-            for (const rk of relKeys) {
-                memberKeys.add(rk);
-                assignedRelKeys.add(rk);
-            }
-            // Also include parent table deletion if present
-            const tableDiff = removedTables.find(t => t.displayName === colDiff.parentTable);
-            if (tableDiff) memberKeys.add(tableDiff.identityKey);
-
-            // Check if column is already in a group
-            const existingGroup = groups.find(g => g.memberKeys.includes(colDiff.identityKey));
-            if (existingGroup) {
-                // Merge relationship keys into existing group
-                for (const rk of relKeys) {
-                    if (!existingGroup.memberKeys.includes(rk)) {
-                        existingGroup.memberKeys.push(rk);
-                    }
+        // For removed / added rels: include parent table diff + full child cascade if table changes too
+        for (const tblName of [fromTable, toTable]) {
+            if (!tblName) continue;
+            const tblDiff = allTblDiffs.find(t => t.displayName === tblName && t.type === relDiff.type);
+            if (!tblDiff) continue;
+            memberKeys.add(tblDiff.identityKey);
+            if (relDiff.type === 1) {
+                // Table removal: pull all child diffs (columns, partitions, measures …)
+                for (const cd of diffs.filter(d => d.type === 1 && d.parentTable === tblName)) {
+                    memberKeys.add(cd.identityKey);
                 }
-            } else {
-                groups.push({
-                    groupId: `cascade:${colDiff.parentTable}`,
-                    label: `${colDiff.parentTable} (removal)`,
-                    reason: 'Column removal with dependent relationships — must be deployed together',
-                    memberKeys: [...memberKeys],
-                    requiresRefresh: false
-                });
             }
         }
 
-        // Table deletions: any remaining relationships referencing this table
-        for (const tblDiff of removedTables) {
-            const tblName = tblDiff.displayName;
-            const relKeys = new Set();
-            for (const [colName, rks] of colToRelKeys) {
-                if (colName.startsWith(tblName + '.')) {
-                    for (const rk of rks) {
-                        if (!assignedRelKeys.has(rk)) relKeys.add(rk);
-                    }
+        assignedRelKeys.add(relDiff.identityKey);
+
+        // ── Refresh: only removed relationships need cascade awareness.
+        // Added/modified relationships are pure metadata changes — Fabric AS processes
+        // them via updateDefinition without requiring a separate data refresh.
+        // (The "requires refresh" badge would mislead users into thinking Report_Volume
+        //  or other endpoint tables need a data reload when they don't.)
+        const isRemoval = relDiff.type === 1;
+        const affectedTables = isRemoval
+            ? [fromTable, toTable].filter(t => t && !removedTblNames.has(t))
+            : [];
+        const needsRefresh = isRemoval && affectedTables.length > 0;
+
+        const relTypeLabel = relDiff.type === 0 ? 'added' : relDiff.type === 1 ? 'removed' : 'modified';
+        const label  = `${fromRef || '?'} → ${toRef || '?'} (rel. ${relTypeLabel})`;
+        const reason = relDiff.type === 1
+            ? 'Relationship removal — must be deployed atomically with cascade column/table changes'
+            : 'Relationship change — deploy table/partition changes on endpoint tables first if pending';
+
+        // ── Merge into an existing group if any member is already grouped ────────────
+        const existingGroup = groups.find(g => [...memberKeys].some(k => g.memberKeys.includes(k)));
+        if (existingGroup) {
+            for (const k of memberKeys) {
+                if (!existingGroup.memberKeys.includes(k)) existingGroup.memberKeys.push(k);
+            }
+            if (needsRefresh) {
+                existingGroup.requiresRefresh = true;
+                if (!existingGroup.affectedTables) existingGroup.affectedTables = [];
+                for (const t of affectedTables) {
+                    if (!existingGroup.affectedTables.includes(t)) existingGroup.affectedTables.push(t);
                 }
             }
-            if (relKeys.size === 0) continue;
-            const existingGroup = groups.find(g => g.memberKeys.includes(tblDiff.identityKey));
-            if (existingGroup) {
-                for (const rk of relKeys) {
-                    if (!existingGroup.memberKeys.includes(rk)) {
-                        existingGroup.memberKeys.push(rk);
-                    }
-                }
-            } else {
-                const memberKeys = new Set([tblDiff.identityKey, ...relKeys]);
-                // Also add child columns/partitions of this table
-                const childDiffs = diffs.filter(d => d.type === 1 && d.parentTable === tblName);
-                for (const cd of childDiffs) memberKeys.add(cd.identityKey);
-                groups.push({
-                    groupId: `cascade:${tblName}`,
-                    label: `${tblName} (removal)`,
-                    reason: 'Table removal with dependent relationships — must be deployed together',
-                    memberKeys: [...memberKeys],
-                    requiresRefresh: false
-                });
-            }
+        } else {
+            groups.push({
+                groupId: `rel:${relDiff.identityKey}`,
+                label,
+                reason,
+                memberKeys: [...memberKeys],
+                affectedTables,
+                requiresRefresh: needsRefresh
+            });
         }
     }
 

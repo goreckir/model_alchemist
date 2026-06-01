@@ -35,9 +35,10 @@ function getCompatibilityLevel(model) {
  * @param {Array} selectedDiffs
  * @param {object} devModel
  * @param {object} prodModel
+ * @param {Array} [allDiffs=[]] - Full diff list from last comparison (for pre-deploy order warnings).
  * @returns {{ warnings: Array<{code:string,message:string,identityKey?:string}>, errors: Array<{code:string,message:string,identityKey?:string}> }}
  */
-function validateDependencies(selectedDiffs, devModel, prodModel) {
+function validateDependencies(selectedDiffs, devModel, prodModel, allDiffs = []) {
     const warnings = [];
     const errors = [];
 
@@ -166,7 +167,77 @@ function validateDependencies(selectedDiffs, devModel, prodModel) {
         }
     }
 
-    // 5. Added measure: best-effort DAX scan for missing column refs (warning, never error)
+    // 5. Relationship deployment order — pre-deploy warning.
+    // When a selected relationship (added or modified) has unselected structural changes
+    // on its endpoint tables (partition with expression change, column add/remove),
+    // Fabric may reject the updateDefinition call with "missing options" until those
+    // table changes are deployed and the data is refreshed first.
+    {
+        const selectedRelKeys = new Set(selectedDiffs.filter(d => d.objectType === 'relationship' && (d.type === 0 || d.type === 2)).map(d => d.identityKey));
+        const selectedDiffKeys = new Set(selectedDiffs.map(d => d.identityKey));
+
+        // Structural change: partition with expression, or column add/remove
+        function isStructuralDiff(d) {
+            if (d.objectType === 'column' && (d.type === 0 || d.type === 1)) return true;
+            if (d.objectType === 'partition' && d.type !== 1) {
+                return (d.propertyDiffs || []).some(p => p.propertyName === 'expression');
+            }
+            return false;
+        }
+
+        function parseRelEndpoints(relDiff) {
+            let fromRef, toRef;
+            if (relDiff.type === 2) {
+                [fromRef, toRef] = relDiff.displayName.split(' \u2192 ');
+            } else {
+                const vp = relDiff.type === 0 ? 'devValue' : 'prodValue';
+                const fp = (relDiff.propertyDiffs || []).find(p => p.propertyName === 'fromColumn');
+                const tp = (relDiff.propertyDiffs || []).find(p => p.propertyName === 'toColumn');
+                fromRef = fp ? fp[vp] : null;
+                toRef   = tp ? tp[vp] : null;
+                if (!fromRef && !toRef) [fromRef, toRef] = relDiff.displayName.split(' \u2192 ');
+            }
+            function tableOf(ref) {
+                if (!ref) return null;
+                const m = ref.match(/^'([^']+)'\./); if (m) return m[1];
+                const dot = ref.lastIndexOf('.'); return dot > 0 ? ref.substring(0, dot) : null;
+            }
+            return { fromTable: tableOf(fromRef), toTable: tableOf(toRef) };
+        }
+
+        for (const relKey of selectedRelKeys) {
+            const relDiff = selectedDiffs.find(d => d.identityKey === relKey);
+            if (!relDiff) continue;
+            const { fromTable, toTable } = parseRelEndpoints(relDiff);
+
+            // Find UNSELECTED structural diffs on either endpoint table
+            const pendingByTable = {};
+            for (const d of allDiffs) {
+                if (selectedDiffKeys.has(d.identityKey)) continue; // already selected — no issue
+                if (!isStructuralDiff(d)) continue;
+                const tbl = d.parentTable;
+                if (tbl === fromTable || tbl === toTable) {
+                    if (!pendingByTable[tbl]) pendingByTable[tbl] = [];
+                    pendingByTable[tbl].push(d.displayName);
+                }
+            }
+
+            if (Object.keys(pendingByTable).length > 0) {
+                const tableList = Object.entries(pendingByTable)
+                    .map(([tbl, names]) => `'${tbl}' (${names.slice(0, 3).join(', ')}${names.length > 3 ? ' ...' : ''})`)
+                    .join('; ');
+                warnings.push({
+                    code: 'RELATIONSHIP_PENDING_TABLE_CHANGES',
+                    identityKey: relDiff.identityKey,
+                    message: `Relationship '${relDiff.displayName}' references table(s) with undeployed structural changes: ${tableList}. ` +
+                        `Fabric may reject this deployment with "missing options" until those table changes are deployed and refreshed first. ` +
+                        `Recommended: deploy the table changes first, trigger the data refresh, then redeploy the relationship separately.`
+                });
+            }
+        }
+    }
+
+    // 6 (renumbered). Added measure: best-effort DAX scan for missing column refs (warning, never error)
     for (const d of selectedDiffs) {
         if (d.type === 0 && d.objectType === 'measure') {
             const devMeasure = devObjects[d.identityKey];
@@ -195,7 +266,7 @@ function validateDependencies(selectedDiffs, devModel, prodModel) {
         }
     }
 
-    // 6. Perspective references: every perspectiveTable/Column/Measure/Hierarchy
+    // 7. Perspective references: every perspectiveTable/Column/Measure/Hierarchy
     // referenced inside a perspective file must exist in the target after deploy.
     // Otherwise Fabric AS rejects the model with:
     //   "Property Column of object 'perspective column' refers to an object

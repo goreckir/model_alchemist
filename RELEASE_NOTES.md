@@ -1,5 +1,31 @@
 # Model Alchemist — Release Notes
 
+## v4.4.0
+
+### New Features
+- **Manual Recalculate button** — New "🔄 Recalculate" button in the Model Refresh panel footer. Triggers a `calculate`-type refresh (recalculates DAX calculated columns, calculated tables and measures) without re-importing data from sources. Useful after deploying relationships or measures to force the engine to rebuild relationship indexes. The button is automatically disabled while any other refresh is in progress.
+- **Pre-deploy validation warnings in modal** — Warnings returned by the deployment validator (e.g. relationship ordering conflicts) are now displayed prominently in the Deploy Confirmation modal, above the action list, before the user clicks "Confirm Deploy". Previously these warnings were silently dropped after being logged to the activity log only.
+
+### Improvements
+- **Refresh failure diagnostics** — When a Fabric refresh fails, the error details (`serviceExceptionJson`) returned by the Fabric API are now:
+  - Shown **expanded by default** in the Refresh panel (no longer hidden behind a collapsed `<details>` toggle), so the user immediately sees the cause (e.g. "Column 'Version' does not exist in table 'Dim_Snapshot'").
+  - Falls back to a clear message directing the user to the Fabric portal when no error detail is available.
+- **Activity log captures refresh errors** — `refresh-status` log entries now include `serviceExceptionJson` (top-level) and `objectErrors[]` (per-table) when a refresh fails, making `activity.jsonl` directly useful for post-mortem diagnosis without opening the Fabric portal.
+- **Pre-deploy relationship ordering check** — The validator detects when a selected relationship (add or modify) has unselected structural changes pending on its endpoint tables (partition expression changes, column adds/removes). Emits a `RELATIONSHIP_PENDING_TABLE_CHANGES` warning with the specific table and change names, explaining that Fabric may reject the deployment with "missing options" until those table changes are deployed and refreshed first.
+
+### Bug Fixes
+- **Relationship changes incorrectly triggering data refresh** — Added (`type=0`) and modified (`type=2`) relationships are pure metadata changes and do not require a data refresh. Only relationship removals (`type=1`) need cascade-aware refresh. Engine now correctly skips `requiresRefresh` for add/modify relationship diffs.
+
+### Architecture
+- `deployment/validator.js` — New check `RELATIONSHIP_PENDING_TABLE_CHANGES` (section 5); signature extended with `allDiffs` parameter.
+- `deployment/deployer.js` — Passes `allDiffs` from comparison result to `validateDependencies`.
+- `server.js` — `logEvent('refresh-status')` now includes error details on failure; `/api/fabric/refresh/status/:requestId` response includes `topLevelError` field.
+- `lib/refresh-store.js` — `updateRefreshRecord()` captures top-level `serviceExceptionJson` from Fabric API response.
+- `public/js/app.js` — Deploy preview renders warnings/errors inline; Refresh panel error block opened by default; `handleManualCalculate()` added; `updateRefreshButton()` disables calculate button during active refresh.
+- `public/index.html` — "🔄 Recalculate" button added to Refresh modal footer.
+
+---
+
 ## v4.3.1
 
 ### New Features

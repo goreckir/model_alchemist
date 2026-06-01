@@ -118,7 +118,7 @@ app.post('/api/deploy', async (req, res) => {
 
         if (lastProdPath) {
             // Local deployment — use filesystem deployer
-            const result = deployChanges(selectedDiffs, lastDevModel, lastProdPath, { dryRun, backup, backupPath, prodModel: lastProdModel });
+            const result = deployChanges(selectedDiffs, lastDevModel, lastProdPath, { dryRun, backup, backupPath, prodModel: lastProdModel, allDiffs: lastComparison.diffs });
             logEvent('deploy', {
                 mode: 'local',
                 dryRun,
@@ -136,7 +136,7 @@ app.post('/api/deploy', async (req, res) => {
             res.json(result);
         } else {
             // Fabric deployment — apply changes via temp dir, then upload
-            const result = await deployToFabric(selectedDiffs, lastDevModel, lastProdModel, lastProdFabricInfo, { dryRun, backup, backupPath });
+            const result = await deployToFabric(selectedDiffs, lastDevModel, lastProdModel, lastProdFabricInfo, { dryRun, backup, backupPath, allDiffs: lastComparison.diffs });
             logEvent('deploy', {
                 mode: 'fabric',
                 dryRun,
@@ -174,10 +174,10 @@ app.post('/api/deploy/preview', async (req, res) => {
     try {
         const selectedDiffs = lastComparison.diffs.filter(d => selectedKeys.includes(d.identityKey));
         if (lastProdPath) {
-            const result = deployChanges(selectedDiffs, lastDevModel, lastProdPath, { dryRun: true, backup: false, prodModel: lastProdModel });
+            const result = deployChanges(selectedDiffs, lastDevModel, lastProdPath, { dryRun: true, backup: false, prodModel: lastProdModel, allDiffs: lastComparison.diffs });
             res.json(result);
         } else {
-            const result = await deployToFabric(selectedDiffs, lastDevModel, lastProdModel, lastProdFabricInfo, { dryRun: true });
+            const result = await deployToFabric(selectedDiffs, lastDevModel, lastProdModel, lastProdFabricInfo, { dryRun: true, allDiffs: lastComparison.diffs });
             res.json(result);
         }
     } catch (err) {
@@ -226,7 +226,7 @@ async function deployToFabric(selectedDiffs, devModel, prodModel, fabricInfo, op
         }
 
         // Run deployer against temp dir (no backup for Fabric)
-        const deployResult = deployChanges(selectedDiffs, devModel, tmpDir, { dryRun, backup: false, prodModel });
+        const deployResult = deployChanges(selectedDiffs, devModel, tmpDir, { dryRun, backup: false, prodModel, allDiffs: options.allDiffs || [] });
 
         if (!deployResult.success) {
             return deployResult;
@@ -666,13 +666,26 @@ app.get('/api/fabric/refresh/status/:requestId', async (req, res) => {
         // Update the session record with full status (including objects array)
         const record = refreshStore.updateRefreshRecord(requestId, apiStatus);
 
-        logEvent('refresh-status', {
+        const refreshLogPayload = {
             requestId,
             target: `workspace:${workspaceId}/model:${semanticModelId}`,
             status: apiStatus.status || null,
             startTime: apiStatus.startTime || null,
             endTime: apiStatus.endTime || null
-        });
+        };
+        // On failure, include error details so the activity log is diagnostic
+        if (apiStatus.status === 'Failed') {
+            if (apiStatus.serviceExceptionJson) {
+                refreshLogPayload.serviceExceptionJson = apiStatus.serviceExceptionJson;
+            }
+            const objErrors = (apiStatus.objects || [])
+                .filter(o => o.serviceExceptionJson)
+                .map(o => ({ table: o.table, partition: o.partition || o.table, error: o.serviceExceptionJson }));
+            if (objErrors.length > 0) {
+                refreshLogPayload.objectErrors = objErrors;
+            }
+        }
+        logEvent('refresh-status', refreshLogPayload);
 
         // Auto-trigger post-calculate when dataOnly refresh completes successfully
         let postCalculateInfo = null;
@@ -723,6 +736,7 @@ app.get('/api/fabric/refresh/status/:requestId', async (req, res) => {
         res.json({
             ...apiStatus,
             trackedObjects: record ? record.objects : [],
+            topLevelError: record ? (record.serviceExceptionJson || null) : (apiStatus.serviceExceptionJson || null),
             requestedTables: record ? record.requestedTables : [],
             postCalculate: postCalculateInfo
         });

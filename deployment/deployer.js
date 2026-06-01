@@ -47,7 +47,7 @@ function deployChanges(selectedDiffs, devModel, prodPath, options = {}) {
     let cascadeRels = [];
     try {
         const prodModel = options.prodModel || loadModelFromFolder(prodPath);
-        const validation = validateDependencies(selectedDiffs, devModel, prodModel);
+        const validation = validateDependencies(selectedDiffs, devModel, prodModel, options.allDiffs || []);
         result.warnings = validation.warnings;
         cascadeRels = validation.cascadeRels || [];
         if (validation.errors.length > 0) {
