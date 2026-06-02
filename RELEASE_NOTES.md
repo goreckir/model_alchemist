@@ -1,5 +1,27 @@
 # Model Alchemist — Release Notes
 
+## v4.5.1
+
+### Bug Fixes
+- **Perspective comparison not detecting measure/column/hierarchy changes** — Fixed a bug where modifying the list of measures, columns, or hierarchies within a perspective was not detected as a change during model comparison. The comparison engine now correctly extracts and compares `includedMeasures`, `includedColumns`, and `includedHierarchies` for each perspective, ensuring that renaming or removing measures referenced by a perspective triggers a "Modified" diff. This resolves deployment errors like "Property Measure of object 'perspective measure' refers to an object which cannot be found" when measures are renamed or removed without updating the perspective.
+
+### Architecture
+- `comparison/extractor.js` — `extractPerspective()` now recursively extracts `perspectiveMeasure`, `perspectiveColumn`, and `perspectiveHierarchy` children from each `perspectiveTable`, storing them as comma-separated lists in the object's properties for comparison.
+
+---
+
+## v4.5.0
+
+### New Features
+- **start.bat launcher** — Added `start.bat` file for one-click server start from Windows Explorer. Double-click the file to launch the server in a persistent console window with UTF-8 support and emoji in the title bar (⚗️ Model Alchemist). Close the window to stop the server.
+- **VS Code F5 launch configuration** — Added `.vscode/launch.json` with two debug configurations: "Start Model Alchemist" (normal mode) and "Start Model Alchemist (watch)" (auto-restart on file changes). Press F5 in VS Code to start the server with integrated debugging support.
+
+### Improvements
+- **Enhanced README "Running" section** — Updated documentation now describes three launch methods: F5 in VS Code, double-click `start.bat`, or `npm start` in terminal. Added clarification that port 3001 is the default, with automatic fallback to 3002, 3003, etc. if the port is busy. The actual URL is always printed in the terminal on startup.
+- **Removed redundant Environment Variables section** — Eliminated the `PORT` variable documentation table (now covered inline in the Running section).
+
+---
+
 ## v4.4.0
 
 ### New Features

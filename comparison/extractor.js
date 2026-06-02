@@ -400,9 +400,26 @@ function extractExpression(expr, objects) {
 function extractPerspective(persp, objects) {
     const key = `perspective:${persp.name}`;
     const tables = [];
+    const measures = [];
+    const columns = [];
+    const hierarchies = [];
+    
     for (const child of persp.children || []) {
-        if (child.type === 'perspectivetable') tables.push(child.name);
+        if (child.type === 'perspectivetable') {
+            tables.push(child.name);
+            // Extract measures, columns, hierarchies from this perspective table
+            for (const tableChild of child.children || []) {
+                if (tableChild.type === 'perspectivemeasure') {
+                    measures.push(`${child.name}.${tableChild.name}`);
+                } else if (tableChild.type === 'perspectivecolumn') {
+                    columns.push(`${child.name}.${tableChild.name}`);
+                } else if (tableChild.type === 'perspectivehierarchy') {
+                    hierarchies.push(`${child.name}.${tableChild.name}`);
+                }
+            }
+        }
     }
+    
     objects[key] = {
         objectType: 'perspective',
         identityKey: key,
@@ -410,7 +427,13 @@ function extractPerspective(persp, objects) {
         changeGroup: CHANGE_GROUPS.PERSPECTIVES,
         sourceFile: persp.file,
         rawBlock: persp.rawBlock,
-        properties: { description: persp.properties.description || '', includedTables: tables.join(', ') }
+        properties: {
+            description: persp.properties.description || '',
+            includedTables: tables.join(', '),
+            includedMeasures: measures.join(', '),
+            includedColumns: columns.join(', '),
+            includedHierarchies: hierarchies.join(', ')
+        }
     };
 }
 
