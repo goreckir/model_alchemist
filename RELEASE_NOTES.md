@@ -1,5 +1,15 @@
 # Model Alchemist — Release Notes
 
+## v4.5.1
+
+### Bug Fixes
+- **Perspective comparison not detecting measure/column/hierarchy changes** — Fixed a bug where modifying the list of measures, columns, or hierarchies within a perspective was not detected as a change during model comparison. The comparison engine now correctly extracts and compares `includedMeasures`, `includedColumns`, and `includedHierarchies` for each perspective, ensuring that renaming or removing measures referenced by a perspective triggers a "Modified" diff. This resolves deployment errors like "Property Measure of object 'perspective measure' refers to an object which cannot be found" when measures are renamed or removed without updating the perspective.
+
+### Architecture
+- `comparison/extractor.js` — `extractPerspective()` now recursively extracts `perspectiveMeasure`, `perspectiveColumn`, and `perspectiveHierarchy` children from each `perspectiveTable`, storing them as comma-separated lists in the object's properties for comparison.
+
+---
+
 ## v4.5.0
 
 ### New Features
