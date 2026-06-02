@@ -420,6 +420,12 @@ function extractPerspective(persp, objects) {
         }
     }
     
+    // Sort lists to ensure consistent comparison (order may differ between environments)
+    tables.sort();
+    measures.sort();
+    columns.sort();
+    hierarchies.sort();
+    
     objects[key] = {
         objectType: 'perspective',
         identityKey: key,
