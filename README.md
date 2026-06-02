@@ -1,4 +1,4 @@
-# Model Alchemist v4.4
+# Model Alchemist v4.5
 
 A tool for comparing and deploying changes in Power BI semantic models (TMDL/PBIP format) — locally or via Microsoft Fabric REST API.
 
