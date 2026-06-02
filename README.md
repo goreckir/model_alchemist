@@ -41,6 +41,16 @@ npm install
 
 ## Running
 
+**Option 1 — VS Code (F5)**
+
+Open this workspace in VS Code, then press `F5` (or go to **Run → Start Debugging**) and pick **"Start Model Alchemist"**. The server starts in the integrated terminal. Use **"Start Model Alchemist (watch)"** for auto-restart on file changes.
+
+**Option 2 — Windows Explorer**
+
+Double-click `start.bat` in the `model_alchemist/` folder. A console window opens and keeps the server running.
+
+**Option 3 — terminal**
+
 ```bash
 npm start
 ```
@@ -51,7 +61,7 @@ Or with auto-restart on changes:
 npm run dev
 ```
 
-The app will start at **http://localhost:3001**.
+The app will start at **http://localhost:3001** (default). If port 3001 is already in use, the server automatically tries the next available port (3002, 3003, …). The actual URL is printed in the terminal output on startup.
 
 ## Usage
 
@@ -98,12 +108,6 @@ model_alchemist/
     ├── model-loader.js    # Converts Fabric TMDL to internal format
     └── connection-parser.js  # Parses Power BI connection strings
 ```
-
-## Environment Variables
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `PORT` | HTTP server port | `3001` |
 
 ## License
 
