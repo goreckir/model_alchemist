@@ -1,5 +1,15 @@
 # Model Alchemist — Release Notes
 
+## v4.5.2
+
+### Bug Fixes
+- **Perspective comparison false positives due to item ordering** — Fixed a bug where perspective comparisons reported false differences when measures, columns, or hierarchies were listed in a different order between DEV and Fabric, even though the actual content was identical. The extractor now sorts `includedMeasures`, `includedColumns`, `includedHierarchies`, and `includedTables` lists alphabetically before comparison, eliminating false positives caused by differing item order. This resolves the issue where deployments succeeded but the comparison view continued to show perspective changes.
+
+### Architecture
+- `comparison/extractor.js` — `extractPerspective()` now applies `.sort()` to tables, measures, columns, and hierarchies arrays before joining them into comma-separated strings for comparison.
+
+---
+
 ## v4.5.1
 
 ### Bug Fixes
