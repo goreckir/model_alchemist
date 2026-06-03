@@ -260,7 +260,55 @@ async function deployToFabric(selectedDiffs, devModel, prodModel, fabricInfo, op
         }
     } catch (err) {
         result.success = false;
-        result.errors.push({ operation: { action: 'fabric-upload' }, error: err.message });
+        
+        // Check if error is related to relationship deployment
+        const relChanges = selectedDiffs.filter(d => d.objectType === 'relationship');
+        const hasCardinalityChanges = selectedDiffs.some(d => 
+            d.objectType === 'relationship' && d.cardinalityChange && d.cardinalityChange.requiresDataValidation
+        );
+        
+        let errorMessage = err.message;
+        
+        // Add helpful context for relationship errors
+        if (relChanges.length > 0 && (
+            errorMessage.includes('missing options') ||
+            errorMessage.includes('cardinality') ||
+            errorMessage.includes('duplicate') ||
+            errorMessage.includes('uniqueness')
+        )) {
+            errorMessage += '\n\n⚠️ RELATIONSHIP DEPLOYMENT FAILED\n\n';
+            
+            if (hasCardinalityChanges) {
+                errorMessage += 'Cardinality change detected. Common causes:\n';
+                errorMessage += '1. Key column contains duplicates (on the "one" side of the relationship)\n';
+                errorMessage += '2. Table data does not meet cardinality requirements\n';
+                errorMessage += '3. Table needs refresh before relationship change\n\n';
+            }
+            
+            errorMessage += '📋 SOLUTION:\n';
+            errorMessage += '1. Refresh data in tables participating in the relationship\n';
+            errorMessage += '2. Check that key columns do not have duplicates:\n';
+            
+            for (const rel of relChanges) {
+                if (rel.cardinalityChange) {
+                    const toType = rel.cardinalityChange.to;
+                    errorMessage += `   - Relationship: ${rel.displayName}\n`;
+                    errorMessage += `   - Change: ${rel.cardinalityChange.from} → ${toType}\n`;
+                    
+                    if (toType.includes('many-to-one')) {
+                        errorMessage += `   - Check: toColumn must be unique (no duplicates)\n`;
+                    } else if (toType.includes('one-to-many')) {
+                        errorMessage += `   - Check: fromColumn must be unique (no duplicates)\n`;
+                    } else if (toType.includes('one-to-one')) {
+                        errorMessage += `   - Check: both columns must be unique (no duplicates)\n`;
+                    }
+                }
+            }
+            
+            errorMessage += '3. After refreshing data - retry deployment\n';
+        }
+        
+        result.errors.push({ operation: { action: 'fabric-upload' }, error: errorMessage });
     } finally {
         // Cleanup temp dir
         try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* ignore */ }

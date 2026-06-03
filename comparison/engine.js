@@ -1,6 +1,8 @@
 /**
  * Comparison Engine v2 — Core algorithm (F3 from spec).
- * Enhanced: each diff carries sourceFile and rawBlock info for deployment.
+ * Enhanced: 
+ * - Each diff carries sourceFile and rawBlock info for deployment.
+ * - Detects relationship cardinality changes and flags them for data validation warnings.
  */
 
 const { extractAll, CHANGE_GROUPS } = require('./extractor');
@@ -62,7 +64,7 @@ function compareModels(devModel, prodModel, devPath, prodPath) {
 
         const propertyDiffs = computePropertyDiffs(devObj.properties, prodObj.properties);
         if (propertyDiffs.length > 0) {
-            diffs.push({
+            const diff = {
                 type: 2,
                 objectType: devObj.objectType,
                 identityKey: key,
@@ -76,7 +78,28 @@ function compareModels(devModel, prodModel, devPath, prodPath) {
                 // to locate the existing block during replace/remove (DEV's GUID differs).
                 targetRelName: prodObj.relName,
                 propertyDiffs
-            });
+            };
+
+            // Detect cardinality changes in relationships
+            if (devObj.objectType === 'relationship') {
+                const devFromCard = devObj.properties.fromCardinality || 'many';
+                const devToCard = devObj.properties.toCardinality || 'one';
+                const prodFromCard = prodObj.properties.fromCardinality || 'many';
+                const prodToCard = prodObj.properties.toCardinality || 'one';
+                
+                const devType = `${devFromCard}-to-${devToCard}`;
+                const prodType = `${prodFromCard}-to-${prodToCard}`;
+                
+                if (devType !== prodType) {
+                    diff.cardinalityChange = {
+                        from: prodType,
+                        to: devType,
+                        requiresDataValidation: devToCard === 'one' || devFromCard === 'one'
+                    };
+                }
+            }
+
+            diffs.push(diff);
         }
     }
 

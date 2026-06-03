@@ -1,5 +1,20 @@
 # Model Alchemist — Release Notes
 
+## v4.6.0
+
+### New Features
+- **Relationship cardinality change warnings** — Model Alchemist now detects changes in relationship cardinality (e.g. many-to-many → many-to-one) and displays comprehensive warnings before deployment. When changing to a more restrictive cardinality (any relationship ending with "to-one"), the system warns users to verify that key columns don't contain duplicates, as Fabric will block deployment if data integrity requirements aren't met. If deployment fails, an enhanced error message provides step-by-step troubleshooting instructions, including which specific columns need to be unique and a reminder to refresh table data before retrying.
+
+### Improvements
+- **Contextual relationship deployment errors** — When a relationship deployment fails in Fabric, the error message now includes intelligent context detection. For cardinality changes, the system explains common causes (duplicate keys, stale data) and provides actionable resolution steps specific to the relationship type (many-to-one, one-to-many, or one-to-one). This eliminates the need for users to manually diagnose cryptic Fabric API errors like "missing options".
+
+### Architecture
+- `comparison/engine.js` — Modified diff detection now includes `cardinalityChange` metadata for relationships, capturing the transition (e.g. "many-to-many → many-to-one") and flagging whether data validation is required.
+- `deployment/deployer.js` — Added pre-deployment check for cardinality changes requiring data validation; emits detailed warnings with integrity requirements for each relationship type.
+- `server.js` — Enhanced Fabric deployment error handler detects relationship-related failures and appends troubleshooting guidance referencing the specific relationship and required unique columns.
+
+---
+
 ## v4.5.2
 
 ### Bug Fixes

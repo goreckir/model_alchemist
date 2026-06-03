@@ -9,6 +9,7 @@
  * - Adding/removing/modifying expressions (manipulate expressions.tmdl)
  * - Adding/removing roles, perspectives, cultures (copy/delete files)
  * - Backup before deployment
+ * - Cardinality change validation warnings for relationships
  */
 
 const fs = require('fs');
@@ -66,6 +67,30 @@ function deployChanges(selectedDiffs, devModel, prodPath, options = {}) {
             code: 'VALIDATION_SKIPPED',
             message: `Walidacja zaleznosci pominieta: ${validationErr.message}`
         });
+    }
+
+    // Check for relationship cardinality changes that require data validation
+    const cardinalityChanges = selectedDiffs.filter(d => 
+        d.objectType === 'relationship' && d.cardinalityChange && d.cardinalityChange.requiresDataValidation
+    );
+    
+    if (cardinalityChanges.length > 0) {
+        for (const relChange of cardinalityChanges) {
+            const fromType = relChange.cardinalityChange.from;
+            const toType = relChange.cardinalityChange.to;
+            const relName = relChange.displayName;
+            
+            result.warnings.push({
+                code: 'RELATIONSHIP_CARDINALITY_CHANGE',
+                message: `WARNING: Changing relationship cardinality "${relName}" from ${fromType} to ${toType}.\n` +
+                         `Ensure that key columns in tables do not contain duplicates:\n` +
+                         `- For many-to-one: the "one" side column (toColumn) must not have duplicates\n` +
+                         `- For one-to-many: the "one" side column (fromColumn) must not have duplicates\n` +
+                         `- For one-to-one: both columns must be unique\n` +
+                         `Fabric will block deployment if data does not meet cardinality requirements.\n` +
+                         `If deployment fails - refresh table data and try again.`
+            });
+        }
     }
 
     // Create backup if requested
