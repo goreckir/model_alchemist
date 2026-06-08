@@ -3,7 +3,7 @@
     "name":  "Model Alchemist",
     "description":  "Compare and deploy Power BI semantic model changes",
     "path":  "C:\\WINDOWS\\System32\\cmd.exe",
-    "arguments":  "/c \"D:\\__PRIV\\model_alchemist\\start.bat\"",
+    "arguments":  "/c \"D:\\model_alchemist\\start.bat\"",
     "iconData": "image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAG6SURBVHhe7ZBbagQxDARz/0sn7EcgFNbDGj2cwQX1M2pLvfv1dblcLpdLN9+Kr4c/WPN18Ad6fQX8UREJ51JuHBaMurPzKFguqrTP+j4KS3mVsHLWvB0W2nGFlbHmrbBMRKLNPljvW2GZiOTpvA0WeaK11zNrh0We+GTvCCyRYWT3CCyRZeRGOTx4iqXw2ImWwUOnWgKPnGw6PLCjB77JMBUu95oBd3pNg4t3lN4Tzq33XlPg0h0z4M4dU+BSj8Saf7AynHtMgUstCec7Es4t0+BiTcL5joRzzVS4XFOD2ZUazGqmwwOSK5jxuIIZyRJ4RNOC+egbyVJ4TDMD7vRYDg9KZsCdHtthAamINFt9+4U7/2b5TdtTCgtoRZh5kuV3zttggawy3MW9/JZxMwQL0AjcQbVMOyxAd+F7auXaYQFJD3yz0sqOwBJVem6OwSIVeu6NwBKVWjfbYYEOPXdb4NHTLIXHTrQMHupWwpt7BI9MqOHNhWGZKSU8mTAsMamEJxOCBSbV8Oa2YYlpJTyZECwwqYY3twULTKvhzW3BAico4clsw+PTanhz/w7+CR5fB3+g5uVyuaj8AEZfVAEFtBJxAAAAAElFTkSuQmCC"
 }
 
