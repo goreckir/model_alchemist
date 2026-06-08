@@ -82,7 +82,7 @@ To run Model Alchemist directly from **Power BI Desktop** as an External Tool:
 Example:
 
 ```json
-"arguments": "/c \"D:\\__PRIV\\model_alchemist\\start.bat\""
+"arguments": "/c \"D:\\model_alchemist\\start.bat\""
 ```
 
 3. Save the file.

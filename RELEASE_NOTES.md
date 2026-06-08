@@ -1,5 +1,15 @@
 # Model Alchemist — Release Notes
 
+## v4.6.2
+
+### Improvements
+- **Fabric source swap support** — The ⇅ swap button now fully supports exchanging Fabric sources (connection strings, verification status, and active tabs) in addition to local paths. Users can now swap Source↔Target for any combination: Local↔Local, Fabric↔Fabric, and Local↔Fabric.
+
+### Architecture
+- `public/js/app.js` — Extended `swapModels()` function to exchange Fabric connection strings, Fabric status messages (including CSS classes), trigger tab switching via `switchSourceTab()`, and persist Fabric connection strings to localStorage.
+
+---
+
 ## v4.6.1
 
 ### New Features
