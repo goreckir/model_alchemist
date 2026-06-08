@@ -72,6 +72,32 @@ The app will start at **http://localhost:3001** (default). If port 3001 is alrea
 5. **Select changes to deploy** — use checkboxes next to each diff. "Select All Visible" checks all.
 6. **Click "Deploy"** — preview planned operations, confirm, and deploy to Target.
 
+## Power BI External Tool Setup
+
+To run Model Alchemist directly from **Power BI Desktop** as an External Tool:
+
+1. Open [pbitool/model-alchemist.pbitool.json](pbitool/model-alchemist.pbitool.json).
+2. Update the `arguments` value so it points to your local `start.bat` path.
+
+Example:
+
+```json
+"arguments": "/c \"D:\\__PRIV\\model_alchemist\\start.bat\""
+```
+
+3. Save the file.
+4. Copy `model-alchemist.pbitool.json` to the Power BI External Tools folder (run as Administrator if needed):
+
+```text
+C:\Program Files (x86)\Common Files\Microsoft Shared\Power BI Desktop\External Tools\
+```
+
+5. Restart Power BI Desktop. You should see **Model Alchemist** on the **External Tools** ribbon.
+
+Notes:
+- If your repository is in a different folder, only the path inside `arguments` must be changed.
+- The `path` field can stay as `C:\\WINDOWS\\System32\\cmd.exe`.
+
 ### Fabric Connection
 
 1. Click the **Fabric** button in the header to sign in with your Microsoft account (browser popup).

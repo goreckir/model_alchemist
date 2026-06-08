@@ -1,5 +1,20 @@
 # Model Alchemist — Release Notes
 
+## v4.6.1
+
+### New Features
+- **Power BI External Tool onboarding** — Added user documentation for launching Model Alchemist directly from Power BI Desktop via External Tools integration.
+
+### Improvements
+- **Setup instructions for `.pbitool.json`** — Documented how to adjust the `arguments` path to local `start.bat` location before use.
+- **External Tools deployment step** — Added clear copy step for placing `model-alchemist.pbitool.json` in Power BI Desktop External Tools directory.
+
+### Architecture
+- `README.md` — Added new "Power BI External Tool Setup" section with step-by-step configuration guidance.
+- `pbitool/model-alchemist.pbitool.json` — Added External Tool manifest file to repository.
+
+---
+
 ## v4.6.0
 
 ### New Features
