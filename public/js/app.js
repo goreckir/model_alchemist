@@ -1642,11 +1642,34 @@
         devFabricSelection = { ...prodFabricSelection };
         prodFabricSelection = tmpFabric;
 
+        // Swap Fabric connection strings
+        const devConnInput = document.getElementById('dev-conn-string');
+        const prodConnInput = document.getElementById('prod-conn-string');
+        const tmpConn = devConnInput.value;
+        devConnInput.value = prodConnInput.value;
+        prodConnInput.value = tmpConn;
+
+        // Swap Fabric status messages
+        const devStatus = document.getElementById('fabric-status-dev');
+        const prodStatus = document.getElementById('fabric-status-prod');
+        const tmpStatus = devStatus.textContent;
+        const tmpStatusClass = devStatus.className;
+        devStatus.textContent = prodStatus.textContent;
+        devStatus.className = prodStatus.className;
+        prodStatus.textContent = tmpStatus;
+        prodStatus.className = tmpStatusClass;
+
+        // Update visible tabs to reflect swapped modes
+        switchSourceTab('dev', devSourceMode);
+        switchSourceTab('prod', prodSourceMode);
+
         // Persist
         localStorage.setItem('ma_devPath', devPath);
         localStorage.setItem('ma_prodPath', prodPath);
         localStorage.setItem('ma_devFile', devPathInput.value);
         localStorage.setItem('ma_prodFile', prodPathInput.value);
+        localStorage.setItem('ma_fabric_dev_connStr', devConnInput.value);
+        localStorage.setItem('ma_fabric_prod_connStr', prodConnInput.value);
     }
 
     // ===== Fabric Integration =====
