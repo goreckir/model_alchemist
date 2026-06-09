@@ -1,5 +1,16 @@
 # Model Alchemist — Release Notes
 
+## v4.6.3
+
+### Improvements
+- **Terminology update** — Replaced "DEV" with "Source" and "PROD" with "Target" in all user-facing messages for clarity and consistency. This includes error messages, deployment modals, activity logs, and export formats (CSV, Markdown, HTML).
+
+### Architecture
+- `public/js/app.js` — Updated all user-visible strings: validation errors, deployment confirmations, export headers, and activity log labels.
+- `public/index.html` — Updated deployment modal title from "Deploy Changes to PROD" to "Deploy Changes to TARGET".
+
+---
+
 ## v4.6.2
 
 ### Improvements

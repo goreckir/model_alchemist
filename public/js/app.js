@@ -185,15 +185,15 @@
 
         // Validate inputs
         if (devIsLocal && !devPath) {
-            showError('Please select a DEV model file.');
+            showError('Please select a SOURCE model file.');
             return;
         }
         if (!devIsLocal && !fabricConnected) {
-            showError('Sign in to Fabric first (DEV source).');
+            showError('Sign in to Fabric first (SOURCE).');
             return;
         }
         if (!prodIsLocal && !fabricConnected) {
-            showError('Sign in to Fabric first (PROD source).');
+            showError('Sign in to Fabric first (TARGET).');
             return;
         }
 
@@ -212,17 +212,17 @@
             }
             // Check again after auto-verify
             if (!devIsLocal && !devFabricSelection.semanticModelId) {
-                showError('Cannot verify DEV Fabric access. Check connection string.');
+                showError('Cannot verify SOURCE Fabric access. Check connection string.');
                 return;
             }
             if (!prodIsLocal && !prodFabricSelection.semanticModelId) {
-                showError('Cannot verify PROD Fabric access. Check connection string.');
+                showError('Cannot verify TARGET Fabric access. Check connection string.');
                 return;
             }
         }
 
         if (prodIsLocal && !prodPath) {
-            showError('Please select a PROD model file.');
+            showError('Please select a TARGET model file.');
             return;
         }
 
@@ -794,7 +794,7 @@
             : prodPathInput.value;
 
         deploySummary.innerHTML = `
-            <p>Deploying <span class="count-highlight">${selectedDiffs.length}</span> changes to PROD:</p>
+            <p>Deploying <span class="count-highlight">${selectedDiffs.length}</span> changes to TARGET:</p>
             <p style="margin-left: 16px;">
                 ${added ? `<span class="badge-count badge-added">${added} to add</span> ` : ''}
                 ${removed ? `<span class="badge-count badge-removed">${removed} to remove</span> ` : ''}
@@ -1454,8 +1454,8 @@
         let summary = '';
         if (e.event === 'compare') {
             summary = `mode=${e.mode || '?'} diffs=${e.diffCount ?? '?'} groups=${e.groupCount ?? '?'}`;
-            if (e.devSource) summary += ` · dev=${e.devSource}`;
-            if (e.prodSource) summary += ` · prod=${e.prodSource}`;
+            if (e.devSource) summary += ` · source=${e.devSource}`;
+            if (e.prodSource) summary += ` · target=${e.prodSource}`;
         } else if (e.event === 'deploy') {
             summary = `mode=${e.mode || '?'} dryRun=${e.dryRun ? 'yes' : 'no'} selected=${e.selectedCount ?? '?'} applied=${e.actionsExecuted ?? '?'} errors=${e.errorCount ?? 0}`;
             if (e.target) summary += ` · target=${e.target}`;
@@ -1953,7 +1953,7 @@
             // Part 2: Details
             rows.push([]);
             rows.push(['=== DETAILS ===']);
-            rows.push(['Object', 'Change Type', 'Property', 'DEV Value', 'PROD Value']);
+            rows.push(['Object', 'Change Type', 'Property', 'SOURCE Value', 'TARGET Value']);
             for (const d of diffs) {
                 const props = d.propertyDiffs || [];
                 if (props.length === 0) {
@@ -1977,8 +1977,8 @@
             // Part 1: Summary
             let md = `# Model Comparison Report: ${modelName}\n\n`;
             md += `**Date:** ${new Date().toLocaleString()}\n\n`;
-            md += `**DEV:** ${devSource}\n\n`;
-            md += `**PROD:** ${prodSource}\n\n`;
+            md += `**SOURCE:** ${devSource}\n\n`;
+            md += `**TARGET:** ${prodSource}\n\n`;
             md += `**Total differences:** ${diffs.length}\n\n`;
             md += `## Summary\n\n`;
             md += `| # | Group | Type | Object | Name |\n`;
@@ -2000,7 +2000,7 @@
 
                     // Simple properties as side-by-side table
                     if (simpleProps.length > 0) {
-                        md += `| Property | Source (DEV) | Target (PROD) |\n`;
+                        md += `| Property | Source | Target |\n`;
                         md += `|----------|-------------|---------------|\n`;
                         for (const p of simpleProps) {
                             const devStr = p.devValue != null ? String(p.devValue).replace(/\|/g, '\\|') : '\u2014';
@@ -2015,10 +2015,10 @@
                     for (const p of codeProps) {
                         md += `**${p.propertyName}**\n\n`;
                         if (p.devValue != null) {
-                            md += `Source (DEV):\n\`\`\`\n${stripFence(p.devValue)}\n\`\`\`\n\n`;
+                            md += `Source:\n\`\`\`\n${stripFence(p.devValue)}\n\`\`\`\n\n`;
                         }
                         if (p.prodValue != null) {
-                            md += `Target (PROD):\n\`\`\`\n${stripFence(p.prodValue)}\n\`\`\`\n\n`;
+                            md += `Target:\n\`\`\`\n${stripFence(p.prodValue)}\n\`\`\`\n\n`;
                         }
                     }
                 }
@@ -2059,8 +2059,8 @@ tr:hover { background: #2a2a3e; }
 </style></head><body>
 <h1>Model Comparison: ${escapeHtml(modelName)}</h1>
 <p><strong>Date:</strong> ${new Date().toLocaleString()}</p>
-<p><strong>DEV:</strong> ${escapeHtml(devSource)}</p>
-<p><strong>PROD:</strong> ${escapeHtml(prodSource)}</p>
+<p><strong>SOURCE:</strong> ${escapeHtml(devSource)}</p>
+<p><strong>TARGET:</strong> ${escapeHtml(prodSource)}</p>
 <div class="summary">
 <span class="badge badge-added">${diffs.filter(d => d.type === 0).length} Added</span>
 <span class="badge badge-removed">${diffs.filter(d => d.type === 1).length} Removed</span>
@@ -2087,12 +2087,12 @@ tr:hover { background: #2a2a3e; }
                     for (const p of props) {
                         html += `<div class="prop-name">${escapeHtml(p.propertyName)}</div>`;
                         html += `<div class="prop-row">`;
-                        html += `<div class="prop-col"><div class="prop-col-header">Source (DEV)</div>`;
+                        html += `<div class="prop-col"><div class="prop-col-header">Source</div>`;
                         html += p.devValue != null
                             ? `<div class="prop-value source">${escapeHtml(String(p.devValue))}</div>`
                             : `<div class="prop-value empty">—</div>`;
                         html += `</div>`;
-                        html += `<div class="prop-col"><div class="prop-col-header">Target (PROD)</div>`;
+                        html += `<div class="prop-col"><div class="prop-col-header">Target</div>`;
                         html += p.prodValue != null
                             ? `<div class="prop-value target">${escapeHtml(String(p.prodValue))}</div>`
                             : `<div class="prop-value empty">—</div>`;
