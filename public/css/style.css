@@ -327,6 +327,57 @@ body {
 .diff-object.modified .diff-prop-left { background: rgba(26, 61, 26, 0.4); color: var(--color-added-text); }
 .diff-object.modified .diff-prop-right { background: rgba(61, 26, 26, 0.4); color: var(--color-removed-text); }
 
+/* ===== Inline diff highlighting (word-level, within a value) ===== */
+.diff-inline-added {
+    background: rgba(125, 223, 125, 0.28);
+    box-shadow: inset 0 0 0 1px rgba(125, 223, 125, 0.25);
+    border-radius: 2px;
+}
+.diff-inline-removed {
+    background: rgba(223, 125, 125, 0.28);
+    box-shadow: inset 0 0 0 1px rgba(223, 125, 125, 0.25);
+    border-radius: 2px;
+}
+
+/* ===== Multiline property diff (line-level, git style) ===== */
+.diff-prop-block { border-top: 1px solid rgba(58, 58, 80, 0.5); }
+.diff-prop-block-header {
+    display: grid; grid-template-columns: 36px 1fr;
+    background: rgba(22, 22, 30, 0.6);
+    border-bottom: 1px solid rgba(58, 58, 80, 0.5);
+}
+.diff-prop-block-title {
+    display: flex; align-items: center; gap: 10px;
+    padding: 4px 16px 4px 20px; font-family: var(--font-mono); font-size: 11px;
+}
+.diff-change-count { color: var(--color-modified-text); font-size: 11px; }
+.diff-toggle-full {
+    margin-left: auto; padding: 2px 8px; font-size: 11px;
+    background: transparent; border: 1px solid var(--color-border); border-radius: 4px;
+    color: var(--color-text-dim); cursor: pointer; transition: all 0.15s;
+}
+.diff-toggle-full:hover { background: var(--color-surface-hover); color: var(--color-text); }
+
+.diff-line-row { display: grid; grid-template-columns: 36px 1fr 1fr; }
+.diff-line {
+    padding: 1px 16px 1px 20px; font-family: var(--font-mono); font-size: 12px;
+    white-space: pre-wrap; word-break: break-all; line-height: 1.5; min-height: 20px;
+    color: var(--color-text-dim);
+}
+.diff-line-right { border-left: 1px solid var(--color-border); }
+.diff-object.modified .diff-line-left.chg-add { background: rgba(26, 61, 26, 0.55); color: var(--color-added-text); }
+.diff-object.modified .diff-line-right.chg-del { background: rgba(61, 26, 26, 0.55); color: var(--color-removed-text); }
+.diff-line.empty { background: rgba(30, 30, 46, 0.4); }
+
+.diff-line-row.skip .diff-line-skip {
+    grid-column: 2 / 4; padding: 2px 20px; font-size: 11px;
+    color: var(--color-text-dim); font-family: var(--font-mono);
+    background: rgba(22, 22, 30, 0.4); text-align: center; cursor: pointer;
+    border-top: 1px dashed rgba(58, 58, 80, 0.6);
+    border-bottom: 1px dashed rgba(58, 58, 80, 0.6);
+}
+.diff-line-row.skip .diff-line-skip:hover { color: var(--color-text); background: rgba(22, 22, 30, 0.7); }
+
 /* ===== Diff object selected state ===== */
 .diff-object.selected { outline: 2px solid var(--color-deploy-text); outline-offset: -2px; }
 

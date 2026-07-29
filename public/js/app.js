@@ -642,6 +642,9 @@
                 if (propsContainer.children.length === 0) {
                     renderProperties(diff, propsContainer);
                 }
+                // Auto-scroll to the first highlighted difference (if off-screen)
+                const firstChange = propsContainer.querySelector('.diff-inline-added, .diff-inline-removed, .diff-line-row.changed');
+                if (firstChange) firstChange.scrollIntoView({ block: 'nearest' });
             }
         };
 
@@ -667,18 +670,40 @@
         for (const prop of props) {
             if (!prop.devValue && !prop.prodValue) continue;
 
+            const devRaw = prop.devValue != null ? String(prop.devValue) : null;
+            const prodRaw = prop.prodValue != null ? String(prop.prodValue) : null;
+
+            // Highlight WHERE the values differ (only when both sides exist and differ).
+            const canDiff = window.TextDiff && devRaw !== null && prodRaw !== null
+                && devRaw !== prodRaw
+                && devRaw.length <= 100000 && prodRaw.length <= 100000;
+
+            if (canDiff && (devRaw.includes('\n') || prodRaw.includes('\n'))) {
+                // Multiline value (DAX/M expressions, translations...) — line diff
+                // with inline word highlighting inside modified line pairs.
+                renderMultilineDiffProp(prop, devRaw, prodRaw, container);
+                continue;
+            }
+
             const row = document.createElement('div');
             row.className = 'diff-prop-row';
 
-            const devDisplay = prop.devValue != null ? formatValue(prop.devValue) : '';
-            const prodDisplay = prop.prodValue != null ? formatValue(prop.prodValue) : '';
-
-            let leftHtml = devDisplay
-                ? `<span class="diff-prop-name">${escapeHtml(prop.propertyName)}:</span>${escapeHtml(devDisplay)}`
-                : '';
-            let rightHtml = prodDisplay
-                ? `<span class="diff-prop-name">${escapeHtml(prop.propertyName)}:</span>${escapeHtml(prodDisplay)}`
-                : '';
+            let leftHtml, rightHtml;
+            if (canDiff) {
+                // Single-line value — word-level inline diff (old = prod, new = dev)
+                const r = TextDiff.inline(prodRaw, devRaw);
+                leftHtml = `<span class="diff-prop-name">${escapeHtml(prop.propertyName)}:</span>${r.newHtml}`;
+                rightHtml = `<span class="diff-prop-name">${escapeHtml(prop.propertyName)}:</span>${r.oldHtml}`;
+            } else {
+                const devDisplay = devRaw != null ? formatValue(devRaw) : '';
+                const prodDisplay = prodRaw != null ? formatValue(prodRaw) : '';
+                leftHtml = devDisplay
+                    ? `<span class="diff-prop-name">${escapeHtml(prop.propertyName)}:</span>${escapeHtml(devDisplay)}`
+                    : '';
+                rightHtml = prodDisplay
+                    ? `<span class="diff-prop-name">${escapeHtml(prop.propertyName)}:</span>${escapeHtml(prodDisplay)}`
+                    : '';
+            }
 
             row.innerHTML = `
                 <div class="diff-prop-spacer"></div>
@@ -687,6 +712,96 @@
             `;
             container.appendChild(row);
         }
+    }
+
+    /**
+     * Render a multiline property as a side-by-side line diff (git style):
+     * only changed lines + context by default, with a "Show full text" toggle
+     * and a changed-lines counter. Modified line pairs get word-level
+     * inline highlighting.
+     */
+    function renderMultilineDiffProp(prop, devRaw, prodRaw, container) {
+        const CONTEXT = 2;
+        const MAX_RENDER_ROWS = 3000; // hard cap on DOM rows (perf safeguard)
+        const { rows, changedCount } = TextDiff.lineRows(prodRaw, devRaw); // old = prod, new = dev
+        const block = document.createElement('div');
+        block.className = 'diff-prop-block';
+        let showFull = false;
+
+        function buildRowsHtml() {
+            const visible = new Array(rows.length).fill(showFull);
+            if (!showFull) {
+                rows.forEach((r, i) => {
+                    if (r.type !== 'equal') {
+                        for (let j = Math.max(0, i - CONTEXT); j <= Math.min(rows.length - 1, i + CONTEXT); j++) {
+                            visible[j] = true;
+                        }
+                    }
+                });
+            }
+
+            let html = '';
+            let i = 0;
+            let rendered = 0;
+            while (i < rows.length) {
+                if (rendered >= MAX_RENDER_ROWS) {
+                    const n = rows.filter((r, idx) => idx >= i && visible[idx]).length;
+                    html += `<div class="diff-line-row skip"><div class="diff-prop-spacer"></div>` +
+                        `<div class="diff-line-skip">\u22ef ${n} more line${n === 1 ? '' : 's'} not shown (render limit ${MAX_RENDER_ROWS})</div></div>`;
+                    break;
+                }
+                if (!visible[i]) {
+                    let j = i;
+                    while (j < rows.length && !visible[j]) j++;
+                    const n = j - i;
+                    html += `<div class="diff-line-row skip"><div class="diff-prop-spacer"></div>` +
+                        `<div class="diff-line-skip" title="Click to show full text">\u22ef ${n} unchanged line${n === 1 ? '' : 's'}</div></div>`;
+                    i = j;
+                    continue;
+                }
+                const r = rows[i];
+                const changed = r.type !== 'equal';
+                const leftCls = (r.type === 'add' || r.type === 'mod') ? ' chg-add' : (r.newHtml === null ? ' empty' : '');
+                const rightCls = (r.type === 'del' || r.type === 'mod') ? ' chg-del' : (r.oldHtml === null ? ' empty' : '');
+                html += `<div class="diff-line-row${changed ? ' changed' : ''}">` +
+                    `<div class="diff-prop-spacer"></div>` +
+                    `<div class="diff-line diff-line-left${leftCls}">${r.newHtml ?? ''}</div>` +
+                    `<div class="diff-line diff-line-right${rightCls}">${r.oldHtml ?? ''}</div>` +
+                    `</div>`;
+                rendered++;
+                i++;
+            }
+            return html;
+        }
+
+        function render() {
+            block.innerHTML = `
+                <div class="diff-prop-block-header">
+                    <div class="diff-prop-spacer"></div>
+                    <div class="diff-prop-block-title">
+                        <span class="diff-prop-name">${escapeHtml(prop.propertyName)}</span>
+                        <span class="diff-change-count">${changedCount} changed line${changedCount === 1 ? '' : 's'}</span>
+                        <button class="diff-toggle-full" type="button">${showFull ? 'Show changes only' : 'Show full text'}</button>
+                    </div>
+                </div>
+                ${buildRowsHtml()}
+            `;
+            block.querySelector('.diff-toggle-full').addEventListener('click', (e) => {
+                e.stopPropagation();
+                showFull = !showFull;
+                render();
+            });
+            block.querySelectorAll('.diff-line-skip').forEach(el => {
+                el.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    showFull = true;
+                    render();
+                });
+            });
+        }
+
+        render();
+        container.appendChild(block);
     }
 
     // ===== Deploy Flow =====
@@ -1940,29 +2055,33 @@
         let content, filename, mimeType;
 
         if (format === 'csv') {
-            // Part 1: Summary
-            const rows = [['=== SUMMARY ==='], ['Group', 'Change Type', 'Object Type', 'Name']];
+            // Single unified table: the first column ('Section') distinguishes
+            // SUMMARY rows (one per diff) from DETAILS rows (one per property).
+            // Values keep real newlines — fields are RFC 4180 quoted, so the file
+            // parses cleanly in Excel/Power Query/pandas and supports copy-paste.
+            const rows = [['Section', 'Group', 'Change Type', 'Object Type', 'Name', 'Property', 'SOURCE Value', 'TARGET Value']];
             for (const d of diffs) {
                 rows.push([
+                    'SUMMARY',
                     d.changeGroup || '',
                     typeNames[d.type] || '',
                     d.objectType || '',
-                    d.displayName || ''
+                    d.displayName || '',
+                    '', '', ''
                 ]);
             }
-            // Part 2: Details
-            rows.push([]);
-            rows.push(['=== DETAILS ===']);
-            rows.push(['Object', 'Change Type', 'Property', 'SOURCE Value', 'TARGET Value']);
             for (const d of diffs) {
                 const props = d.propertyDiffs || [];
                 if (props.length === 0) {
-                    rows.push([d.displayName || '', typeNames[d.type], '', '', '']);
+                    rows.push(['DETAILS', d.changeGroup || '', typeNames[d.type], d.objectType || '', d.displayName || '', '', '', '']);
                 } else {
                     for (const p of props) {
                         rows.push([
-                            d.displayName || '',
+                            'DETAILS',
+                            d.changeGroup || '',
                             typeNames[d.type],
+                            d.objectType || '',
+                            d.displayName || '',
                             p.propertyName || '',
                             formatExportValue(p.devValue),
                             formatExportValue(p.prodValue)
@@ -1970,7 +2089,7 @@
                     }
                 }
             }
-            content = rows.map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n');
+            content = rows.map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\r\n');
             filename = `${modelName}_diff_${timestamp}.csv`;
             mimeType = 'text/csv;charset=utf-8;';
         } else if (format === 'markdown') {
@@ -2056,6 +2175,13 @@ tr:hover { background: #2a2a3e; }
 .prop-value.target { border-left: 3px solid #ff6464; }
 .prop-value.empty { color: #555; font-style: italic; }
 .label { font-size: 11px; text-transform: uppercase; color: #888; margin-top: 8px; }
+.chg-count { font-weight: 400; font-size: 12px; color: #ffc832; margin-left: 8px; }
+.diff-inline-added { background: rgba(80, 200, 120, 0.28); box-shadow: inset 0 0 0 1px rgba(80, 200, 120, 0.3); border-radius: 2px; }
+.diff-inline-removed { background: rgba(255, 100, 100, 0.28); box-shadow: inset 0 0 0 1px rgba(255, 100, 100, 0.3); border-radius: 2px; }
+.exp-line { white-space: pre; min-height: 18px; line-height: 1.5; padding: 0 4px; color: #9a9ab0; }
+.exp-line.chg-add { background: rgba(80, 200, 120, 0.12); color: #b8f0cc; }
+.exp-line.chg-del { background: rgba(255, 100, 100, 0.12); color: #f0b8b8; }
+.exp-line.empty { background: rgba(255, 255, 255, 0.03); }
 </style></head><body>
 <h1>Model Comparison: ${escapeHtml(modelName)}</h1>
 <p><strong>Date:</strong> ${new Date().toLocaleString()}</p>
@@ -2085,6 +2211,17 @@ tr:hover { background: #2a2a3e; }
                     html += `<p style="color:#888;">No property details</p>`;
                 } else {
                     for (const p of props) {
+                        const diffHtml = buildExportDiffHtml(p);
+                        if (diffHtml) {
+                            html += `<div class="prop-name">${escapeHtml(p.propertyName)}${diffHtml.note}</div>`;
+                            html += `<div class="prop-row">`;
+                            html += `<div class="prop-col"><div class="prop-col-header">Source</div>`;
+                            html += `<div class="prop-value source">${diffHtml.srcHtml}</div></div>`;
+                            html += `<div class="prop-col"><div class="prop-col-header">Target</div>`;
+                            html += `<div class="prop-value target">${diffHtml.tgtHtml}</div></div>`;
+                            html += `</div>`;
+                            continue;
+                        }
                         html += `<div class="prop-name">${escapeHtml(p.propertyName)}</div>`;
                         html += `<div class="prop-row">`;
                         html += `<div class="prop-col"><div class="prop-col-header">Source</div>`;
@@ -2108,8 +2245,9 @@ tr:hover { background: #2a2a3e; }
             mimeType = 'text/html;charset=utf-8;';
         }
 
-        // Trigger download
-        const blob = new Blob([content], { type: mimeType });
+        // Trigger download (CSV gets a UTF-8 BOM so Excel reads accents correctly)
+        const parts = format === 'csv' ? ['\uFEFF', content] : [content];
+        const blob = new Blob(parts, { type: mimeType });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
@@ -2122,6 +2260,39 @@ tr:hover { background: #2a2a3e; }
 
     function formatExportValue(val) {
         if (val == null) return '';
-        return String(val).replace(/\r?\n/g, ' ↵ ');
+        // Keep the text verbatim (only normalize line endings) — multiline values
+        // are preserved inside RFC 4180 quoted CSV fields for lossless processing.
+        return String(val).replace(/\r\n/g, '\n');
+    }
+
+    /**
+     * Build diff-highlighted HTML for a property in the HTML export.
+     * Single-line values → word-level inline diff; multiline values → full-text
+     * line diff with changed lines highlighted (static report — no toggles).
+     * Returns { srcHtml, tgtHtml, note } or null when the standard rendering
+     * should be used (one side missing, identical values, or value too large).
+     */
+    function buildExportDiffHtml(p) {
+        if (!window.TextDiff || p.devValue == null || p.prodValue == null) return null;
+        const devRaw = String(p.devValue);
+        const prodRaw = String(p.prodValue);
+        if (devRaw === prodRaw) return null;
+        if (devRaw.length > 100000 || prodRaw.length > 100000) return null;
+
+        if (!devRaw.includes('\n') && !prodRaw.includes('\n')) {
+            const r = TextDiff.inline(prodRaw, devRaw); // old = prod, new = dev
+            return { srcHtml: r.newHtml, tgtHtml: r.oldHtml, note: '' };
+        }
+
+        const { rows, changedCount } = TextDiff.lineRows(prodRaw, devRaw);
+        let srcHtml = '', tgtHtml = '';
+        for (const r of rows) {
+            const leftCls = (r.type === 'add' || r.type === 'mod') ? ' chg-add' : (r.newHtml === null ? ' empty' : '');
+            const rightCls = (r.type === 'del' || r.type === 'mod') ? ' chg-del' : (r.oldHtml === null ? ' empty' : '');
+            srcHtml += `<div class="exp-line${leftCls}">${r.newHtml ?? ''}</div>`;
+            tgtHtml += `<div class="exp-line${rightCls}">${r.oldHtml ?? ''}</div>`;
+        }
+        const note = `<span class="chg-count">(${changedCount} changed line${changedCount === 1 ? '' : 's'})</span>`;
+        return { srcHtml, tgtHtml, note };
     }
 })();
