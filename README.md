@@ -1,4 +1,4 @@
-# Model Alchemist v4.6
+# Model Alchemist v4.7
 
 A tool for comparing and deploying changes in Power BI semantic models (TMDL/PBIP format) — locally or via Microsoft Fabric REST API.
 
@@ -7,7 +7,7 @@ A tool for comparing and deploying changes in Power BI semantic models (TMDL/PBI
 - **Compares** two semantic models (Source vs Target) at object level (tables, measures, columns, relationships, roles, perspectives, expressions, cultures).
 - **Supports local and Fabric models** — each side can independently use a local `.pbip` file or a Fabric connection string. Mix-and-match freely.
 - **Displays differences** in a clean web UI with color-coded indicators (Added / Removed / Modified).
-- **Exports comparison report** — export differences to CSV, Markdown, or HTML with side-by-side code diffs.
+- **Exports comparison report** — export differences to CSV, Markdown, or HTML with side-by-side code diffs. CSV export is now machine-friendly (raw multiline values, no `↵` placeholder, section marker column), and HTML export highlights exact changed fragments.
 - **Deploys selected changes** from Source to Target — selectively, with preview and optional backup.
 - **Deploys to Fabric** — uploads modified TMDL definitions back to Fabric semantic models via REST API.
 - **Triggers Enhanced Refresh** — after deployment, triggers data refresh on affected tables with real-time status tracking.

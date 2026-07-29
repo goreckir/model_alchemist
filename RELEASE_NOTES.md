@@ -1,5 +1,27 @@
 # Model Alchemist — Release Notes
 
+## v4.7.0
+
+### New Features
+- **Inline diff highlighting in UI** — Modified properties now show exact changed fragments directly in Source/Target values, making it clear where a change happened without manual scanning.
+- **Multiline line-diff view** — Long properties (for example expressions/translations) are rendered with line-based diff, change counters, context windows, and quick focus on the first change.
+
+### Improvements
+- **HTML export now highlights exact changes** — Exported HTML report uses the same diff approach as UI (inline highlights + multiline line-diff), improving readability outside the app.
+- **CSV export for automation** — CSV now contains a `Section` column (`SUMMARY`/`DETAILS`) and preserves raw multiline values for reliable parsing/copy-paste workflows.
+- **CSV encoding compatibility** — Added UTF-8 BOM to improve Excel compatibility for Polish and other non-ASCII characters.
+
+### Bug Fixes
+- **Large text diff false positives** — Fixed edge case where very large multiline values could over-report changed lines after LCS guard fallback.
+
+### Architecture
+- `public/js/diff.js` — New lightweight diff module (token and line-level diff with safeguards for large inputs).
+- `public/js/app.js` — Property renderer upgraded to use inline and multiline diff strategies; export generators updated for HTML and CSV behavior.
+- `public/css/style.css` — Added styles for inline change marks and multiline line-diff rows.
+- `public/index.html` — Loads the new `diff.js` module before application code.
+
+---
+
 ## v4.6.3
 
 ### Improvements
