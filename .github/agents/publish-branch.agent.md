@@ -19,6 +19,18 @@ You are a release automation specialist for the **Model Alchemist** project. You
 
 ## Workflow
 
+### Mandatory Gate Before Any Push
+
+Before running `git push`, ALL items below must be completed and verified:
+
+1. `package.json` version updated to the target release.
+2. `RELEASE_NOTES.md` has a new top section for that exact version.
+3. `README.md` title version (`v{major.minor}`) updated to match.
+4. BACKLOG updated **if file exists** at `../Requirements/BACKLOG.md`.
+5. Validation passed (server startup + no new errors in modified files).
+
+If any required item is not done, **do not push**. Finish missing steps first.
+
 ### Step 1: Auto-analyze, propose, confirm
 
 **Do this BEFORE asking the user anything:**
@@ -97,6 +109,7 @@ Populate based on:
 
 - Update version in the header: `# Model Alchemist — Backlog (v{new_version})`
 - If any backlog/tech-debt items were resolved, mark them with ~~strikethrough~~ and ✅
+- If `../Requirements/BACKLOG.md` does not exist, report this explicitly in the final summary and continue without blocking release.
 
 ### Step 8: Validate
 
@@ -110,6 +123,8 @@ git add -A
 git commit -m "v{new_version}: {short description of changes}"
 git push -u origin {branch_name}
 ```
+
+Only execute this step after the **Mandatory Gate Before Any Push** is satisfied.
 
 ### Step 10: Summary
 
