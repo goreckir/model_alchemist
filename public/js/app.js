@@ -10,6 +10,8 @@
     let selectedKeys = new Set();
     let devPath = localStorage.getItem('ma_devPath') || '';
     let prodPath = localStorage.getItem('ma_prodPath') || '';
+    let groupByLocation = localStorage.getItem('ma_groupByLocation') === 'true';
+    let lastVisibleDiffs = [];
     let fabricConnected = false;
     let workspacesCache = [];
 
@@ -67,6 +69,16 @@
     document.getElementById('btn-deselect-all').addEventListener('click', deselectAll);
     document.getElementById('btn-expand-all').addEventListener('click', expandAll);
     document.getElementById('btn-collapse-all').addEventListener('click', collapseAll);
+
+    // Group by Table / Display Folder toggle
+    const btnGroupLocation = document.getElementById('btn-group-location');
+    btnGroupLocation.classList.toggle('active', groupByLocation);
+    btnGroupLocation.addEventListener('click', () => {
+        groupByLocation = !groupByLocation;
+        localStorage.setItem('ma_groupByLocation', String(groupByLocation));
+        btnGroupLocation.classList.toggle('active', groupByLocation);
+        if (comparisonResult) renderDiffs();
+    });
 
     // Activity log modal
     const activityLogModal = document.getElementById('activity-log-modal');
@@ -447,6 +459,7 @@
         }
 
         diffs.sort((a, b) => a.displayName.localeCompare(b.displayName));
+        lastVisibleDiffs = diffs;
 
         // Build set of keys that belong to groups (for current visible diffs)
         const visibleKeys = new Set(diffs.map(d => d.identityKey));
@@ -468,12 +481,129 @@
             }
         }
 
-        // Render ungrouped diffs
-        for (const diff of diffs) {
-            if (!groupedKeys.has(diff.identityKey)) {
+        // Remaining diffs (not part of an atomic PQ group)
+        const remaining = diffs.filter(d => !groupedKeys.has(d.identityKey));
+
+        if (groupByLocation) {
+            const locatable = remaining.filter(d => d.parentTable);
+            const rest = remaining.filter(d => !d.parentTable);
+
+            if (locatable.length > 0) {
+                const groups = buildLocationGroups(locatable);
+                for (const g of groups) {
+                    diffContent.appendChild(createLocationGroupElement(g));
+                }
+            }
+            for (const diff of rest) {
+                diffContent.appendChild(createDiffElement(diff));
+            }
+        } else {
+            for (const diff of remaining) {
                 diffContent.appendChild(createDiffElement(diff));
             }
         }
+    }
+
+    /** Extract the effective displayFolder value for a diff (dev value wins, falls back to prod). */
+    function getDisplayFolder(diff) {
+        const prop = (diff.propertyDiffs || []).find(p => p.propertyName === 'displayFolder');
+        if (!prop) return '';
+        const val = prop.devValue != null ? prop.devValue : prop.prodValue;
+        return val || '';
+    }
+
+    /**
+     * Build one flat group per unique Table (+ Display Folder path) combination —
+     * NOT a nested tree. E.g. "tabela_a", "tabela_a / Folder A", "tabela_a / Folder B"
+     * each become their own independent, separately collapsible group containing only
+     * the diffs that live exactly at that path (folders may be nested, separated by
+     * '\' per Power BI convention, joined here with ' / ' for display).
+     */
+    function buildLocationGroups(diffs) {
+        const map = new Map(); // key: pathParts joined by \u0001 -> { pathParts, diffs }
+        for (const diff of diffs) {
+            const folder = getDisplayFolder(diff);
+            const folderParts = folder.split('\\').map(s => s.trim()).filter(Boolean);
+            const pathParts = [diff.parentTable, ...folderParts];
+            const key = pathParts.join('\u0001');
+            if (!map.has(key)) map.set(key, { pathParts, diffs: [] });
+            map.get(key).diffs.push(diff);
+        }
+        return [...map.values()].sort((a, b) => comparePathParts(a.pathParts, b.pathParts));
+    }
+
+    /** Lexicographic compare of path segments; a shorter path that is a prefix of a longer one sorts first. */
+    function comparePathParts(a, b) {
+        const len = Math.max(a.length, b.length);
+        for (let i = 0; i < len; i++) {
+            if (a[i] === undefined) return -1;
+            if (b[i] === undefined) return 1;
+            const c = a[i].localeCompare(b[i]);
+            if (c !== 0) return c;
+        }
+        return 0;
+    }
+
+    /** Render one flat Table/Folder path group (no nesting, no cascading expand). */
+    function createLocationGroupElement(group) {
+        const groupDiffs = group.diffs;
+        const label = group.pathParts.join(' / ');
+        const isFolder = group.pathParts.length > 1;
+
+        const container = document.createElement('div');
+        container.className = 'diff-group location-group';
+        container.dataset.groupId = `loc:${label}`;
+
+        const allSelected = groupDiffs.every(d => selectedKeys.has(d.identityKey));
+        const someSelected = groupDiffs.some(d => selectedKeys.has(d.identityKey));
+
+        const icon = isFolder ? '📁' : '▦';
+        container.innerHTML = `
+            <div class="diff-group-header location-group-header">
+                <div class="diff-checkbox-cell">
+                    <input type="checkbox" class="diff-group-checkbox" ${allSelected ? 'checked' : ''} />
+                </div>
+                <div class="diff-group-info">
+                    <span class="diff-group-icon">${icon}</span>
+                    <span class="diff-group-label">${escapeHtml(label)}</span>
+                    <span class="diff-group-count">${groupDiffs.length}</span>
+                </div>
+                <span class="expand-indicator">▼</span>
+            </div>
+            <div class="diff-group-members"></div>
+        `;
+
+        const checkbox = container.querySelector('.diff-group-checkbox');
+        if (someSelected && !allSelected) checkbox.indeterminate = true;
+
+        checkbox.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const shouldSelect = checkbox.checked;
+            for (const diff of groupDiffs) {
+                if (shouldSelect) selectedKeys.add(diff.identityKey);
+                else selectedKeys.delete(diff.identityKey);
+            }
+            container.querySelectorAll('.diff-checkbox').forEach(cb => {
+                cb.checked = shouldSelect;
+                cb.closest('.diff-object').classList.toggle('selected', shouldSelect);
+            });
+            checkbox.indeterminate = false;
+            updateDeployButton();
+        });
+
+        const header = container.querySelector('.diff-group-header');
+        const membersContainer = container.querySelector('.diff-group-members');
+        header.addEventListener('click', (e) => {
+            if (e.target.closest('.diff-checkbox-cell')) return;
+            container.classList.toggle('expanded');
+            if (container.classList.contains('expanded') && membersContainer.children.length === 0) {
+                for (const diff of groupDiffs) {
+                    membersContainer.appendChild(createDiffElement(diff));
+                }
+            }
+        });
+
+        return container;
     }
 
     function createGroupElement(group, groupDiffs) {
@@ -813,28 +943,20 @@
     }
 
     function selectAllVisible() {
-        // Select diffs whose checkboxes are currently rendered (i.e., visible after
-        // applying activeGroup + activeFilter + searchTerm) AND all member keys of
-        // any group checkbox that is currently displayed — even when the group is
-        // collapsed and its member rows are not yet in the DOM. Without this,
-        // collapsed atomic groups silently get dropped from the deploy payload.
+        // Select every diff matching the current filter/search, not just the ones
+        // currently rendered in the DOM — collapsed atomic PQ groups and collapsed
+        // Table/Folder branches would otherwise be silently dropped from selection.
+        for (const diff of lastVisibleDiffs) {
+            selectedKeys.add(diff.identityKey);
+        }
         document.querySelectorAll('.diff-checkbox').forEach(cb => {
             cb.checked = true;
-            const key = cb.dataset.key;
-            selectedKeys.add(key);
             const diffObj = cb.closest('.diff-object');
             if (diffObj) diffObj.classList.add('selected');
         });
-
-        const allGroups = (comparisonResult && comparisonResult.groups) || [];
         document.querySelectorAll('.diff-group-checkbox').forEach(cb => {
             cb.checked = true;
             cb.indeterminate = false;
-            const groupId = cb.closest('.diff-group')?.dataset.groupId;
-            if (!groupId) return;
-            const group = allGroups.find(g => String(g.groupId) === String(groupId));
-            if (!group) return;
-            for (const k of group.memberKeys) selectedKeys.add(k);
         });
         updateDeployButton();
     }

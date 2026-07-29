@@ -229,6 +229,14 @@ body {
 .filter-btn:hover { background: var(--color-surface-hover); color: var(--color-text); }
 .filter-btn.active { background: var(--color-primary); color: white; border-color: var(--color-primary); }
 
+.group-toggle-btn {
+    padding: 4px 10px; border: 1px solid var(--color-border); border-radius: 4px;
+    background: transparent; color: var(--color-text-dim); font-size: 12px;
+    cursor: pointer; transition: all 0.15s;
+}
+.group-toggle-btn:hover { background: var(--color-surface-hover); color: var(--color-text); }
+.group-toggle-btn.active { background: var(--color-primary); color: white; border-color: var(--color-primary); }
+
 /* ===== Diff View ===== */
 .diff-container { display: flex; flex-direction: column; overflow: hidden; }
 .diff-header {
@@ -434,6 +442,16 @@ body {
     margin-left: auto; font-size: 10px; opacity: 0.5; transition: transform 0.2s; flex-shrink: 0;
 }
 .diff-group.expanded .expand-indicator { transform: rotate(180deg); }
+
+/* ===== Location Groups (Table / Display Folder browsing) ===== */
+.location-group {
+    border-color: rgba(140, 140, 160, 0.35);
+    background: rgba(140, 140, 160, 0.03);
+}
+.location-group-header { background: rgba(140, 140, 160, 0.08); }
+.location-group-header:hover { background: rgba(140, 140, 160, 0.16); }
+.location-group .diff-group-members { padding-left: 8px; }
+.location-group .diff-group-count { background: rgba(140, 140, 160, 0.18); }
 
 /* ===== Modal ===== */
 .modal { position: fixed; inset: 0; z-index: 1000; display: flex; align-items: center; justify-content: center; }

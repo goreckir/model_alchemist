@@ -1,5 +1,22 @@
 # Model Alchemist — Release Notes
 
+## v4.8.0
+
+### New Features
+- **Group diffs by Table / Display Folder** — Added a grouping toggle in the sidebar (next to Expand All/Collapse All) that organizes the diff list into a flat set of collapsible groups (e.g. "table_a", "table_a / Folder A", "table_a / Folder A / Subfolder"), each with its own checkbox for bulk-selecting the diffs in that group. Icons: ▦ for the table level, 📁 for folders.
+
+### Bug Fixes
+- **Grouping toggle cleared the diff view** — Fixed a bug where clicking the grouping toggle cleared the entire diff view (conflict with the global `.filter-btn` listener, which reset `activeFilter` to `undefined`). Resolved by giving the toggle its own dedicated `.group-toggle-btn` CSS class.
+- **"Select All Visible" missed collapsed groups** — Fixed `selectAllVisible()` so selecting "all visible" diffs also works for collapsed/not-yet-rendered groups (now based on the full `lastVisibleDiffs` list instead of only elements currently in the DOM).
+
+### Architecture
+- `public/js/app.js` — New functions `getDisplayFolder`, `buildLocationGroups`, `comparePathParts`, `createLocationGroupElement`; new state `groupByLocation` (persisted via localStorage `ma_groupByLocation`) and `lastVisibleDiffs`.
+- `public/index.html` — New `#btn-group-location` button.
+- `public/css/style.css` — New `.group-toggle-btn` and `.location-group` styles.
+- Frontend-only change, no backend/API changes.
+
+---
+
 ## v4.7.0
 
 ### New Features
