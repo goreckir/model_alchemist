@@ -41,9 +41,9 @@ If any required item is not done, **do not push**. Finish missing steps first.
 4. Based on the diff, decide:
    - **Version bump**: if any new UI features, new endpoints or new user-facing behaviour → `minor`; if only bug fixes or internal changes → `patch`; never suggest `major` unless explicitly asked.
    - **Branch topic**: 2–3 English words summarising the theme (e.g. `refresh-ux`, `deploy-warnings`). Derive from the most impactful changed files.
-   - **Changes summary**: 2–4 bullet points (Polish) describing what changed, derived from the diff. Focus on what the user will notice.
+   - **Changes summary**: 2–4 bullet points, **in English**, describing what changed, derived from the diff. Focus on what the user will notice. (You may additionally restate this summary in Polish when presenting it to the user in chat — see point 5 — but the summary itself must be drafted in English since it feeds directly into RELEASE_NOTES.md.)
 
-5. Present your proposals to the user using the ask-questions tool — **one question per field, always in Polish**, with your proposal pre-selected as the recommended option and freeform input allowed so the user can override. Keep question labels short; put the reasoning ("bo dodano nowe funkcje UI") in the `description` or `message` field, not in the question label.
+5. Present your proposals to the user using the ask-questions tool — **one question per field, always in Polish**, with your proposal pre-selected as the recommended option and freeform input allowed so the user can override. Keep question labels short; put the reasoning ("bo dodano nowe funkcje UI") in the `description` or `message` field, not in the question label. The question text and reasoning are in Polish (chat communication), but the underlying changes-summary content being confirmed stays in English.
 
 6. If the user already specified all three in their message, skip the questions entirely and proceed.
 
@@ -100,16 +100,20 @@ Populate based on:
 - `git diff --stat` against the parent branch
 - Reading changed files to understand what happened
 
+**Language: the entire RELEASE_NOTES.md entry (headings, bullet points, descriptions) must be written in English — never Polish — regardless of the language used to communicate with the user in chat.**
+
 ### Step 6: Update README.md
 
 - Update version in the `# Model Alchemist v{major.minor}` title
 - If new features change user-facing behavior (e.g., new UI elements, changed workflow), update the Usage section accordingly
+- **Language: all README.md content must be written in English.**
 
 ### Step 7: Update BACKLOG.md (outside repo)
 
 - Update version in the header: `# Model Alchemist — Backlog (v{new_version})`
 - If any backlog/tech-debt items were resolved, mark them with ~~strikethrough~~ and ✅
 - If `../Requirements/BACKLOG.md` does not exist, report this explicitly in the final summary and continue without blocking release.
+- **Language: any new/edited content in BACKLOG.md must be written in English.**
 
 ### Step 8: Validate
 
@@ -123,6 +127,8 @@ git add -A
 git commit -m "v{new_version}: {short description of changes}"
 git push -u origin {branch_name}
 ```
+
+The commit message (and any code comments touched in this workflow) must be **in English**.
 
 Only execute this step after the **Mandatory Gate Before Any Push** is satisfied.
 
@@ -140,7 +146,8 @@ Report to user:
 - DO NOT guess changes — read diffs and files to understand what happened
 - DO NOT push without user confirmation if there were pre-existing uncommitted changes
 - DO NOT create git tags (user may want to tag after PR merge)
-- ALWAYS use Polish language when communicating with the user
+- ALWAYS use Polish language when communicating with the user in chat (questions, summaries, status updates)
+- ALWAYS write every file artifact you produce or edit — RELEASE_NOTES.md, README.md, BACKLOG.md, commit messages, and any code/comments — in English, never Polish, even though chat communication is in Polish
 - ALWAYS verify the server starts correctly after version bump
 
 ## Version Formatting Rules

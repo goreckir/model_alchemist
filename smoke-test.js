@@ -1,6 +1,6 @@
 /**
- * Smoke test — uruchamia serwer, sprawdza GET /, zamyka.
- * Zwraca exit code 0 jeśli OK, 1 jeśli błąd.
+ * Smoke test — starts the server, checks GET /, then shuts it down.
+ * Returns exit code 0 on success, 1 on failure.
  */
 const http = require('http');
 const { spawn } = require('child_process');

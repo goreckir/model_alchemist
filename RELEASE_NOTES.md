@@ -2,18 +2,18 @@
 
 ## v4.8.0
 
-### Nowe funkcje
-- **Przełącznik grupowania różnic wg Tabeli / Display Folder** — w panelu bocznym (obok Expand All/Collapse All) dodano przełącznik grupowania, który tworzy płaską listę zwijalnych grup (np. "tabela_a", "tabela_a / Folder A", "tabela_a / Folder A / Podfolder"), każda z własnym checkboxem do zbiorczego zaznaczania różnic w danej grupie. Ikony: ▦ dla poziomu tabeli, 📁 dla folderu.
+### New Features
+- **Group diffs by Table / Display Folder** — Added a grouping toggle in the sidebar (next to Expand All/Collapse All) that organizes the diff list into a flat set of collapsible groups (e.g. "table_a", "table_a / Folder A", "table_a / Folder A / Subfolder"), each with its own checkbox for bulk-selecting the diffs in that group. Icons: ▦ for the table level, 📁 for folders.
 
-### Poprawki błędów
-- **Grupowanie czyściło widok różnic** — naprawiono błąd, w którym kliknięcie przełącznika grupowania czyściło cały widok różnic (konflikt z globalnym listenerem klasy `.filter-btn` ustawiającym `activeFilter` na `undefined`) — wydzielono dedykowaną klasę CSS `.group-toggle-btn`.
-- **Zaznaczanie wszystkich widocznych różnic w zwiniętych grupach** — poprawiono `selectAllVisible()`, by zaznaczanie "wszystkich widocznych" różnic działało też dla zwiniętych/nierenderowanych grup (oparcie o pełną listę `lastVisibleDiffs` zamiast wyłącznie elementów w DOM).
+### Bug Fixes
+- **Grouping toggle cleared the diff view** — Fixed a bug where clicking the grouping toggle cleared the entire diff view (conflict with the global `.filter-btn` listener, which reset `activeFilter` to `undefined`). Resolved by giving the toggle its own dedicated `.group-toggle-btn` CSS class.
+- **"Select All Visible" missed collapsed groups** — Fixed `selectAllVisible()` so selecting "all visible" diffs also works for collapsed/not-yet-rendered groups (now based on the full `lastVisibleDiffs` list instead of only elements currently in the DOM).
 
-### Architektura
-- `public/js/app.js` — nowe funkcje `getDisplayFolder`, `buildLocationGroups`, `comparePathParts`, `createLocationGroupElement`, stan `groupByLocation` (localStorage `ma_groupByLocation`) i `lastVisibleDiffs`.
-- `public/index.html` — nowy przycisk `#btn-group-location`.
-- `public/css/style.css` — style `.group-toggle-btn` i `.location-group`.
-- Zmiana czysto frontendowa, bez zmian backendu/API.
+### Architecture
+- `public/js/app.js` — New functions `getDisplayFolder`, `buildLocationGroups`, `comparePathParts`, `createLocationGroupElement`; new state `groupByLocation` (persisted via localStorage `ma_groupByLocation`) and `lastVisibleDiffs`.
+- `public/index.html` — New `#btn-group-location` button.
+- `public/css/style.css` — New `.group-toggle-btn` and `.location-group` styles.
+- Frontend-only change, no backend/API changes.
 
 ---
 
