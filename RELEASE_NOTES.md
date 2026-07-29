@@ -1,5 +1,22 @@
 # Model Alchemist — Release Notes
 
+## v4.8.0
+
+### Nowe funkcje
+- **Przełącznik grupowania różnic wg Tabeli / Display Folder** — w panelu bocznym (obok Expand All/Collapse All) dodano przełącznik grupowania, który tworzy płaską listę zwijalnych grup (np. "tabela_a", "tabela_a / Folder A", "tabela_a / Folder A / Podfolder"), każda z własnym checkboxem do zbiorczego zaznaczania różnic w danej grupie. Ikony: ▦ dla poziomu tabeli, 📁 dla folderu.
+
+### Poprawki błędów
+- **Grupowanie czyściło widok różnic** — naprawiono błąd, w którym kliknięcie przełącznika grupowania czyściło cały widok różnic (konflikt z globalnym listenerem klasy `.filter-btn` ustawiającym `activeFilter` na `undefined`) — wydzielono dedykowaną klasę CSS `.group-toggle-btn`.
+- **Zaznaczanie wszystkich widocznych różnic w zwiniętych grupach** — poprawiono `selectAllVisible()`, by zaznaczanie "wszystkich widocznych" różnic działało też dla zwiniętych/nierenderowanych grup (oparcie o pełną listę `lastVisibleDiffs` zamiast wyłącznie elementów w DOM).
+
+### Architektura
+- `public/js/app.js` — nowe funkcje `getDisplayFolder`, `buildLocationGroups`, `comparePathParts`, `createLocationGroupElement`, stan `groupByLocation` (localStorage `ma_groupByLocation`) i `lastVisibleDiffs`.
+- `public/index.html` — nowy przycisk `#btn-group-location`.
+- `public/css/style.css` — style `.group-toggle-btn` i `.location-group`.
+- Zmiana czysto frontendowa, bez zmian backendu/API.
+
+---
+
 ## v4.7.0
 
 ### New Features
