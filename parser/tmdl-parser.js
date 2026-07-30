@@ -326,7 +326,7 @@ function isBooleanShorthand(line) {
         'isActive', 'showAsVariationsOnly', 'isAvailableInMDX',
         'isDefaultLabel', 'isDefaultImage', 'isNameInferred',
         'isDataTypeInferred', 'excludeFromModelRefresh',
-        'refreshBookmarkDataOnly'
+        'refreshBookmarkDataOnly', 'discourageImplicitMeasures'
     ];
     return boolProps.includes(line.trim());
 }

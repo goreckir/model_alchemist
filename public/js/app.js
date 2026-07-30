@@ -1617,6 +1617,13 @@
                 if (!errorTexts.includes(txt)) errorTexts.push(txt);
             }
             if (errorTexts.length > 0) {
+                const explanation = explainRefreshError(errorTexts.join('\n'));
+                if (explanation) {
+                    html += `<div style="margin-top: 8px; padding: 8px; font-size: 12px; background: rgba(230,160,0,0.1); border-left: 3px solid #e6a000; border-radius: 4px;">`;
+                    html += `<strong>⚠ Likely cause of the refresh error</strong><p style="margin: 4px 0;">${escapeHtml(explanation.cause)}</p>`;
+                    html += `<p style="margin: 4px 0;"><strong>👉 Make sure to check in the Power BI/Fabric service:</strong> ${escapeHtml(explanation.action)}</p>`;
+                    html += `</div>`;
+                }
                 // Open by default so the user sees the cause immediately
                 html += `<details open style="margin-top: 8px; font-size: 12px;"><summary style="cursor:pointer; color: var(--color-removed-text); font-weight:600;">⚠ Error details</summary>`;
                 for (const txt of errorTexts) {
@@ -1630,6 +1637,22 @@
 
         html += `</div>`;
         return html;
+    }
+
+    // Known Fabric/Power BI refresh error codes mapped to a plain-language cause and remediation
+    const KNOWN_REFRESH_ERRORS = {
+        DMTS_MonikerWithUnboundDataSources: {
+            cause: 'A data source used by the refreshed table (e.g. a newly added/changed partition) is not bound to any credentials or cloud connection in the service. Refreshing fails immediately because the source cannot be authenticated.',
+            action: 'go to the semantic model\'s "Gateway and cloud connections" settings and bind the missing data source to a valid cloud connection / credentials.'
+        }
+    };
+
+    function explainRefreshError(errorText) {
+        if (!errorText) return null;
+        for (const code of Object.keys(KNOWN_REFRESH_ERRORS)) {
+            if (errorText.includes(code)) return KNOWN_REFRESH_ERRORS[code];
+        }
+        return null;
     }
 
     // ===== Utilities =====

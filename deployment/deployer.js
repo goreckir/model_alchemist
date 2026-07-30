@@ -115,14 +115,22 @@ function deployChanges(selectedDiffs, devModel, prodPath, options = {}) {
         });
     }
 
+    // Ops that are idempotent "ensure" checks — only report/apply them if they'd
+    // actually change the target file, so the preview/result don't show misleading
+    // "will modify" entries for properties that are already correctly set (e.g.
+    // discourageImplicitMeasures already true on TARGET).
+    const IDEMPOTENT_ACTIONS = new Set(['ensureModelProperty', 'ensureTopLevelProperty']);
+
     // Execute operations
     for (const op of fileOps) {
         try {
             if (dryRun) {
+                if (IDEMPOTENT_ACTIONS.has(op.action) && !wouldChangeFile(op)) continue;
                 result.actions.push({ type: 'dryrun', ...op.description });
             } else {
                 const opResult = executeOperation(op, prodPath) || { changed: true };
                 if (opResult.changed === false) {
+                    if (IDEMPOTENT_ACTIONS.has(op.action)) continue; // already correct on TARGET — nothing to report
                     // Silent no-op: target block was not located in PROD file.
                     // Surface as warning + error so the deploy doesn't falsely report success.
                     const code = opResult.code || 'OPERATION_NOOP';
@@ -622,6 +630,25 @@ function planDataSourceOp(diff, devModel, prodPath) {
 }
 
 /**
+ * Read-only check: would an idempotent "ensure" op actually change its target file?
+ * Used by the dry-run preview to skip no-op entries (e.g. discourageImplicitMeasures
+ * already true on TARGET) without writing anything.
+ */
+function wouldChangeFile(op) {
+    if (!fs.existsSync(op.targetPath)) return false;
+    const content = fs.readFileSync(op.targetPath, 'utf-8');
+    let updated;
+    if (op.action === 'ensureModelProperty') {
+        updated = ensureModelProperty(content, op.propName, op.propValue);
+    } else if (op.action === 'ensureTopLevelProperty') {
+        updated = ensureTopLevelProperty(content, op.blockKeyword, op.propName, op.propValue);
+    } else {
+        return true;
+    }
+    return updated !== content;
+}
+
+/**
  * Execute a single file operation.
  */
 function executeOperation(op, prodPath) {
@@ -719,18 +746,20 @@ function executeOperation(op, prodPath) {
             break;
         }
         case 'ensureModelProperty': {
-            if (!fs.existsSync(op.targetPath)) break;
-            let content = fs.readFileSync(op.targetPath, 'utf-8');
+            if (!fs.existsSync(op.targetPath)) return { changed: false };
+            const content = fs.readFileSync(op.targetPath, 'utf-8');
             const updated = ensureModelProperty(content, op.propName, op.propValue);
-            if (updated !== content) fs.writeFileSync(op.targetPath, updated, 'utf-8');
-            break;
+            if (updated === content) return { changed: false };
+            fs.writeFileSync(op.targetPath, updated, 'utf-8');
+            return { changed: true };
         }
         case 'ensureTopLevelProperty': {
-            if (!fs.existsSync(op.targetPath)) break;
-            let content = fs.readFileSync(op.targetPath, 'utf-8');
+            if (!fs.existsSync(op.targetPath)) return { changed: false };
+            const content = fs.readFileSync(op.targetPath, 'utf-8');
             const updated = ensureTopLevelProperty(content, op.blockKeyword, op.propName, op.propValue);
-            if (updated !== content) fs.writeFileSync(op.targetPath, updated, 'utf-8');
-            break;
+            if (updated === content) return { changed: false };
+            fs.writeFileSync(op.targetPath, updated, 'utf-8');
+            return { changed: true };
         }
     }
 
