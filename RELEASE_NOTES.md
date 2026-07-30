@@ -1,5 +1,19 @@
 # Model Alchemist — Release Notes
 
+## v4.9.0
+
+### New Features
+- **Inline refresh error guidance** — Added inline guidance for a known refresh failure (unbound data source / missing cloud connection), shown directly in the refresh error UI.
+
+### Improvements
+- **Cleaner deploy preview** — Deploy preview/result now skip idempotent "ensure" operations that are already no-ops, so the UI no longer shows misleading "will change" entries for properties already correct on TARGET.
+- **Reduced false-positive diffs** — Removed `discourageImplicitMeasures` from the generic Model Properties diff (it's auto-managed by calculation-group deploy logic), eliminating a recurring false-positive diff.
+
+### Bug Fixes
+- **Duplicate `discourageImplicitMeasures` on deploy** — Fixed a bug where deploying a second/subsequent calculation group could corrupt `model.tmdl` with a duplicate `discourageImplicitMeasures` property (parser didn't recognize TMDL boolean-shorthand form), breaking the model in Fabric/Power BI.
+
+---
+
 ## v4.8.0
 
 ### New Features
