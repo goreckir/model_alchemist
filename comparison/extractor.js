@@ -516,7 +516,8 @@ function extractModelProperties(modelObj, objects) {
         properties: {
             culture: modelObj.properties.culture || '',
             defaultPowerBIDataSourceVersion: modelObj.properties.defaultPowerBIDataSourceVersion || '',
-            discourageImplicitMeasures: modelObj.properties.discourageImplicitMeasures || 'false',
+            // discourageImplicitMeasures intentionally excluded — auto-managed by the
+            // deployer's calculation-group logic (ensureModelProperty), not diffed here.
             defaultMeasure: modelObj.properties.defaultMeasure || '',
             sourceQueryCulture: modelObj.properties.sourceQueryCulture || '',
             collation: modelObj.properties.collation || '',

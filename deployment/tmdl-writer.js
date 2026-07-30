@@ -431,12 +431,15 @@ function ensureTopLevelProperty(content, blockKeyword, propName, propValue) {
         }
     }
 
+    // Match both `propName: value` and TMDL boolean-shorthand `propName` (bare, meaning true).
     const propRe = new RegExp(`^\\s*${propName}\\s*:`);
     for (let i = blockStart + 1; i < blockEnd; i++) {
-        if (propRe.test(lines[i])) {
+        const isColonForm = propRe.test(lines[i]);
+        const isShorthandForm = lines[i].trim() === propName;
+        if (isColonForm || isShorthandForm) {
             // Already present — replace value if differs
             const expected = `\t${propName}: ${propValue}`;
-            if (lines[i] === expected) return content;
+            if (lines[i] === expected || (isShorthandForm && propValue === 'true')) return content;
             lines[i] = expected;
             return lines.join('\n');
         }
