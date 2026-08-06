@@ -1,5 +1,114 @@
 # Model Alchemist — Release Notes
 
+## v4.10.0
+
+Correctness release. It closes 58 verified defects (11 critical, 22 high, 25 medium)
+found in a full review of v4.9.0, and adds the first automated test suite.
+
+### Read this before upgrading
+
+Three changes alter what the tool does, on purpose:
+
+1. **A Fabric deploy now refuses to upload a stale snapshot.** If the model changed
+   in Fabric after your comparison was taken, the deploy stops with
+   `PROD_CHANGED_SINCE_COMPARE` and lists the files. Re-compare and deploy again.
+   Previously those changes were silently reverted.
+2. **A local deploy is transactional.** It stops at the first failing operation and
+   restores every file it touched. Previously it continued past failures and left a
+   half-written model.
+3. **More diffs appear, and some Add+Remove pairs collapse into one modify.**
+   Properties that were never compared are now compared (see below), and identity is
+   case-insensitive with per-environment GUIDs normalized, matching Analysis Services.
+
+Each browser tab now keeps its own comparison state (`x-ma-session` header), so two
+tabs no longer overwrite each other's deploy target.
+
+### Changes that were invisible before
+
+The comparison now detects: incremental `refreshPolicy`, column `variation` blocks,
+`formatStringDefinition` and `detailRowsDefinition`, `alternateOf` aggregation
+mappings, every non-whitelisted column property (e.g. `isAvailableInMdx`), KPI
+`statusGraphic` / `trendGraphic`, culture `linguisticMetadata` (Q&A synonyms),
+`dataSource` connection details, `dataAccessOptions`, and translations below three
+levels (hierarchy-level captions, translated display folders).
+
+### Deployments that silently did nothing
+
+Adding a relationship to a model with no `relationships.tmdl`; RLS membership
+changes; any object whose file name differs from its object name; calculation-group
+removes and modifies; and modifies of children of a table whose name contains a dot.
+All of them reported success while writing nothing. They now work, and a missing
+source is an error rather than a silent skip.
+
+### Deployments that wrote the wrong thing
+
+A `tablePermission` change replaced the whole role file, swapping PROD RLS members
+for DEV accounts. A calculation-group add wrote every item twice, making the model
+unloadable. A model-properties change deleted refs indented under `model Model`.
+A table header change copied DEV's `lineageTag`. `sourceLineageTag` was never
+preserved. PBI_* runtime annotations were deployed despite being excluded from
+comparison. All fixed; block replacement now merges instead of overwriting, and the
+preview names any block content that ships beyond the reviewed properties.
+
+### Bug Fixes
+
+**Parser** — a `///` comment above a top-level `ref` crashed the whole model load;
+object names containing ` = ` were mis-split; DAX continuation lines were swallowed
+as properties and truncated expressions; `quoteName` under-quoted names, writing
+invalid refs and leaving dangling refs on remove.
+
+**Comparison** — child identity keys used an ambiguous dot separator, so a dotted
+table name could mask a real change; keys were case-sensitive while AS names are
+case-insensitive-unique; relationship identity included `isActive` and
+`crossFilteringBehavior`, turning a modify into an Add+Remove whose Add created a
+duplicate; partitions were keyed by their per-environment GUID, reporting every
+table as Added+Removed; quoted relationship endpoints never matched their column
+diffs; refresh groups absorbed unrelated metadata changes; a diff could belong to
+two groups and render twice with desynced checkboxes. A rename detector now pairs
+Add/Remove into one atomic group that states the Fabric data-loss consequence.
+
+**Validation** — a `calculationItem` could be selected without its calculation
+group; removing a table left dangling perspective, culture and role references; the
+cascade used `startsWith`, so removing `Sales` also removed the relationship of
+`Sales.EU`; escaped quotes in perspective names caused false hard blocks; a missing
+`prodModel` caused an unconditional `compatibilityLevel` overwrite, including
+downgrades.
+
+**Fabric** — an expired token was handed out forever while the UI reported
+connected; workspace and model lists read only the first page; a slow but successful
+deploy was reported as failed after 120s (now 10 minutes, and a timeout is reported
+as indeterminate); per-file parse errors silently dropped whole tables; `TimedOut`
+and `Cancelling` refresh statuses never reached a terminal state.
+
+**Server** — `/api/compare` left the previous Fabric model and dataset armed;
+`detectTablesNeedingRefresh` re-read mutable global state after a long await;
+overlapping status polls could fire the post-refresh calculate twice; an `await`
+precedence bug sent `Bearer [object Promise]`; `PORT` from the environment is a
+string, so the EADDRINUSE fallback bound port 30011 instead of 3002.
+
+**UI** — errors rendered inside a hidden panel, so a failed refresh left stale diffs
+looking current; "Select All Visible" selected the previous view's items when the
+current view was empty; member and group checkboxes disagreed under an active
+filter; `data-key` was not quote-escaped, so a name containing `"` expanded to an
+empty panel; Markdown export corrupted on multiline values and unescaped pipes; the
+deploy preview ignored `response.ok` and rendered server errors as "No file
+operations planned"; a second refresh abandoned polling of the first; search at
+exactly one character kept the previous result set; group membership was an
+O(diffs × members) scan re-run on every keystroke.
+
+### Tests
+
+`npm test` runs 119 tests on Node's built-in runner — no new dependencies. Each test
+is named after the issue it locks down.
+
+### Architecture
+
+New modules: `comparison/keys.js` (identity keys), `comparison/refs.js` (TMDL
+reference parsing), `comparison/rename-detector.js`, `lib/session-store.js`,
+`lib/raw-files.js`, `public/js/pure.js` (DOM-free UI logic), `test/`.
+
+---
+
 ## v4.9.0
 
 ### New Features

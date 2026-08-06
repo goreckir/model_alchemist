@@ -61,6 +61,18 @@ Or with auto-restart on changes:
 npm run dev
 ```
 
+## Tests
+
+```bash
+npm test     # unit + integration suite (Node's built-in runner, no extra deps)
+npm run smoke   # boots the server and checks it serves the app
+```
+
+Tests live in `test/`. Each one is named after the GitHub issue it locks down, so
+a failure points straight at the defect it is meant to prevent. `test/helpers/tmdl.js`
+builds throwaway TMDL definition folders and runs them through the real loader, so
+the suite exercises the same code path the app does.
+
 The app will start at **http://localhost:3001** (default). If port 3001 is already in use, the server automatically tries the next available port (3002, 3003, …). The actual URL is printed in the terminal output on startup.
 
 ## Usage
