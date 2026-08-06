@@ -1,0 +1,78 @@
+<!doctype html><meta charset="utf-8">
+<link rel="stylesheet" href="theme.css">
+<style>
+  body { width: 1400px; height: 700px; overflow: hidden; }
+  .matrix { display: grid; grid-template-columns: 170px 1fr 1fr; gap: 16px; margin-top: 34px; align-items: stretch; }
+  .head {
+      display: grid; place-items: center; text-align: center; padding: 14px;
+      font-family: var(--mono); font-size: 14px; letter-spacing: .08em; text-transform: uppercase; color: var(--dim);
+  }
+  .head b { display: block; font-size: 17px; color: var(--text); letter-spacing: 0; text-transform: none; margin-top: 5px; }
+  .rowlabel {
+      display: grid; place-items: center; text-align: center; border-radius: 14px;
+      background: rgba(255,255,255,0.03); border: 1px solid var(--border); padding: 16px 10px;
+  }
+  .rowlabel .ico { font-size: 30px; margin-bottom: 8px; }
+  .rowlabel .t { font-family: var(--mono); font-size: 13px; letter-spacing: .08em; color: var(--dim); text-transform: uppercase; }
+  .rowlabel b { font-size: 17px; display: block; margin-top: 4px; }
+  .cell {
+      background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
+      padding: 20px 22px; border-top: 3px solid var(--c);
+  }
+  .cell .use { font-size: 17px; font-weight: 650; margin-bottom: 7px; }
+  .cell .desc { font-size: 14px; color: var(--dim); line-height: 1.5; }
+  .cell .tags { margin-top: 13px; display: flex; gap: 7px; flex-wrap: wrap; }
+  .tag {
+      font-family: var(--mono); font-size: 11.5px; padding: 3px 9px; border-radius: 5px;
+      background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.07); color: #c6c6dd;
+  }
+  .legend { margin-top: 22px; display: flex; gap: 26px; font-size: 14px; color: var(--dim); align-items: center; }
+  .legend b { color: #cfcfe4; font-weight: 600; }
+  .swap {
+      display: inline-flex; align-items: center; gap: 7px; font-family: var(--mono); font-size: 13px;
+      background: rgba(124,111,247,0.12); border: 1px solid rgba(124,111,247,0.3);
+      color: #b7aefb; padding: 5px 11px; border-radius: 7px;
+  }
+</style>
+<div class="canvas grid-bg">
+  <div class="eyebrow">Source and target</div>
+  <div class="title">Both sides are chosen independently, and all four combinations work</div>
+  <div class="subtitle">Local means a PBIP <span class="mono">.SemanticModel</span> folder on disk. Fabric means a semantic model reached over the REST API with your own Microsoft account.</div>
+
+  <div class="matrix">
+    <div></div>
+    <div class="head">target<b>📁 Local folder</b></div>
+    <div class="head">target<b>☁️ Fabric model</b></div>
+
+    <div class="rowlabel"><div><div class="ico">📁</div><div class="t">source</div><b>Local folder</b></div></div>
+    <div class="cell" style="--c:#7ddf7d;">
+      <div class="use">Branch review before you merge</div>
+      <div class="desc">Diff a feature branch of a PBIP project against main, on your machine, with nothing published anywhere.</div>
+      <div class="tags"><span class="tag">git workflow</span><span class="tag">pull-request review</span><span class="tag">offline</span></div>
+    </div>
+    <div class="cell" style="--c:#7dcfef;">
+      <div class="use">Publish a reviewed change</div>
+      <div class="desc">Promote exactly the objects you ticked from a local project into a workspace model, without a full republish overwriting everything else.</div>
+      <div class="tags"><span class="tag">dev → test → prod</span><span class="tag">selective release</span><span class="tag">hotfix</span></div>
+    </div>
+
+    <div class="rowlabel"><div><div class="ico">☁️</div><div class="t">source</div><b>Fabric model</b></div></div>
+    <div class="cell" style="--c:#dfcf5d;">
+      <div class="use">Pull production back into the repo</div>
+      <div class="desc">See what drifted in a workspace against the project on disk, and bring the intended parts back into source control.</div>
+      <div class="tags"><span class="tag">drift audit</span><span class="tag">recover manual edits</span></div>
+    </div>
+    <div class="cell" style="--c:#9182f7;">
+      <div class="use">Compare two environments</div>
+      <div class="desc">TEST against PROD, or two tenants, with no local copy of either. Deploy the delta straight across.</div>
+      <div class="tags"><span class="tag">environment parity</span><span class="tag">release sign-off</span><span class="tag">tenant to tenant</span></div>
+    </div>
+  </div>
+
+  <div class="legend">
+    <span class="swap">⇅ swap sides</span>
+    <span>One click reverses <b>Source</b> and <b>Target</b>, so a comparison you ran the wrong way round does not need setting up again.</span>
+  </div>
+
+  <div class="foot"><span>Model Alchemist / source and target</span><span>github.com/goreckir/model_alchemist</span></div>
+</div>

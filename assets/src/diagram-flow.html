@@ -1,0 +1,94 @@
+<!doctype html><meta charset="utf-8">
+<link rel="stylesheet" href="theme.css">
+<style>
+  body { width: 1400px; height: 760px; overflow: hidden; }
+  .steps { display: grid; grid-template-columns: 1fr 56px 1fr 56px 1fr; align-items: stretch; gap: 0; margin-top: 34px; }
+  .step { display: flex; flex-direction: column; }
+  .num {
+      width: 40px; height: 40px; border-radius: 12px; display: grid; place-items: center;
+      font-family: var(--mono); font-size: 17px; font-weight: 700; color: var(--bg-deep);
+      background: linear-gradient(135deg, #9182f7, #7dcfef); margin-bottom: 14px;
+  }
+  .step h3 { font-size: 23px; font-weight: 700; margin-bottom: 6px; }
+  .step .what { font-size: 15px; color: var(--dim); line-height: 1.5; min-height: 46px; }
+  .panel { margin-top: 16px; flex: 1; display: flex; flex-direction: column; gap: 10px; }
+  .box {
+      background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+      padding: 13px 15px; font-size: 14.5px; line-height: 1.45;
+  }
+  .box .k { font-family: var(--mono); font-size: 12px; color: var(--primary-2); display: block; margin-bottom: 4px; letter-spacing: .06em; }
+  .box .v { color: #d3d3e6; }
+  .arrow { display: grid; place-items: center; color: #4d4d6b; font-size: 30px; }
+  .diffline { display: flex; align-items: center; gap: 9px; font-family: var(--mono); font-size: 13.5px; padding: 3px 0; }
+  .sym { width: 17px; text-align: center; font-weight: 700; }
+  .add .sym { color: var(--added); }    .add .t { color: #bfe9bf; }
+  .mod .sym { color: var(--modified); } .mod .t { color: #e9e0a8; }
+  .rem .sym { color: var(--removed); }  .rem .t { color: #eabcbc; }
+  .gate {
+      display: flex; align-items: center; gap: 9px; font-size: 14px; color: #cfcfe4;
+      padding: 7px 0; border-bottom: 1px dashed rgba(255,255,255,0.07);
+  }
+  .gate:last-child { border-bottom: 0; }
+  .tick { color: var(--deploy); font-family: var(--mono); }
+</style>
+<div class="canvas grid-bg">
+  <div class="eyebrow">How it works</div>
+  <div class="title">Connect two models, review the difference, ship only what you picked</div>
+  <div class="subtitle">Model Alchemist reads TMDL, not a black box. Every step below is inspectable before anything is written.</div>
+
+  <div class="steps">
+    <div class="step">
+      <div class="num">1</div>
+      <h3>Connect</h3>
+      <div class="what">Source and Target are chosen independently. Any combination of local and Fabric.</div>
+      <div class="panel">
+        <div class="box"><span class="k">SOURCE</span><span class="v">📁 local <span class="mono">.SemanticModel</span> folder<br>or ☁️ Fabric semantic model</span></div>
+        <div class="box"><span class="k">TARGET</span><span class="v">📁 local <span class="mono">.SemanticModel</span> folder<br>or ☁️ Fabric semantic model</span></div>
+        <div class="box"><span class="k">AUTH</span><span class="v">OAuth2 + PKCE in your browser.<br>No credentials stored on disk.</span></div>
+      </div>
+    </div>
+
+    <div class="arrow">→</div>
+
+    <div class="step">
+      <div class="num">2</div>
+      <h3>Compare</h3>
+      <div class="what">TMDL is parsed into identity-keyed objects and diffed property by property.</div>
+      <div class="panel">
+        <div class="box">
+          <span class="k">OBJECT-LEVEL DIFF</span>
+          <div class="diffline add"><span class="sym">+</span><span class="t">measure Sales.Margin %</span></div>
+          <div class="diffline mod"><span class="sym">~</span><span class="t">column Sales.Amount</span></div>
+          <div class="diffline mod"><span class="sym">~</span><span class="t">partition Sales</span></div>
+          <div class="diffline rem"><span class="sym">−</span><span class="t">role Legacy Viewer</span></div>
+        </div>
+        <div class="box">
+          <span class="k">ATOMIC GROUPS</span>
+          <span class="v">Changes that must ship together are bound into one unit: a Power Query change with its dependent columns, a relationship with its endpoints, a rename with both sides.</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="arrow">→</div>
+
+    <div class="step">
+      <div class="num">3</div>
+      <h3>Deploy</h3>
+      <div class="what">Tick what ships. Everything else in Target is left exactly as it was.</div>
+      <div class="panel">
+        <div class="box">
+          <span class="k">BEFORE ANYTHING IS WRITTEN</span>
+          <div class="gate"><span class="tick">✓</span> dependency validation</div>
+          <div class="gate"><span class="tick">✓</span> full-folder backup</div>
+          <div class="gate"><span class="tick">✓</span> preview of every file operation</div>
+        </div>
+        <div class="box">
+          <span class="k">THEN</span>
+          <span class="v">Local: transactional write, rolled back on any failure.<br>Fabric: <span class="mono">updateDefinition</span> upload, then an Enhanced Refresh scoped to the tables that actually need it.</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="foot"><span>Model Alchemist</span><span>github.com/goreckir/model_alchemist</span></div>
+</div>
