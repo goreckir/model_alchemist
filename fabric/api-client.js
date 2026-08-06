@@ -70,7 +70,19 @@ function apiRequest(url, accessToken, method = 'GET', body = null) {
  * Poll a long-running operation until complete.
  * Fabric API pattern: poll status URL, then fetch /result when Succeeded.
  */
-async function pollOperation(locationUrl, accessToken, maxWaitMs = 120000) {
+/** An operation the client stopped waiting for. It may still be running in Fabric. */
+function operationTimeoutError(maxWaitMs) {
+    const err = new Error(
+        `Fabric did not finish the operation within ${Math.round(maxWaitMs / 1000)}s, so the client stopped waiting. ` +
+        `THE OPERATION MAY STILL BE RUNNING and may complete successfully — do not assume nothing changed. ` +
+        `Check the model in the Fabric portal before retrying.`
+    );
+    err.code = 'OPERATION_TIMEOUT';
+    err.indeterminate = true;
+    return err;
+}
+
+async function pollOperation(locationUrl, accessToken, maxWaitMs = 600000) {
     const start = Date.now();
     let url = locationUrl;
 
@@ -117,7 +129,7 @@ async function pollOperation(locationUrl, accessToken, maxWaitMs = 120000) {
         return result;
     }
 
-    throw new Error('Operation timed out waiting for Fabric API response.');
+    throw operationTimeoutError(maxWaitMs);
 }
 
 function sleep(ms) {
@@ -125,12 +137,44 @@ function sleep(ms) {
 }
 
 /**
+ * Read every page of a paginated Fabric list endpoint.
+ *
+ * Reading only the first page made workspaces and models on later pages look
+ * inaccessible: a user got "Workspace not found or access denied" for a workspace
+ * they can open in the browser.
+ *
+ * @param {function} [request=apiRequest] - injected for testing
+ */
+async function listAllPages(url, accessToken, request = apiRequest) {
+    const items = [];
+    let nextUrl = url;
+    let guard = 0;
+
+    while (nextUrl && guard++ < 1000) {
+        const result = await request(nextUrl, accessToken);
+        items.push(...(result.value || []));
+
+        if (result.continuationUri) {
+            nextUrl = result.continuationUri;
+        } else if (result.continuationToken) {
+            const parsed = new URL(url);
+            parsed.searchParams.set('continuationToken', result.continuationToken);
+            nextUrl = parsed.toString();
+        } else {
+            nextUrl = null;
+        }
+    }
+
+    return items;
+}
+
+/**
  * List all workspaces the user has access to.
  */
-async function listWorkspaces(accessToken) {
+async function listWorkspaces(accessToken, request) {
     const url = `${FABRIC_API_BASE}/workspaces`;
-    const result = await apiRequest(url, accessToken);
-    return (result.value || []).map(ws => ({
+    const values = await listAllPages(url, accessToken, request);
+    return values.map(ws => ({
         id: ws.id,
         name: ws.displayName,
         type: ws.type,
@@ -141,10 +185,10 @@ async function listWorkspaces(accessToken) {
 /**
  * List semantic models in a workspace.
  */
-async function listSemanticModels(accessToken, workspaceId) {
+async function listSemanticModels(accessToken, workspaceId, request) {
     const url = `${FABRIC_API_BASE}/workspaces/${workspaceId}/semanticModels`;
-    const result = await apiRequest(url, accessToken);
-    return (result.value || []).map(sm => ({
+    const values = await listAllPages(url, accessToken, request);
+    return values.map(sm => ({
         id: sm.id,
         name: sm.displayName,
         description: sm.description || '',
@@ -212,9 +256,11 @@ async function updateSemanticModelDefinition(accessToken, workspaceId, semanticM
     const body = { definition: { parts } };
     const result = await apiRequest(url, accessToken, 'POST', body);
 
-    // Handle long-running operation
+    // Handle long-running operation. A large model can take well over two minutes;
+    // giving up early reported a successful deploy as failed while PROD had in fact
+    // been updated, so the wait is long and a timeout is explicitly indeterminate.
     if (result.status === 202 && result.location) {
-        const finalResult = await pollOperation(result.location, accessToken);
+        const finalResult = await pollOperation(result.location, accessToken, UPDATE_DEFINITION_MAX_WAIT_MS);
         if (finalResult.status === 'Failed') {
             const errMsg = finalResult.error?.message || 'Update definition failed';
             throw new Error(errMsg);
@@ -224,6 +270,9 @@ async function updateSemanticModelDefinition(accessToken, workspaceId, semanticM
 
     return result;
 }
+
+/** Definition uploads are the slowest Fabric LRO — wait 10 minutes before giving up. */
+const UPDATE_DEFINITION_MAX_WAIT_MS = 600000;
 
 /**
  * Trigger a refresh of the semantic model via Power BI Enhanced Refresh API.
@@ -275,8 +324,11 @@ async function getRefreshStatus(accessToken, workspaceId, semanticModelId, reque
 module.exports = {
     listWorkspaces,
     listSemanticModels,
+    listAllPages,
     getSemanticModelDefinition,
     updateSemanticModelDefinition,
     refreshSemanticModel,
-    getRefreshStatus
+    getRefreshStatus,
+    pollOperation,
+    operationTimeoutError
 };

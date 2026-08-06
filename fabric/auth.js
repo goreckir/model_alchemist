@@ -14,10 +14,37 @@ const DEFAULT_CLIENT_ID = 'ea0616ba-638b-4df5-95b9-636659ae5121';
 
 let msalInstance = null;
 let currentAccount = null;
-let cachedAccessToken = null;
 let loginInProgress = false;
 let loginPromise = null;
 let loginAbortController = null;
+
+/**
+ * In-memory token cache. `expiresOn` is tracked so an expired token is never
+ * handed out: acquireTokenSilent used to swallow every failure and the caller
+ * then fell back to the stale token forever, so every Fabric call failed with a
+ * bare 401 while the UI kept reporting "connected" until the server restarted.
+ */
+const tokenCache = { accessToken: null, expiresOn: null };
+
+/** Treat a token as expired one minute early to cover clock skew and in-flight calls. */
+const EXPIRY_SKEW_MS = 60 * 1000;
+
+function tokenIsValid(expiresOn, now = Date.now(), skewMs = EXPIRY_SKEW_MS) {
+    if (!expiresOn) return false;
+    const time = expiresOn instanceof Date ? expiresOn.getTime() : new Date(expiresOn).getTime();
+    if (Number.isNaN(time)) return false;
+    return time - skewMs > now;
+}
+
+function cacheToken(result) {
+    tokenCache.accessToken = result.accessToken;
+    tokenCache.expiresOn = result.expiresOn || null;
+}
+
+function clearToken() {
+    tokenCache.accessToken = null;
+    tokenCache.expiresOn = null;
+}
 
 /**
  * Open URL in system browser.
@@ -83,7 +110,7 @@ async function loginInteractive(clientId) {
             ]);
 
             currentAccount = result.account;
-            cachedAccessToken = result.accessToken;
+            cacheToken(result);
             return result.accessToken;
         } finally {
             loginInProgress = false;
@@ -117,26 +144,48 @@ async function acquireTokenSilent() {
             scopes: FABRIC_SCOPES,
             account: currentAccount
         });
-        cachedAccessToken = result.accessToken;
+        cacheToken(result);
         return result.accessToken;
-    } catch {
+    } catch (err) {
+        lastAuthError = err && err.message ? err.message : 'Silent token refresh failed.';
         return null;
     }
 }
 
+let lastAuthError = null;
+
 /**
- * Get a valid access token (try silent refresh first).
+ * Get a valid access token.
+ *
+ * Silent refresh first; the cached token is only reused while it is still valid.
+ * An expired token is dropped so callers get `null` (and the UI reports
+ * disconnected) instead of hitting Fabric with a token that always 401s.
  */
 async function getAccessToken() {
     const token = await acquireTokenSilent();
-    return token || cachedAccessToken;
+    if (token) {
+        lastAuthError = null;
+        return token;
+    }
+    if (tokenCache.accessToken && tokenIsValid(tokenCache.expiresOn)) {
+        return tokenCache.accessToken;
+    }
+    clearToken();
+    return null;
 }
 
 /**
- * Check if authenticated.
+ * Check if authenticated. An expired, unrefreshable token is not authentication.
  */
 function isAuthenticated() {
-    return currentAccount !== null && cachedAccessToken !== null;
+    return currentAccount !== null
+        && tokenCache.accessToken !== null
+        && tokenIsValid(tokenCache.expiresOn);
+}
+
+/** Why the last silent refresh failed, for a diagnostic message in the UI. */
+function getLastAuthError() {
+    return lastAuthError;
 }
 
 /**
@@ -163,7 +212,8 @@ function getAccountInfo() {
  */
 function logout() {
     currentAccount = null;
-    cachedAccessToken = null;
+    clearToken();
+    lastAuthError = null;
     msalInstance = null;
 }
 
@@ -175,5 +225,9 @@ module.exports = {
     isAuthenticated,
     isLoginPending,
     getAccountInfo,
-    logout
+    getLastAuthError,
+    logout,
+    // Exposed so the token lifetime can be asserted and inspected.
+    tokenIsValid,
+    tokenCache
 };
