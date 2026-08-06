@@ -365,7 +365,9 @@ const OBJECT_TYPES = [
     'dataaccessoptions',        // model-level data access flags
     'datacoveragepermission',   // tablePermission data coverage
     'formatstringdefinition',   // dynamic format strings (DAX)
-    'detailrowsdefinition'      // detail rows expressions (DAX)
+    'detailrowsdefinition',     // detail rows expressions (DAX)
+    'connectiondetails',        // dataSource connection (server, database, protocol)
+    'credential'                // dataSource credential settings
 ];
 
 function isObjectDeclaration(line) {

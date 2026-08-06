@@ -3,6 +3,8 @@
  * Enhanced: preserves source file info and raw blocks for deployment.
  */
 
+const { rootKey, childKey } = require('./keys');
+
 const CHANGE_GROUPS = {
     TABLES: 'Tables & Relationships',
     MEASURES: 'Measures',
@@ -16,6 +18,10 @@ const CHANGE_GROUPS = {
     NAMED_EXPRESSIONS: 'Named Expressions',
     FUNCTIONS: 'Functions'
 };
+
+// Per-environment identifiers. Never compared (they legitimately differ between
+// DEV and PROD) and preserved by the deployer when a block is replaced.
+const ENV_PROPERTIES = new Set(['lineageTag', 'sourceLineageTag']);
 
 /**
  * Serialize all child blocks of a given type into a deterministic, sorted, normalized
@@ -39,6 +45,40 @@ function serializeChildren(obj, types) {
     }
     blocks.sort();
     return blocks.join('\n');
+}
+
+/**
+ * Read a `<name> = <DAX>` definition (formatStringDefinition / detailRowsDefinition).
+ * Modern TMDL emits these as nested blocks, but a flat `name = value` property is
+ * also valid input — read both so the value is never silently dropped.
+ */
+function serializeDefinition(obj, name) {
+    const fromChildren = serializeChildren(obj, [name]);
+    if (fromChildren) return fromChildren;
+    const flat = obj && obj.properties ? obj.properties[name] : null;
+    return flat ? String(flat).trim() : '';
+}
+
+/** Copy every parsed property except the per-environment identifiers. */
+function copyProperties(obj) {
+    const out = {};
+    for (const [key, value] of Object.entries((obj && obj.properties) || {})) {
+        if (ENV_PROPERTIES.has(key)) continue;
+        out[key] = value;
+    }
+    return out;
+}
+
+// Power BI Desktop suffixes partition names with a GUID that is regenerated per
+// environment. Strip it so the same partition is not reported Added + Removed.
+const GUID_SUFFIX_RE = /-[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+const BARE_GUID_RE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+
+function normalizePartitionName(name, index) {
+    const raw = String(name || '');
+    if (BARE_GUID_RE.test(raw)) return `#${index}`;
+    const stripped = raw.replace(GUID_SUFFIX_RE, '');
+    return stripped || `#${index}`;
 }
 
 /**
@@ -81,7 +121,7 @@ function extractAll(model) {
 
 function extractTable(table, objects) {
     const tableName = table.name;
-    const key = `table:${tableName}`;
+    const key = rootKey('table', tableName);
 
     // If table has a calculationGroup child, classify it as Calculation Group
     const hasCalcGroup = table.children.some(c => c.type === 'calculationgroup');
@@ -90,10 +130,14 @@ function extractTable(table, objects) {
         objectType: 'table',
         identityKey: key,
         displayName: tableName,
+        objectName: tableName,
         changeGroup: hasCalcGroup ? CHANGE_GROUPS.CALCULATION_GROUPS : CHANGE_GROUPS.TABLES,
         sourceFile: table.file,
         rawBlock: table.rawBlock,
         properties: {
+            // Real name is compared so a case-only rename surfaces as a modify
+            // (identity keys are case-insensitive, matching Analysis Services).
+            name: tableName,
             isHidden: table.properties.isHidden || 'false',
             isPrivate: table.properties.isPrivate || 'false',
             description: table.properties.description || '',
@@ -107,20 +151,25 @@ function extractTable(table, objects) {
         }
     };
 
+    let partitionIndex = 0;
     for (const child of table.children) {
         switch (child.type) {
             case 'column': extractColumn(tableName, child, table.file, objects, hasCalcGroup); break;
             case 'measure': extractMeasure(tableName, child, table.file, objects); break;
             case 'hierarchy': extractHierarchy(tableName, child, table.file, objects); break;
-            case 'partition': extractPartition(tableName, child, table.file, objects, hasCalcGroup); break;
+            case 'partition': extractPartition(tableName, child, table.file, objects, hasCalcGroup, partitionIndex++); break;
             case 'calculationgroup': extractCalculationGroup(tableName, child, table.file, objects); break;
         }
     }
 }
 
 function extractColumn(tableName, col, sourceFile, objects, isCalcGroupTable) {
-    const key = `column:${tableName}.${col.name}`;
-    const props = {
+    const key = childKey('column', tableName, col.name);
+    // Start from EVERY parsed property: a fixed whitelist silently dropped
+    // anything not listed (isAvailableInMdx, encodingHint variants, …).
+    const props = copyProperties(col);
+    Object.assign(props, {
+        name: col.name,
         dataType: col.properties.dataType || '',
         sourceColumn: col.properties.sourceColumn || '',
         formatString: col.properties.formatString || '',
@@ -133,21 +182,22 @@ function extractColumn(tableName, col, sourceFile, objects, isCalcGroupTable) {
         dataCategory: col.properties.dataCategory || '',
         summarizeBy: col.properties.summarizeBy || 'default',
         sortByColumn: col.properties.sortByColumn || '',
-        // lineageTag/sourceLineageTag intentionally excluded from comparison —
-        // they are per-environment identifiers preserved by the deployer.
         summarizationSetBy: col.properties.summarizationSetBy || '',
         encodingHint: col.properties.encodingHint || '',
         annotations: serializeChildren(col, ['annotation', 'extendedProperty']),
-        formatStringDefinition: serializeChildren(col, ['formatStringDefinition']),
-        detailRowsDefinition: serializeChildren(col, ['detailRowsDefinition']),
-        variations: serializeChildren(col, ['variation'])
-    };
+        formatStringDefinition: serializeDefinition(col, 'formatStringDefinition'),
+        detailRowsDefinition: serializeDefinition(col, 'detailRowsDefinition'),
+        variations: serializeChildren(col, ['variation']),
+        // Aggregation table mapping — invisible before, so a wrong mapping stayed in PROD.
+        alternateOf: serializeChildren(col, ['alternateOf'])
+    });
     if (col.expression) props.expression = col.expression;
 
     objects[key] = {
         objectType: 'column',
         identityKey: key,
         displayName: `${tableName}.${col.name}`,
+        objectName: col.name,
         parentTable: tableName,
         changeGroup: isCalcGroupTable ? CHANGE_GROUPS.CALCULATION_GROUPS : CHANGE_GROUPS.TABLES,
         sourceFile,
@@ -157,8 +207,9 @@ function extractColumn(tableName, col, sourceFile, objects, isCalcGroupTable) {
 }
 
 function extractMeasure(tableName, measure, sourceFile, objects) {
-    const key = `measure:${tableName}.${measure.name}`;
+    const key = childKey('measure', tableName, measure.name);
     const props = {
+        name: measure.name,
         expression: measure.expression || '',
         formatString: measure.properties.formatString || '',
         displayFolder: measure.properties.displayFolder || '',
@@ -168,15 +219,21 @@ function extractMeasure(tableName, measure, sourceFile, objects) {
         // per-environment identifier preserved by the deployer.
         dataCategory: measure.properties.dataCategory || '',
         annotations: serializeChildren(measure, ['annotation', 'extendedProperty']),
-        formatStringDefinition: serializeChildren(measure, ['formatStringDefinition']),
-        detailRowsDefinition: serializeChildren(measure, ['detailRowsDefinition'])
+        formatStringDefinition: serializeDefinition(measure, 'formatStringDefinition'),
+        detailRowsDefinition: serializeDefinition(measure, 'detailRowsDefinition')
     };
 
     for (const child of measure.children || []) {
         if (child.type === 'kpi') {
+            // Copy EVERY kpi property — statusGraphic / trendGraphic changes were
+            // invisible when only the three expressions were read.
+            for (const [name, value] of Object.entries(copyProperties(child))) {
+                props[`kpi.${name}`] = value;
+            }
             props['kpi.statusExpression'] = child.properties.statusExpression || child.expression || '';
             props['kpi.targetExpression'] = child.properties.targetExpression || '';
             props['kpi.trendExpression'] = child.properties.trendExpression || '';
+            props['kpi.annotations'] = serializeChildren(child, ['annotation', 'extendedProperty']);
         }
     }
 
@@ -184,6 +241,7 @@ function extractMeasure(tableName, measure, sourceFile, objects) {
         objectType: 'measure',
         identityKey: key,
         displayName: `${tableName}.${measure.name}`,
+        objectName: measure.name,
         parentTable: tableName,
         changeGroup: CHANGE_GROUPS.MEASURES,
         sourceFile,
@@ -193,8 +251,9 @@ function extractMeasure(tableName, measure, sourceFile, objects) {
 }
 
 function extractHierarchy(tableName, hier, sourceFile, objects) {
-    const key = `hierarchy:${tableName}.${hier.name}`;
+    const key = childKey('hierarchy', tableName, hier.name);
     const props = {
+        name: hier.name,
         displayFolder: hier.properties.displayFolder || '',
         isHidden: hier.properties.isHidden || 'false'
     };
@@ -211,6 +270,7 @@ function extractHierarchy(tableName, hier, sourceFile, objects) {
         objectType: 'hierarchy',
         identityKey: key,
         displayName: `${tableName}.${hier.name}`,
+        objectName: hier.name,
         parentTable: tableName,
         changeGroup: CHANGE_GROUPS.HIERARCHIES,
         sourceFile,
@@ -219,11 +279,13 @@ function extractHierarchy(tableName, hier, sourceFile, objects) {
     };
 }
 
-function extractPartition(tableName, partition, sourceFile, objects, isCalcGroupTable) {
-    const key = `partition:${tableName}.${partition.name}`;
+function extractPartition(tableName, partition, sourceFile, objects, isCalcGroupTable, index) {
+    const normalized = normalizePartitionName(partition.name, index);
+    const key = childKey('partition', tableName, normalized);
     const partitionType = partition.expression || '';
     const sourceExpression = partition.properties.source || '';
     const props = {
+        name: normalized,
         mode: partition.properties.mode || 'import',
         type: partitionType,
         expression: sourceExpression,
@@ -235,7 +297,11 @@ function extractPartition(tableName, partition, sourceFile, objects, isCalcGroup
     objects[key] = {
         objectType: 'partition',
         identityKey: key,
-        displayName: `${tableName}.${partition.name}`,
+        displayName: `${tableName}.${normalized}`,
+        // Real TMDL name (usually `<Table>-<GUID>`, different per environment).
+        // The deployer needs it to locate the block in the target file.
+        objectName: normalized,
+        realName: partition.name,
         parentTable: tableName,
         changeGroup: isCalcGroupTable ? CHANGE_GROUPS.CALCULATION_GROUPS : CHANGE_GROUPS.TABLES,
         sourceFile,
@@ -245,11 +311,14 @@ function extractPartition(tableName, partition, sourceFile, objects, isCalcGroup
 }
 
 function extractCalculationGroup(tableName, calcGroup, sourceFile, objects) {
-    const key = `calculationGroup:${tableName}`;
+    const key = rootKey('calculationGroup', tableName);
     objects[key] = {
         objectType: 'calculationGroup',
         identityKey: key,
         displayName: tableName,
+        // A calculationGroup block is declared bare (`calculationGroup`) or with a
+        // name — never derived from displayName, which is just the table name.
+        objectName: calcGroup.name || '',
         parentTable: tableName,
         changeGroup: CHANGE_GROUPS.CALCULATION_GROUPS,
         sourceFile,
@@ -259,16 +328,22 @@ function extractCalculationGroup(tableName, calcGroup, sourceFile, objects) {
 
     for (const item of calcGroup.children || []) {
         if (item.type === 'calculationitem') {
-            const itemKey = `calculationItem:${tableName}.${item.name}`;
+            const itemKey = childKey('calculationItem', tableName, item.name);
             objects[itemKey] = {
                 objectType: 'calculationItem',
                 identityKey: itemKey,
                 displayName: `${tableName}.${item.name}`,
+                objectName: item.name,
                 parentTable: tableName,
                 changeGroup: CHANGE_GROUPS.CALCULATION_GROUPS,
                 sourceFile,
                 rawBlock: item.rawBlock,
-                properties: { expression: item.expression || '', ordinal: item.properties.ordinal || '0' }
+                properties: {
+                    name: item.name,
+                    expression: item.expression || '',
+                    ordinal: item.properties.ordinal || '0',
+                    formatStringDefinition: serializeDefinition(item, 'formatStringDefinition')
+                }
             };
         }
     }
@@ -280,11 +355,16 @@ function extractRelationship(rel, objects) {
     const isActive = rel.properties.isActive || 'true';
     const crossFilter = rel.properties.crossFilteringBehavior || 'oneDirection';
     const displayName = `${fromCol} → ${toCol}`;
-    // Composite identity key: same (from,to) can occur multiple times (active+inactive,
-    // different cross-filter directions). Including isActive + crossFilter avoids collision.
-    const keySuffix = isActive === 'true' ? '' : '|inactive';
-    const cfSuffix = crossFilter === 'oneDirection' ? '' : `|cf=${crossFilter}`;
-    const key = `relationship:${displayName}${keySuffix}${cfSuffix}`;
+
+    // Identity is the endpoint pair ONLY. Including isActive / crossFilteringBehavior
+    // made a flipped isActive look like an unrelated Add + Remove: deploying the Add
+    // appended a duplicate relationship on the same column pair, which AS rejects.
+    // Several relationships may legitimately share a pair — later ones get a stable
+    // ordinal suffix so they still have distinct identities.
+    const baseKey = rootKey('relationship', displayName);
+    let key = baseKey;
+    let ordinal = 1;
+    while (objects[key]) key = `${baseKey}#${++ordinal}`;
 
     objects[key] = {
         objectType: 'relationship',
@@ -293,6 +373,8 @@ function extractRelationship(rel, objects) {
         // Real TMDL name (typically a GUID). Different between DEV/PROD, used by deployer
         // to locate the existing block in target during modify/remove.
         relName: rel.name,
+        realName: rel.name,
+        objectName: rel.name,
         changeGroup: CHANGE_GROUPS.TABLES,
         sourceFile: rel.file,
         rawBlock: rel.rawBlock,
@@ -315,7 +397,7 @@ function extractRelationship(rel, objects) {
 }
 
 function extractRole(role, objects) {
-    const key = `role:${role.name}`;
+    const key = rootKey('role', role.name);
 
     // Collect table permission summaries for role-level view
     const tablePerms = (role.children || []).filter(c => c.type === 'tablepermission');
@@ -325,31 +407,35 @@ function extractRole(role, objects) {
         objectType: 'role',
         identityKey: key,
         displayName: role.name,
+        objectName: role.name,
         changeGroup: CHANGE_GROUPS.ROLES,
         sourceFile: role.file,
         rawBlock: role.rawBlock,
         properties: {
+            name: role.name,
             modelPermission: role.properties.modelPermission || '',
             description: role.properties.description || '',
             tablePermissions: permSummary
         }
     };
     for (const child of tablePerms) {
-        const tpKey = `tablePermission:${role.name}.${child.name}`;
+        const tpKey = childKey('tablePermission', role.name, child.name);
         const filterExpr = child.expression || child.properties.filterExpression || '';
         objects[tpKey] = {
             objectType: 'tablePermission',
             identityKey: tpKey,
             displayName: `${role.name} → ${child.name}`,
+            objectName: child.name,
             parentRole: role.name,
             changeGroup: CHANGE_GROUPS.ROLES,
             sourceFile: role.file,
             rawBlock: child.rawBlock,
             properties: {
+                name: child.name,
                 filterExpression: filterExpr,
                 metadataPermission: child.properties.metadataPermission || '',
                 columnPermissions: serializeChildren(child, ['columnpermission']),
-                dataCoveragePermission: serializeChildren(child, ['datacoveragepermission'])
+                dataCoveragePermission: serializeChildren(child, ['dataCoveragePermission'])
             }
         };
     }
@@ -357,11 +443,12 @@ function extractRole(role, objects) {
     // Extract role members
     const members = (role.children || []).filter(c => c.type === 'member');
     for (const member of members) {
-        const mKey = `roleMember:${role.name}.${member.name}`;
+        const mKey = childKey('roleMember', role.name, member.name);
         objects[mKey] = {
             objectType: 'roleMember',
             identityKey: mKey,
             displayName: `${role.name} → ${member.name}`,
+            objectName: member.name,
             parentRole: role.name,
             changeGroup: CHANGE_GROUPS.ROLES,
             sourceFile: role.file,
@@ -375,7 +462,7 @@ function extractRole(role, objects) {
 }
 
 function extractExpression(expr, objects) {
-    const key = `expression:${expr.name}`;
+    const key = rootKey('expression', expr.name);
     const exprValue = expr.expression || '';
 
     // Detect M parameters (IsParameterQuery in meta) vs shared queries
@@ -387,10 +474,12 @@ function extractExpression(expr, objects) {
         subType: isParameter ? 'parameter' : 'query',
         identityKey: key,
         displayName: expr.name,
+        objectName: expr.name,
         changeGroup: group,
         sourceFile: expr.file,
         rawBlock: expr.rawBlock,
         properties: {
+            name: expr.name,
             expression: exprValue,
             kind: expr.properties.kind || 'm'
         }
@@ -398,12 +487,12 @@ function extractExpression(expr, objects) {
 }
 
 function extractPerspective(persp, objects) {
-    const key = `perspective:${persp.name}`;
+    const key = rootKey('perspective', persp.name);
     const tables = [];
     const measures = [];
     const columns = [];
     const hierarchies = [];
-    
+
     for (const child of persp.children || []) {
         if (child.type === 'perspectivetable') {
             tables.push(child.name);
@@ -419,21 +508,23 @@ function extractPerspective(persp, objects) {
             }
         }
     }
-    
+
     // Sort lists to ensure consistent comparison (order may differ between environments)
     tables.sort();
     measures.sort();
     columns.sort();
     hierarchies.sort();
-    
+
     objects[key] = {
         objectType: 'perspective',
         identityKey: key,
         displayName: persp.name,
+        objectName: persp.name,
         changeGroup: CHANGE_GROUPS.PERSPECTIVES,
         sourceFile: persp.file,
         rawBlock: persp.rawBlock,
         properties: {
+            name: persp.name,
             description: persp.properties.description || '',
             includedTables: tables.join(', '),
             includedMeasures: measures.join(', '),
@@ -443,47 +534,48 @@ function extractPerspective(persp, objects) {
     };
 }
 
-function extractCulture(culture, objects) {
-    const key = `culture:${culture.name}`;
-    const props = { locale: culture.name };
+/**
+ * Walk a translations tree to arbitrary depth and record EVERY translated
+ * property. The previous fixed 3-level walk that read only caption/description
+ * missed hierarchy-level captions and translated displayFolders entirely.
+ */
+function collectTranslations(node, pathParts, out) {
+    for (const child of node.children || []) {
+        const label = child.name ? `${child.type} '${child.name}'` : child.type;
+        const nextPath = [...pathParts, label];
+        const entries = Object.entries(child.properties || {})
+            .filter(([, value]) => value !== '' && value != null)
+            .sort(([a], [b]) => a.localeCompare(b))
+            .map(([name, value]) => `${name}: ${value}`);
+        if (entries.length > 0) {
+            out.push(`${nextPath.join(' / ')}: ${entries.join(', ')}`);
+        }
+        collectTranslations(child, nextPath, out);
+    }
+}
 
-    // Extract translation details from parsed children
+function extractCulture(culture, objects) {
+    const key = rootKey('culture', culture.name);
+    const props = { name: culture.name, locale: culture.name };
+
     const translationsObj = (culture.children || []).find(c => c.type === 'translations');
     if (translationsObj) {
         const translations = [];
-        for (const modelChild of translationsObj.children || []) {
-            for (const tableChild of modelChild.children || []) {
-                const tableName = tableChild.name;
-                for (const objChild of tableChild.children || []) {
-                    const objType = objChild.type; // column, measure, table, hierarchy
-                    const objName = objChild.name;
-                    const caption = objChild.properties.caption || '';
-                    const description = objChild.properties.description || '';
-                    const parts = [];
-                    if (caption) parts.push(`caption: ${caption}`);
-                    if (description) parts.push(`description: ${description}`);
-                    if (parts.length > 0) {
-                        translations.push(`${tableName}.${objName} (${objType}): ${parts.join(', ')}`);
-                    }
-                }
-                // Table-level translations (caption/description on the table itself)
-                if (tableChild.properties.caption || tableChild.properties.description) {
-                    const parts = [];
-                    if (tableChild.properties.caption) parts.push(`caption: ${tableChild.properties.caption}`);
-                    if (tableChild.properties.description) parts.push(`description: ${tableChild.properties.description}`);
-                    translations.push(`${tableName} (table): ${parts.join(', ')}`);
-                }
-            }
-        }
+        collectTranslations(translationsObj, [], translations);
         if (translations.length > 0) {
+            translations.sort();
             props.translations = translations.join('\n');
         }
     }
+
+    // Q&A synonyms live in linguisticMetadata and were never compared.
+    props.linguisticMetadata = serializeChildren(culture, ['linguisticMetadata']);
 
     objects[key] = {
         objectType: 'culture',
         identityKey: key,
         displayName: culture.name,
+        objectName: culture.name,
         changeGroup: CHANGE_GROUPS.TRANSLATIONS,
         sourceFile: culture.file,
         rawBlock: culture.rawBlock,
@@ -492,15 +584,26 @@ function extractCulture(culture, objects) {
 }
 
 function extractDataSource(ds, objects) {
-    const key = `dataSource:${ds.name}`;
+    const key = rootKey('dataSource', ds.name);
+    // Compare the whole data source, not just `type`: a changed server or database
+    // in connectionDetails used to be reported as NO DIFFS.
+    const props = copyProperties(ds);
+    props.name = ds.name;
+    props.type = ds.properties.type || '';
+    props.connectionDetails = serializeChildren(ds, ['connectionDetails']);
+    props.credential = serializeChildren(ds, ['credential']);
+    props.annotations = serializeChildren(ds, ['annotation', 'extendedProperty']);
+    if (ds.expression) props.expression = ds.expression;
+
     objects[key] = {
         objectType: 'dataSource',
         identityKey: key,
         displayName: ds.name,
+        objectName: ds.name,
         changeGroup: CHANGE_GROUPS.DATA_SOURCES,
         sourceFile: ds.file,
         rawBlock: ds.rawBlock,
-        properties: { type: ds.properties.type || '' }
+        properties: props
     };
 }
 
@@ -510,6 +613,7 @@ function extractModelProperties(modelObj, objects) {
         identityKey: 'model:properties',
         displayName: 'Model Properties',
         modelName: modelObj.name || 'Model',
+        objectName: modelObj.name || 'Model',
         changeGroup: CHANGE_GROUPS.MODEL_PROPERTIES,
         sourceFile: modelObj.file,
         rawBlock: modelObj.rawBlock,
@@ -528,19 +632,21 @@ function extractModelProperties(modelObj, objects) {
 }
 
 function extractFunction(func, objects) {
-    const key = `function:${func.name}`;
+    const key = rootKey('function', func.name);
     objects[key] = {
         objectType: 'function',
         identityKey: key,
         displayName: func.name,
+        objectName: func.name,
         changeGroup: CHANGE_GROUPS.FUNCTIONS,
         sourceFile: func.file,
         rawBlock: func.rawBlock,
         properties: {
+            name: func.name,
             expression: func.expression || '',
             description: func.properties.description || ''
         }
     };
 }
 
-module.exports = { extractAll, CHANGE_GROUPS };
+module.exports = { extractAll, CHANGE_GROUPS, normalizePartitionName };
