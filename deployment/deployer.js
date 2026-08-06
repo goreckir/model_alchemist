@@ -80,7 +80,7 @@ function deployChanges(selectedDiffs, devModel, prodPath, options = {}) {
     } catch (validationErr) {
         result.warnings.push({
             code: 'VALIDATION_SKIPPED',
-            message: `Walidacja zaleznosci pominieta: ${validationErr.message}`
+            message: `Dependency validation skipped: ${validationErr.message}`
         });
     }
 
@@ -192,7 +192,7 @@ function executeAll(fileOps, prodPath, result, atomic) {
             if (opResult.changed === false) {
                 if (IDEMPOTENT_ACTIONS.has(op.action)) continue; // already correct on TARGET
                 failure = opResult.reason
-                    || `Operacja ${op.action} nie zmodyfikowala pliku (blok nie znaleziony w PROD).`;
+                    || `Operation ${op.action} did not modify the file (block not found in the target).`;
                 result.warnings.push({ code: opResult.code || 'OPERATION_NOOP', operation: op.description, message: failure });
             } else {
                 applied.push({ type: 'applied', ...op.description });
@@ -794,7 +794,7 @@ function planFileBasedOp(diff, devModel, prodPath, context, subdir) {
 function missingSourceOp(diff, sourceFileKey) {
     return {
         action: 'fail',
-        reason: `Nie znaleziono zrodla '${sourceFileKey}' w modelu DEV dla obiektu ${diff.displayName}.`,
+        reason: `Source block '${sourceFileKey}' was not found in the source model for ${diff.displayName}.`,
         code: 'DEV_SOURCE_MISSING',
         description: { action: diff.type === 1 ? 'remove' : diff.type === 0 ? 'add' : 'modify', objectType: diff.objectType, name: diff.displayName, file: sourceFileKey }
     };
@@ -816,8 +816,8 @@ function collectUnreviewedChangeWarnings(fileOps) {
             warnings.push({
                 code: 'UNREVIEWED_BLOCK_CHANGES',
                 operation: op.description,
-                message: `Wdrozenie '${op.description.name}' podmienia caly blok TMDL. Poza recenzowanymi wlasciwosciami zmieni sie rowniez: ` +
-                    `${extra.slice(0, 10).join('; ')}${extra.length > 10 ? ` (+${extra.length - 10})` : ''}.`
+                message: `Deploying '${op.description.name}' replaces its whole TMDL block. Beyond the properties you reviewed, this also changes: ` +
+                    `${extra.slice(0, 10).join('; ')}${extra.length > 10 ? ` (+${extra.length - 10} more)` : ''}.`
             });
         }
     }
@@ -913,7 +913,7 @@ function executeOperation(op, prodPath) {
         }
         case 'appendChild': {
             if (!fs.existsSync(op.targetPath)) {
-                return { changed: false, code: 'TARGET_FILE_MISSING', reason: `Plik docelowy nie istnieje: ${op.targetPath}` };
+                return { changed: false, code: 'TARGET_FILE_MISSING', reason: `Target file does not exist: ${op.targetPath}` };
             }
             const before = fs.readFileSync(op.targetPath, 'utf-8');
             const after = (op.parentIndent && op.parentIndent > 0)
@@ -923,8 +923,8 @@ function executeOperation(op, prodPath) {
                 return {
                     changed: false,
                     code: 'PARENT_BLOCK_MISSING',
-                    reason: `Nie znaleziono bloku nadrzednego dla ${op.childType} '${op.childName}' w ${path.basename(op.targetPath)}. ` +
-                        `Zaznacz calculationGroup do wdrozenia razem z jego elementami.`
+                    reason: `Parent block for ${op.childType} '${op.childName}' was not found in ${path.basename(op.targetPath)}. ` +
+                        `Select the calculationGroup for deployment together with its items.`
                 };
             }
             fs.writeFileSync(op.targetPath, after, 'utf-8');
@@ -932,24 +932,24 @@ function executeOperation(op, prodPath) {
         }
         case 'removeChild': {
             if (!fs.existsSync(op.targetPath)) {
-                return { changed: false, code: 'TARGET_FILE_MISSING', reason: `Plik docelowy nie istnieje: ${op.targetPath}` };
+                return { changed: false, code: 'TARGET_FILE_MISSING', reason: `Target file does not exist: ${op.targetPath}` };
             }
             const before = fs.readFileSync(op.targetPath, 'utf-8');
             const after = removeObjectBlock(before, op.childType, op.childName, op.parentIndent || 0);
             if (after === before) {
-                return { changed: false, code: 'BLOCK_NOT_FOUND', reason: `Nie znaleziono bloku ${op.childType} '${op.childName}' w ${path.basename(op.targetPath)}` };
+                return { changed: false, code: 'BLOCK_NOT_FOUND', reason: `Block ${op.childType} '${op.childName}' was not found in ${path.basename(op.targetPath)}` };
             }
             fs.writeFileSync(op.targetPath, after, 'utf-8');
             return { changed: true };
         }
         case 'replaceChild': {
             if (!fs.existsSync(op.targetPath)) {
-                return { changed: false, code: 'TARGET_FILE_MISSING', reason: `Plik docelowy nie istnieje: ${op.targetPath}` };
+                return { changed: false, code: 'TARGET_FILE_MISSING', reason: `Target file does not exist: ${op.targetPath}` };
             }
             const before = fs.readFileSync(op.targetPath, 'utf-8');
             const after = replaceObjectBlock(before, op.childType, op.childName, op.parentIndent || 0, op.newBlock);
             if (after === before) {
-                return { changed: false, code: 'BLOCK_NOT_FOUND', reason: `Nie znaleziono bloku ${op.childType} '${op.childName}' w ${path.basename(op.targetPath)} (PROD nie ma tego obiektu lub uzywa innego wciecia)` };
+                return { changed: false, code: 'BLOCK_NOT_FOUND', reason: `Block ${op.childType} '${op.childName}' was not found in ${path.basename(op.targetPath)} (the target does not have this object, or uses different indentation)` };
             }
             fs.writeFileSync(op.targetPath, after, 'utf-8');
             return { changed: true };
@@ -957,7 +957,7 @@ function executeOperation(op, prodPath) {
         case 'appendTopLevel': {
             if (!fs.existsSync(op.targetPath)) {
                 if (!op.createIfMissing) {
-                    return { changed: false, code: 'TARGET_FILE_MISSING', reason: `Plik docelowy nie istnieje: ${op.targetPath}` };
+                    return { changed: false, code: 'TARGET_FILE_MISSING', reason: `Target file does not exist: ${op.targetPath}` };
                 }
                 const dir = path.dirname(op.targetPath);
                 if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
@@ -971,12 +971,12 @@ function executeOperation(op, prodPath) {
         }
         case 'removeTopLevel': {
             if (!fs.existsSync(op.targetPath)) {
-                return { changed: false, code: 'TARGET_FILE_MISSING', reason: `Plik docelowy nie istnieje: ${op.targetPath}` };
+                return { changed: false, code: 'TARGET_FILE_MISSING', reason: `Target file does not exist: ${op.targetPath}` };
             }
             const before = fs.readFileSync(op.targetPath, 'utf-8');
             const after = removeObjectBlock(before, op.objectType, op.objectName, -1);
             if (after === before) {
-                return { changed: false, code: 'BLOCK_NOT_FOUND', reason: `Nie znaleziono bloku ${op.objectType} '${op.objectName}' w ${path.basename(op.targetPath)}` };
+                return { changed: false, code: 'BLOCK_NOT_FOUND', reason: `Block ${op.objectType} '${op.objectName}' was not found in ${path.basename(op.targetPath)}` };
             }
             fs.writeFileSync(op.targetPath, after, 'utf-8');
             return { changed: true };
@@ -984,20 +984,20 @@ function executeOperation(op, prodPath) {
         case 'replaceTopLevel':
         case 'replaceModelBlock': {
             if (!fs.existsSync(op.targetPath)) {
-                return { changed: false, code: 'TARGET_FILE_MISSING', reason: `Plik docelowy nie istnieje: ${op.targetPath}` };
+                return { changed: false, code: 'TARGET_FILE_MISSING', reason: `Target file does not exist: ${op.targetPath}` };
             }
             const before = fs.readFileSync(op.targetPath, 'utf-8');
             const merge = op.action === 'replaceModelBlock' ? mergeModelBlock : undefined;
             const after = replaceObjectBlock(before, op.objectType, op.objectName, -1, op.newBlock, merge);
             if (after === before) {
-                return { changed: false, code: 'BLOCK_NOT_FOUND', reason: `Nie znaleziono bloku ${op.objectType} '${op.objectName}' w ${path.basename(op.targetPath)} (PROD nie ma tego obiektu lub uzywa innego wciecia)` };
+                return { changed: false, code: 'BLOCK_NOT_FOUND', reason: `Block ${op.objectType} '${op.objectName}' was not found in ${path.basename(op.targetPath)} (the target does not have this object, or uses different indentation)` };
             }
             fs.writeFileSync(op.targetPath, after, 'utf-8');
             return { changed: true };
         }
         case 'replaceTableHeader': {
             if (!fs.existsSync(op.targetPath)) {
-                return { changed: false, code: 'TARGET_FILE_MISSING', reason: `Plik docelowy nie istnieje: ${op.targetPath}` };
+                return { changed: false, code: 'TARGET_FILE_MISSING', reason: `Target file does not exist: ${op.targetPath}` };
             }
             const before = fs.readFileSync(op.targetPath, 'utf-8');
             const after = replaceTableHeader(before, op.devContent, op.tableName);
@@ -1006,7 +1006,7 @@ function executeOperation(op, prodPath) {
         }
         case 'replaceBlockHeader': {
             if (!fs.existsSync(op.targetPath)) {
-                return { changed: false, code: 'TARGET_FILE_MISSING', reason: `Plik docelowy nie istnieje: ${op.targetPath}` };
+                return { changed: false, code: 'TARGET_FILE_MISSING', reason: `Target file does not exist: ${op.targetPath}` };
             }
             const before = fs.readFileSync(op.targetPath, 'utf-8');
             const after = replaceBlockHeader(before, op.devContent, op.blockKeyword, op.blockName, op.childKeywords);
@@ -1030,7 +1030,7 @@ function executeOperation(op, prodPath) {
             return { changed: true };
         }
         default:
-            return { changed: false, code: 'UNKNOWN_OPERATION', reason: `Nieznana operacja: ${op.action}` };
+            return { changed: false, code: 'UNKNOWN_OPERATION', reason: `Unknown operation: ${op.action}` };
     }
 
     // Handle model.tmdl ref updates

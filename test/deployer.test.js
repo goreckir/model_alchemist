@@ -199,7 +199,7 @@ test('#39 a missing DEV source is reported as an error, not silent success', () 
     };
     const result = deployChanges([fakeDiff], s.devModel, s.prodPath, { backup: false, prodModel: s.prodModel });
     assert.strictEqual(result.success, false);
-    assert.match(errorText(result), /Nie znaleziono zrodla/);
+    assert.match(errorText(result), /Source block .* was not found/);
 });
 
 // ── #40: child object name derived by splitting displayName on dots ───────────

@@ -56,7 +56,7 @@ function validateDependencies(selectedDiffs, devModel, prodModel, allDiffs = [])
                 warnings.push({
                     code: 'COMPAT_LEVEL_AUTO_BUMP',
                     identityKey: d.identityKey,
-                    message: `Obiekt ${d.objectType} '${d.displayName}' wymaga compatibilityLevel >= ${required}, target ma ${targetCompat}. compatibilityLevel zostanie automatycznie podniesiony do ${required} w database.tmdl.`
+                    message: `${d.objectType} '${d.displayName}' requires compatibilityLevel >= ${required}, target is at ${targetCompat}. compatibilityLevel will be raised to ${required} in database.tmdl automatically.`
                 });
             }
         }
@@ -83,7 +83,7 @@ function validateDependencies(selectedDiffs, devModel, prodModel, allDiffs = [])
                 errors.push({
                     code: 'MISSING_PARENT_TABLE',
                     identityKey: d.identityKey,
-                    message: `Dodawana kolumna ${d.displayName} wymaga tabeli '${d.parentTable}' \u2014 brak jej w target i nie zaznaczono jej do dodania.`
+                    message: `Column ${d.displayName} needs table '${d.parentTable}', which is not in the target and is not selected to be added.`
                 });
             }
         }
@@ -94,7 +94,7 @@ function validateDependencies(selectedDiffs, devModel, prodModel, allDiffs = [])
                 errors.push({
                     code: 'MISSING_PARENT_TABLE',
                     identityKey: d.identityKey,
-                    message: `Dodawany obiekt ${d.displayName} (${d.objectType}) wymaga tabeli '${d.parentTable}' \u2014 brak jej w target.`
+                    message: `${d.objectType} ${d.displayName} needs table '${d.parentTable}', which is not in the target.`
                 });
             }
         }
@@ -107,7 +107,7 @@ function validateDependencies(selectedDiffs, devModel, prodModel, allDiffs = [])
                 errors.push({
                     code: 'MISSING_CALCULATION_GROUP',
                     identityKey: d.identityKey,
-                    message: `Dodawany calculationItem ${d.displayName} wymaga grupy obliczeniowej w tabeli '${d.parentTable}' \u2014 brak jej w target i nie zaznaczono jej do dodania.`
+                    message: `calculationItem ${d.displayName} needs a calculation group in table '${d.parentTable}', which is not in the target and is not selected to be added.`
                 });
             }
         }
@@ -128,7 +128,7 @@ function validateDependencies(selectedDiffs, devModel, prodModel, allDiffs = [])
                     errors.push({
                         code: 'MISSING_RELATIONSHIP_ENDPOINT',
                         identityKey: d.identityKey,
-                        message: `Dodawana relacja ${d.displayName} wymaga kolumny '${colRef}' \u2014 brak jej w target i nie zaznaczono do dodania.`
+                        message: `Relationship ${d.displayName} needs column '${colRef}', which is not in the target and is not selected to be added.`
                     });
                 }
             }
@@ -160,7 +160,7 @@ function validateDependencies(selectedDiffs, devModel, prodModel, allDiffs = [])
                 errors.push({
                     code: 'DUPLICATE_RELATIONSHIP',
                     identityKey: d.identityKey,
-                    message: `Dodawana relacja ${d.displayName} uzywa tej samej pary kolumn co istniejaca relacja '${existing}' w target. Analysis Services odrzuci zduplikowana relacje \u2014 wdroz zmiane jako modyfikacje istniejacej relacji albo usun tamta.`
+                    message: `Relationship ${d.displayName} uses the same column pair as '${existing}', which already exists in the target. Analysis Services rejects duplicate relationships: deploy this as a modification of the existing relationship, or remove that one.`
                 });
             }
         }
@@ -189,7 +189,7 @@ function validateDependencies(selectedDiffs, devModel, prodModel, allDiffs = [])
                     warnings.push({
                         code: 'CASCADE_RELATIONSHIP_REMOVE',
                         identityKey: rel.identityKey,
-                        message: `Relacja '${rel.displayName}' zostanie automatycznie usunieta (kolumna '${colName}' jest usuwana).`
+                        message: `Relationship '${rel.displayName}' will be removed automatically because column '${colName}' is being removed.`
                     });
                 }
             }
@@ -208,7 +208,7 @@ function validateDependencies(selectedDiffs, devModel, prodModel, allDiffs = [])
                     warnings.push({
                         code: 'CASCADE_RELATIONSHIP_REMOVE',
                         identityKey: rel.identityKey,
-                        message: `Relacja '${rel.displayName}' zostanie automatycznie usunieta (tabela '${tbl}' jest usuwana).`
+                        message: `Relationship '${rel.displayName}' will be removed automatically because table '${tbl}' is being removed.`
                     });
                 }
             }
@@ -237,15 +237,15 @@ function validateDependencies(selectedDiffs, devModel, prodModel, allDiffs = [])
                     if (obj.objectType === 'perspective') {
                         const tables = String(obj.properties.includedTables || '').split(', ').filter(Boolean);
                         if (tables.some(t => sameName(t, tbl))) {
-                            dangling.push(`perspektywa '${obj.displayName}'`);
+                            dangling.push(`perspective '${obj.displayName}'`);
                         }
                     } else if (obj.objectType === 'tablePermission') {
                         if (sameName(obj.objectName, tbl) && !selectedKeys.has(rootKey('role', obj.parentRole))) {
-                            dangling.push(`rola '${obj.parentRole}' (tablePermission ${obj.objectName})`);
+                            dangling.push(`role '${obj.parentRole}' (tablePermission ${obj.objectName})`);
                         }
                     } else if (obj.objectType === 'culture') {
                         if (cultureReferencesTable(obj.rawBlock, tbl)) {
-                            dangling.push(`tlumaczenia '${obj.displayName}'`);
+                            dangling.push(`translations '${obj.displayName}'`);
                         }
                     }
                 }
@@ -254,8 +254,8 @@ function validateDependencies(selectedDiffs, devModel, prodModel, allDiffs = [])
                     errors.push({
                         code: 'DANGLING_TABLE_REF',
                         identityKey: rootKey('table', tbl),
-                        message: `Usuniecie tabeli '${tbl}' zostawi wiszace referencje w: ${[...new Set(dangling)].join(', ')}. ` +
-                            `Model bedzie niepoprawny. Zaznacz te obiekty do wdrozenia (ich wersje z DEV juz nie odwoluja sie do tabeli) albo usun je razem z tabela.`
+                        message: `Removing table '${tbl}' would leave dangling references in: ${[...new Set(dangling)].join(', ')}. ` +
+                            `The written model would be invalid. Select those objects for deployment too (their source versions no longer reference the table), or remove them along with the table.`
                     });
                     dangling.length = 0;
                 }
@@ -351,7 +351,7 @@ function validateDependencies(selectedDiffs, devModel, prodModel, allDiffs = [])
                 warnings.push({
                     code: 'MEASURE_REF_MISSING',
                     identityKey: d.identityKey,
-                    message: `Dodawany measure ${d.displayName} odwoluje sie do nieobecnych obiektow: ${[...missing].join(', ')}. Sprawdz czy sa zaznaczone do dodania.`
+                    message: `Measure ${d.displayName} references objects that are not present: ${[...missing].join(', ')}. Check whether they are selected to be added.`
                 });
             }
         }
@@ -374,7 +374,7 @@ function validateDependencies(selectedDiffs, devModel, prodModel, allDiffs = [])
             errors.push({
                 code: 'PERSPECTIVE_REF_MISSING',
                 identityKey: d.identityKey,
-                message: `Perspektywa '${d.displayName}' odwoluje sie do nieistniejacych w targecie obiektow: ${list}${more}. Dodaj brakujace obiekty do deployu, albo usun te referencje z perspektywy w DEV i wykonaj porownanie ponownie.`
+                message: `Perspective '${d.displayName}' references objects that do not exist in the target: ${list}${more}. Add the missing objects to this deployment, or remove those references from the perspective in the source and compare again.`
             });
         }
     }

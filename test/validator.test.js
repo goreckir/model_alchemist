@@ -87,7 +87,7 @@ test('#44 removing a table referenced by a perspective is blocked', () => {
     const result = validateDependencies(selected, devModel, prodModel, comparison.diffs);
     const dangling = result.errors.find(e => e.code === 'DANGLING_TABLE_REF');
     assert.ok(dangling, 'the dangling perspective reference is reported');
-    assert.match(dangling.message, /perspektywa 'Exec'/);
+    assert.match(dangling.message, /perspective 'Exec'/);
 });
 
 test('#44 removing a table referenced by an RLS role is blocked', () => {
@@ -108,7 +108,7 @@ test('#44 removing a table referenced by an RLS role is blocked', () => {
     const result = validateDependencies(selected, devModel, prodModel, comparison.diffs);
     const dangling = result.errors.find(e => e.code === 'DANGLING_TABLE_REF');
     assert.ok(dangling, 'the dangling role reference is reported');
-    assert.match(dangling.message, /rola 'Viewer'/);
+    assert.match(dangling.message, /role 'Viewer'/);
 });
 
 test('#44 selecting the perspective too clears the block', () => {
