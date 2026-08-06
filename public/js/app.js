@@ -2,12 +2,47 @@
 (function () {
     'use strict';
 
+    const Pure = window.MAPure;
+
+    /**
+     * Per-tab session id. Server state is keyed by this, so two tabs can hold two
+     * independent comparisons instead of overwriting each other's deploy target.
+     */
+    const SESSION_ID = (function () {
+        let id = sessionStorage.getItem('ma_sessionId');
+        if (!id) {
+            id = 'tab-' + Math.random().toString(36).slice(2) + '-' + Date.now().toString(36);
+            sessionStorage.setItem('ma_sessionId', id);
+        }
+        return id;
+    })();
+
+    /** fetch() with the session header attached. Every API call goes through this. */
+    function apiFetch(url, options = {}) {
+        const headers = Object.assign({}, options.headers, { 'x-ma-session': SESSION_ID });
+        return fetch(url, Object.assign({}, options, { headers }));
+    }
+
+    /** Parse a JSON response, turning a non-2xx into a thrown Error. */
+    async function apiJson(response, fallbackMessage) {
+        let payload = null;
+        try { payload = await response.json(); } catch { /* body was not JSON */ }
+        if (!response.ok) {
+            const message = (payload && (payload.error || payload.message)) || `${fallbackMessage} (HTTP ${response.status})`;
+            throw new Error(message);
+        }
+        return payload || {};
+    }
+
     // State
     let comparisonResult = null;
     let activeGroup = null;
     let activeFilter = 'all';
     let searchTerm = '';
     let selectedKeys = new Set();
+    // Group membership index, rebuilt once per comparison rather than rescanned
+    // per group on every render.
+    let groupIndex = { byKey: new Map(), memberSets: new Map() };
     let devPath = localStorage.getItem('ma_devPath') || '';
     let prodPath = localStorage.getItem('ma_prodPath') || '';
     let groupByLocation = localStorage.getItem('ma_groupByLocation') === 'true';
@@ -35,6 +70,7 @@
     const btnDeploy = document.getElementById('btn-deploy');
     const deployCount = document.getElementById('deploy-count');
     const errorMessage = document.getElementById('error-message');
+    const errorMessageText = document.getElementById('error-message-text');
     const loading = document.getElementById('loading');
     const groupList = document.getElementById('group-list');
     const diffContent = document.getElementById('diff-content');
@@ -65,6 +101,7 @@
     document.getElementById('modal-close').addEventListener('click', () => deployModal.classList.add('hidden'));
     document.getElementById('result-close').addEventListener('click', () => resultModal.classList.add('hidden'));
     document.getElementById('btn-result-ok').addEventListener('click', () => resultModal.classList.add('hidden'));
+    document.getElementById('error-message-close').addEventListener('click', hideError);
     document.getElementById('btn-select-all').addEventListener('click', selectAllVisible);
     document.getElementById('btn-deselect-all').addEventListener('click', deselectAll);
     document.getElementById('btn-expand-all').addEventListener('click', expandAll);
@@ -102,7 +139,7 @@
     // Refresh state
     let refreshHistory = []; // session refresh records
     let activeRefreshId = null;
-    let refreshPollTimer = null;
+    const refreshPollers = new Map(); // requestId -> { interval, timeout }
 
     // Export dropdown
     btnExport.addEventListener('click', (e) => {
@@ -148,7 +185,7 @@
     // Fetch version and defaults from server (single source of truth: package.json)
     (async function loadDefaults() {
         try {
-            const res = await fetch('/api/defaults');
+            const res = await apiFetch('/api/defaults');
             const data = await res.json();
             const versionEl = document.getElementById('app-version');
             if (versionEl && data.version) {
@@ -173,14 +210,15 @@
         });
     });
 
-    // Search input — filter diffs by name from 2nd character
+    // Search input — filters from the FIRST character. Re-rendering only at
+    // length >= 2 or 0 left the previous result set on screen at one character,
+    // and "Select All Visible" then selected that stale set.
+    // Debounced so a large model does not rebuild the DOM on every keystroke.
+    let searchDebounce = null;
     diffSearchInput.addEventListener('input', () => {
         searchTerm = diffSearchInput.value.trim();
-        if (searchTerm.length >= 2) {
-            renderDiffs();
-        } else if (searchTerm.length === 0) {
-            renderDiffs();
-        }
+        clearTimeout(searchDebounce);
+        searchDebounce = setTimeout(renderDiffs, 120);
     });
 
     // Close modals on backdrop click
@@ -246,7 +284,7 @@
 
             // If both are local, use the original endpoint
             if (devIsLocal && prodIsLocal) {
-                response = await fetch('/api/compare', {
+                response = await apiFetch('/api/compare', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ devPath, prodPath })
@@ -260,7 +298,7 @@
                     ? { type: 'local', path: prodPath }
                     : { type: 'fabric', connectionString: prodFabricSelection.connectionString, workspaceId: prodFabricSelection.workspaceId, semanticModelId: prodFabricSelection.semanticModelId };
 
-                response = await fetch('/api/compare-fabric', {
+                response = await apiFetch('/api/compare-fabric', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ devSource, prodSource })
@@ -293,7 +331,7 @@
 
             if (devIsLocal && prodIsLocal) {
                 if (!devPath || !prodPath) return;
-                response = await fetch('/api/compare', {
+                response = await apiFetch('/api/compare', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ devPath, prodPath })
@@ -306,7 +344,7 @@
                     ? { type: 'local', path: prodPath }
                     : { type: 'fabric', connectionString: prodFabricSelection.connectionString, workspaceId: prodFabricSelection.workspaceId, semanticModelId: prodFabricSelection.semanticModelId };
 
-                response = await fetch('/api/compare-fabric', {
+                response = await apiFetch('/api/compare-fabric', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ devSource, prodSource })
@@ -355,6 +393,10 @@
         btnDeploy.classList.remove('hidden');
         btnModelRefresh.classList.remove('hidden');
         updateRefreshButton();
+
+        // Rebuild the group membership index once per comparison instead of
+        // rescanning every group's memberKeys array on each render.
+        groupIndex = Pure.buildGroupIndex(comparisonResult.groups || []);
 
         setModelInfo(devModelName, comparisonResult.devSource, devPathInput.value);
         setModelInfo(prodModelName, comparisonResult.prodSource, prodPathInput.value);
@@ -433,20 +475,15 @@
     }
 
     function renderDiffs() {
-        let diffs = comparisonResult.diffs || [];
         const groups = comparisonResult.groups || [];
+        const diffs = Pure.filterDiffs(comparisonResult.diffs || [], { activeGroup, activeFilter, searchTerm })
+            .slice()
+            .sort((a, b) => a.displayName.localeCompare(b.displayName));
 
-        if (activeGroup !== null) {
-            diffs = diffs.filter(d => d.changeGroup === activeGroup);
-        }
-        if (activeFilter !== 'all') {
-            const typeMap = { 'Added': 0, 'Removed': 1, 'Modified': 2 };
-            diffs = diffs.filter(d => d.type === typeMap[activeFilter]);
-        }
-        if (searchTerm.length >= 2) {
-            const term = searchTerm.toLowerCase();
-            diffs = diffs.filter(d => d.displayName.toLowerCase().includes(term));
-        }
+        // Assigned BEFORE the empty-state early return. Returning first left
+        // lastVisibleDiffs holding the PREVIOUS view, so "Select All Visible" on
+        // an empty result selected invisible (or stale) diffs and armed Deploy.
+        lastVisibleDiffs = diffs;
 
         if (diffs.length === 0) {
             diffContent.innerHTML = `
@@ -458,31 +495,21 @@
             return;
         }
 
-        diffs.sort((a, b) => a.displayName.localeCompare(b.displayName));
-        lastVisibleDiffs = diffs;
-
-        // Build set of keys that belong to groups (for current visible diffs)
+        // Each diff is placed in exactly one bucket, so a diff shared by two
+        // groups can no longer render twice with checkboxes that desync.
         const visibleKeys = new Set(diffs.map(d => d.identityKey));
-        const groupedKeys = new Set();
-        const activeGroups = groups.filter(g =>
-            g.memberKeys.some(k => visibleKeys.has(k))
-        );
-        for (const g of activeGroups) {
-            for (const k of g.memberKeys) groupedKeys.add(k);
-        }
+        const partition = Pure.partitionByGroup(diffs, groups, groupIndex);
 
         diffContent.innerHTML = '';
 
         // Render atomic groups first
-        for (const group of activeGroups) {
-            const groupDiffs = diffs.filter(d => group.memberKeys.includes(d.identityKey));
-            if (groupDiffs.length > 0) {
-                diffContent.appendChild(createGroupElement(group, groupDiffs));
-            }
+        for (const bucket of partition.groups) {
+            const hidden = Pure.hiddenMemberCount(bucket.group, visibleKeys);
+            diffContent.appendChild(createGroupElement(bucket.group, bucket.diffs, hidden));
         }
 
         // Remaining diffs (not part of an atomic PQ group)
-        const remaining = diffs.filter(d => !groupedKeys.has(d.identityKey));
+        const remaining = partition.remaining;
 
         if (groupByLocation) {
             const locatable = remaining.filter(d => d.parentTable);
@@ -606,25 +633,35 @@
         return container;
     }
 
-    function createGroupElement(group, groupDiffs) {
+    function createGroupElement(group, groupDiffs, hiddenCount = 0) {
         const container = document.createElement('div');
         container.className = 'diff-group';
         container.dataset.groupId = group.groupId;
 
-        const allSelected = groupDiffs.every(d => selectedKeys.has(d.identityKey));
-        const someSelected = groupDiffs.some(d => selectedKeys.has(d.identityKey));
+        // An atomic group always deploys in full, so selection state is measured
+        // against ALL its members, not just the ones the current filter shows.
+        // The header and the member checkboxes used to disagree: one toggled the
+        // full set, the other only the visible subset.
+        const memberKeys = group.memberKeys || [];
+        const allSelected = memberKeys.length > 0 && memberKeys.every(k => selectedKeys.has(k));
+        const someSelected = memberKeys.some(k => selectedKeys.has(k));
 
-        const groupIcon = group.isParameterGroup ? '⚡↻' : '↻';
+        const groupIcon = group.isRename ? '✎' : group.isParameterGroup ? '⚡↻' : '↻';
+        const hiddenNote = hiddenCount > 0
+            ? `<span class="diff-group-badge" title="This group deploys as a unit. ${hiddenCount} member(s) are hidden by the current filter or search but WILL be deployed.">${hiddenCount} hidden — deploys as a unit</span>`
+            : '';
         container.innerHTML = `
             <div class="diff-group-header">
                 <div class="diff-checkbox-cell">
-                    <input type="checkbox" class="diff-group-checkbox" ${allSelected ? 'checked' : ''} ${someSelected && !allSelected ? 'indeterminate' : ''} />
+                    <input type="checkbox" class="diff-group-checkbox" ${allSelected ? 'checked' : ''} />
                 </div>
                 <div class="diff-group-info">
                     <span class="diff-group-icon">${groupIcon}</span>
-                    <span class="diff-group-label">${escapeHtml(group.label)}</span>
-                    <span class="diff-group-count">${groupDiffs.length} changes</span>
+                    <span class="diff-group-label">${Pure.escapeHtml(group.label)}</span>
+                    <span class="diff-group-count">${memberKeys.length} changes</span>
                     ${group.requiresRefresh ? '<span class="diff-group-badge">requires refresh</span>' : ''}
+                    ${group.isRename ? '<span class="diff-group-badge">rename — data loss</span>' : ''}
+                    ${hiddenNote}
                 </div>
                 <span class="expand-indicator">▼</span>
             </div>
@@ -634,24 +671,10 @@
         const checkbox = container.querySelector('.diff-group-checkbox');
         if (someSelected && !allSelected) checkbox.indeterminate = true;
 
-        // Group checkbox toggles all members
+        // Group checkbox toggles every member of the atomic group
         checkbox.addEventListener('click', (e) => {
             e.stopPropagation();
-            const shouldSelect = checkbox.checked;
-            for (const diff of groupDiffs) {
-                if (shouldSelect) {
-                    selectedKeys.add(diff.identityKey);
-                } else {
-                    selectedKeys.delete(diff.identityKey);
-                }
-            }
-            // Update member checkboxes
-            container.querySelectorAll('.diff-checkbox').forEach(cb => {
-                cb.checked = shouldSelect;
-                cb.closest('.diff-object').classList.toggle('selected', shouldSelect);
-            });
-            checkbox.indeterminate = false;
-            updateDeployButton();
+            setGroupSelection(group, checkbox.checked, container);
         });
 
         // Expand/collapse group members
@@ -669,6 +692,30 @@
         });
 
         return container;
+    }
+
+    /**
+     * Select or deselect every member of an atomic group and sync the DOM.
+     * Single source of truth for both the header checkbox and member checkboxes.
+     */
+    function setGroupSelection(group, shouldSelect, groupContainer) {
+        for (const key of group.memberKeys || []) {
+            if (shouldSelect) selectedKeys.add(key);
+            else selectedKeys.delete(key);
+        }
+        if (groupContainer) {
+            groupContainer.querySelectorAll('.diff-checkbox').forEach(cb => {
+                cb.checked = shouldSelect;
+                const obj = cb.closest('.diff-object');
+                if (obj) obj.classList.toggle('selected', shouldSelect);
+            });
+            const groupCb = groupContainer.querySelector('.diff-group-checkbox');
+            if (groupCb) {
+                groupCb.checked = shouldSelect;
+                groupCb.indeterminate = false;
+            }
+        }
+        updateDeployButton();
     }
 
     function createDiffElement(diff, parentGroup) {
@@ -713,7 +760,7 @@
         container.innerHTML = `
             <div class="diff-object-header">
                 <div class="diff-checkbox-cell">
-                    <input type="checkbox" class="diff-checkbox" data-key="${escapeHtml(diff.identityKey)}" ${isSelected ? 'checked' : ''} />
+                    <input type="checkbox" class="diff-checkbox" data-key="${escapeAttr(diff.identityKey)}" ${isSelected ? 'checked' : ''} />
                 </div>
                 <div class="diff-object-header-left">${leftContent}</div>
                 <div class="diff-object-header-right">${rightContent}</div>
@@ -726,26 +773,9 @@
         checkbox.addEventListener('click', (e) => {
             e.stopPropagation();
             if (parentGroup) {
-                // Inside a group: toggle ALL members together
-                const shouldSelect = checkbox.checked;
-                const groupContainer = container.closest('.diff-group');
-                const groupDiffKeys = parentGroup.memberKeys;
-                for (const key of groupDiffKeys) {
-                    if (shouldSelect) selectedKeys.add(key);
-                    else selectedKeys.delete(key);
-                }
-                // Update all member checkboxes in this group
-                if (groupContainer) {
-                    groupContainer.querySelectorAll('.diff-checkbox').forEach(cb => {
-                        cb.checked = shouldSelect;
-                        cb.closest('.diff-object').classList.toggle('selected', shouldSelect);
-                    });
-                    const groupCb = groupContainer.querySelector('.diff-group-checkbox');
-                    if (groupCb) {
-                        groupCb.checked = shouldSelect;
-                        groupCb.indeterminate = false;
-                    }
-                }
+                // Inside a group: toggle ALL members together, through the same
+                // path the header uses, so the two can never disagree.
+                setGroupSelection(parentGroup, checkbox.checked, container.closest('.diff-group'));
             } else {
                 // Standalone diff: toggle individually
                 if (checkbox.checked) {
@@ -948,6 +978,12 @@
         // Table/Folder branches would otherwise be silently dropped from selection.
         for (const diff of lastVisibleDiffs) {
             selectedKeys.add(diff.identityKey);
+            // Selecting a group member selects the whole atomic group, so the
+            // deployed set always matches what the group checkbox shows.
+            const group = groupIndex.byKey.get(diff.identityKey);
+            if (group) {
+                for (const key of group.memberKeys || []) selectedKeys.add(key);
+            }
         }
         document.querySelectorAll('.diff-checkbox').forEach(cb => {
             cb.checked = true;
@@ -1051,12 +1087,15 @@
 
         // Get preview
         try {
-            const response = await fetch('/api/deploy/preview', {
+            const response = await apiFetch('/api/deploy/preview', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ selectedKeys: [...selectedKeys] })
             });
-            const preview = await response.json();
+            // A 400/500 JSON error body parses fine and leaves actions/warnings
+            // undefined, which fell through to "No file operations planned" —
+            // read as "safe" right above the Confirm button.
+            const preview = await apiJson(response, 'Preview failed');
 
             let previewHtml = '';
 
@@ -1094,8 +1133,16 @@
             }
 
             deployPreview.innerHTML = previewHtml;
-        } catch {
-            deployPreview.innerHTML = '<p style="color: var(--color-removed-text);">Failed to load preview.</p>';
+            btnConfirmDeploy.disabled = false;
+        } catch (err) {
+            // Never let a failed preview look like an empty, safe plan.
+            deployPreview.innerHTML =
+                `<div style="background: rgba(229,83,75,0.08); border-left: 3px solid var(--color-removed-text); border-radius: 4px; padding: 10px; font-size: 13px;">
+                    <strong style="color: var(--color-removed-text);">✗ Could not build the deployment preview</strong><br>
+                    <span>${escapeHtml(err.message)}</span><br><br>
+                    <span>Deployment is disabled until the preview succeeds. Re-run the comparison and try again.</span>
+                </div>`;
+            btnConfirmDeploy.disabled = true;
         }
 
         deployModal.classList.remove('hidden');
@@ -1134,13 +1181,15 @@
                 payload.backupPath = backupPathInput.value.trim();
             }
 
-            const response = await fetch('/api/deploy', {
+            const response = await apiFetch('/api/deploy', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload)
             });
 
-            const result = await response.json();
+            // apiJson throws on a non-2xx, so a server error surfaces as a real
+            // message instead of an empty result modal.
+            const result = await apiJson(response, 'Deployment failed');
             hideAlchemistAnimation();
             showDeployResult(result);
 
@@ -1347,7 +1396,7 @@
         }
 
         try {
-            const response = await fetch('/api/fabric/refresh', {
+            const response = await apiFetch('/api/fabric/refresh', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -1396,16 +1445,31 @@
         }
     }
 
+    /**
+     * Poll one refresh. Each request gets its OWN timers.
+     *
+     * A single global timer meant starting a second refresh abandoned the first:
+     * its history row stayed "In Progress" for the rest of the session, the
+     * spinner never stopped and Recalculate stayed disabled.
+     */
     function startRefreshPolling(requestId) {
-        if (refreshPollTimer) clearInterval(refreshPollTimer);
-        refreshPollTimer = setInterval(() => pollRefreshStatus(requestId), 5000);
-        // First poll after 3s
-        setTimeout(() => pollRefreshStatus(requestId), 3000);
+        if (refreshPollers.has(requestId)) return; // already being polled
+        const interval = setInterval(() => pollRefreshStatus(requestId), 5000);
+        const timeout = setTimeout(() => pollRefreshStatus(requestId), 3000); // first poll after 3s
+        refreshPollers.set(requestId, { interval, timeout });
+    }
+
+    function stopRefreshPolling(requestId) {
+        const poller = refreshPollers.get(requestId);
+        if (!poller) return;
+        clearInterval(poller.interval);
+        clearTimeout(poller.timeout);
+        refreshPollers.delete(requestId);
     }
 
     async function pollRefreshStatus(requestId) {
         try {
-            const response = await fetch(`/api/fabric/refresh/status/${requestId}`);
+            const response = await apiFetch(`/api/fabric/refresh/status/${requestId}`);
             const data = await response.json();
 
             // Update local record
@@ -1432,29 +1496,29 @@
             // Check if terminal state
             const terminal = ['completed', 'failed', 'cancelled'].includes(record?.status);
             if (terminal) {
+                // Stop polling THIS request only; other refreshes keep running.
+                stopRefreshPolling(requestId);
+
                 // Check if server auto-triggered a post-calculate phase
                 if (data.postCalculate && data.postCalculate.requestId) {
                     const calcRequestId = data.postCalculate.requestId;
-                    // Add calculate phase to refresh history
-                    refreshHistory.push({
-                        id: calcRequestId,
-                        status: 'inProgress',
-                        refreshType: 'calculate',
-                        startTime: new Date().toISOString(),
-                        endTime: null,
-                        requestedTables: [],
-                        objects: [{ table: '_model_', refreshType: 'calculate', reasons: ['post-refresh relationship recalculation'], status: 'inProgress' }],
-                        isPostCalculate: true
-                    });
-                    // Continue polling with new requestId
+                    if (!refreshHistory.some(r => r.id === calcRequestId)) {
+                        refreshHistory.push({
+                            id: calcRequestId,
+                            status: 'inProgress',
+                            refreshType: 'calculate',
+                            startTime: new Date().toISOString(),
+                            endTime: null,
+                            requestedTables: [],
+                            objects: [{ table: '_model_', refreshType: 'calculate', reasons: ['post-refresh relationship recalculation'], status: 'inProgress' }],
+                            isPostCalculate: true
+                        });
+                    }
                     activeRefreshId = calcRequestId;
-                    clearInterval(refreshPollTimer);
-                    refreshPollTimer = null;
                     startRefreshPolling(calcRequestId);
-                } else {
-                    clearInterval(refreshPollTimer);
-                    refreshPollTimer = null;
-                    activeRefreshId = null;
+                } else if (activeRefreshId === requestId) {
+                    const stillRunning = refreshHistory.find(r => r.status === 'inProgress');
+                    activeRefreshId = stillRunning ? stillRunning.id : null;
                 }
             }
 
@@ -1469,14 +1533,8 @@
         }
     }
 
-    function mapRefreshStatus(s) {
-        const lower = (s || '').toLowerCase();
-        if (lower === 'completed') return 'completed';
-        if (lower === 'failed') return 'failed';
-        if (lower === 'cancelled' || lower === 'disabled') return 'cancelled';
-        if (lower === 'inprogress' || lower === 'notstarted' || lower === 'unknown') return 'inProgress';
-        return 'inProgress';
-    }
+    // TimedOut is a terminal failure, not an in-progress state.
+    const mapRefreshStatus = Pure.mapRefreshStatus;
 
     function openRefreshPanel() {
         refreshModal.classList.remove('hidden');
@@ -1490,7 +1548,7 @@
         btnManualCalculate.textContent = '🔄 Starting…';
 
         try {
-            const response = await fetch('/api/fabric/refresh', {
+            const response = await apiFetch('/api/fabric/refresh', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -1663,19 +1721,19 @@
         return str.length > 1000 ? str.substring(0, 1000) + '\n... (truncated)' : str;
     }
 
-    function escapeHtml(str) {
-        if (!str) return '';
-        const div = document.createElement('div');
-        div.textContent = str;
-        return div.innerHTML;
-    }
+    const escapeHtml = Pure.escapeHtml;
+    // Quote-safe: the old textContent/innerHTML round-trip left `"` intact, which
+    // truncated any attribute holding a name like `Sales "Net"`.
+    const escapeAttr = Pure.escapeAttr;
 
-    function escapeAttr(str) {
-        if (!str) return '';
-        return str.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    // The banner lives outside the connection panel, so errors raised while the
+    // results view is on screen are actually visible. Silent failures used to
+    // leave already-deployed diffs displayed as if they were still pending.
+    function showError(msg) {
+        errorMessageText.textContent = msg;
+        errorMessage.classList.remove('hidden');
+        errorMessage.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
     }
-
-    function showError(msg) { errorMessage.textContent = msg; errorMessage.classList.remove('hidden'); }
     function hideError() { errorMessage.classList.add('hidden'); }
     function showLoading() { loading.classList.remove('hidden'); btnCompare.disabled = true; }
     function hideLoading() { loading.classList.add('hidden'); btnCompare.disabled = false; }
@@ -1692,7 +1750,7 @@
         const limit = document.getElementById('activity-log-limit').value || 200;
         body.innerHTML = '<p style="padding: 12px; color: var(--color-text-dim);">Loading...</p>';
         try {
-            const resp = await fetch(`/api/activity-log?limit=${encodeURIComponent(limit)}`);
+            const resp = await apiFetch(`/api/activity-log?limit=${encodeURIComponent(limit)}`);
             const data = await resp.json();
             const entries = (data.entries || []).slice().reverse(); // newest first
             countEl.textContent = `${entries.length} entries`;
@@ -1772,7 +1830,7 @@
         if (!filePath) return;
 
         try {
-            const resolveRes = await fetch('/api/resolve-model', {
+            const resolveRes = await apiFetch('/api/resolve-model', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ filePath })
@@ -1816,13 +1874,13 @@
             // Open native folder dialog
             let url = `/api/pick-file?target=${target}`;
             if (initialdir) url += `&initialdir=${encodeURIComponent(initialdir)}`;
-            const pickRes = await fetch(url);
-            const pickData = await pickRes.json();
+            const pickRes = await apiFetch(url);
+            const pickData = await apiJson(pickRes, 'Folder picker failed');
 
             if (pickData.cancelled || !pickData.filePath) return;
 
             // Resolve the selected folder to definition path
-            const resolveRes = await fetch('/api/resolve-model', {
+            const resolveRes = await apiFetch('/api/resolve-model', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ filePath: pickData.filePath })
@@ -1946,7 +2004,7 @@
 
     async function checkFabricStatus() {
         try {
-            const res = await fetch('/api/fabric/status');
+            const res = await apiFetch('/api/fabric/status');
             const data = await res.json();
 
             if (data.status === 'connected') {
@@ -1962,7 +2020,7 @@
         showFabricPending();
 
         try {
-            const res = await fetch('/api/fabric/login', { method: 'POST' });
+            const res = await apiFetch('/api/fabric/login', { method: 'POST' });
             const data = await res.json();
 
             if (data.status === 'connected') {
@@ -1983,7 +2041,7 @@
     function pollFabricStatus() {
         const interval = setInterval(async () => {
             try {
-                const res = await fetch('/api/fabric/status');
+                const res = await apiFetch('/api/fabric/status');
                 const data = await res.json();
                 if (data.status === 'connected') {
                     clearInterval(interval);
@@ -2000,7 +2058,7 @@
 
     async function handleFabricCancelLogin() {
         try {
-            await fetch('/api/fabric/cancel-login', { method: 'POST' });
+            await apiFetch('/api/fabric/cancel-login', { method: 'POST' });
         } catch { /* ignore */ }
         resetFabricModal();
     }
@@ -2031,7 +2089,7 @@
 
     async function handleFabricDisconnect() {
         try {
-            await fetch('/api/fabric/disconnect', { method: 'POST' });
+            await apiFetch('/api/fabric/disconnect', { method: 'POST' });
         } catch { /* ignore */ }
 
         fabricConnected = false;
@@ -2077,7 +2135,7 @@
         statusEl.className = 'fabric-resolve-status';
 
         try {
-            const res = await fetch('/api/fabric/resolve', {
+            const res = await apiFetch('/api/fabric/resolve', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ connectionString: connStr })
@@ -2247,8 +2305,11 @@
             md += `## Summary\n\n`;
             md += `| # | Group | Type | Object | Name |\n`;
             md += `|---|-------|------|--------|------|\n`;
+            // Every cell is escaped: the Summary table escaped nothing, so an
+            // object named `Margin|Net` shifted the columns.
+            const cell = Pure.markdownCell;
             diffs.forEach((d, i) => {
-                md += `| ${i + 1} | ${d.changeGroup || ''} | ${typeNames[d.type]} | ${d.objectType || ''} | ${d.displayName || ''} |\n`;
+                md += `| ${i + 1} | ${cell(d.changeGroup || '')} | ${typeNames[d.type]} | ${cell(d.objectType || '')} | ${cell(d.displayName || '')} |\n`;
             });
             // Part 2: Details
             md += `\n---\n\n## Details\n\n`;
@@ -2267,9 +2328,10 @@
                         md += `| Property | Source | Target |\n`;
                         md += `|----------|-------------|---------------|\n`;
                         for (const p of simpleProps) {
-                            const devStr = p.devValue != null ? String(p.devValue).replace(/\|/g, '\\|') : '\u2014';
-                            const prodStr = p.prodValue != null ? String(p.prodValue).replace(/\|/g, '\\|') : '\u2014';
-                            md += `| ${p.propertyName} | ${devStr} | ${prodStr} |\n`;
+                            // Multiline values (annotations, refreshPolicy, variations,
+                            // formatStringDefinition, KPI expressions) used to terminate
+                            // the row mid-cell and turn the rest of the table into text.
+                            md += `| ${cell(p.propertyName)} | ${cell(p.devValue)} | ${cell(p.prodValue)} |\n`;
                         }
                         md += `\n`;
                     }
