@@ -7,17 +7,21 @@ const { compareModels } = require('./comparison/engine');
 const { deployChanges } = require('./deployment/deployer');
 const fabricAuth = require('./fabric/auth');
 const fabricApi = require('./fabric/api-client');
-const { loadModelFromFabric } = require('./fabric/model-loader');
+const { loadModelFromFabric, normalizePath } = require('./fabric/model-loader');
 const { parseConnectionString } = require('./fabric/connection-parser');
 const { logEvent, readEvents } = require('./lib/activity-log');
 const refreshStore = require('./lib/refresh-store');
+const sessionStore = require('./lib/session-store');
+const { compareRawFiles } = require('./lib/raw-files');
 
 const pkg = require('./package.json');
 const APP_VERSION = pkg.version;
 const BACKUP_DIR = path.join(__dirname, 'backups');
 
 const app = express();
-const PORT = process.env.PORT || 3001;
+// process.env.PORT is a STRING. Without the parse, the EADDRINUSE fallback did
+// '3001' + 1 = '30011' and bound a port nobody asked for.
+const PORT = parseInt(process.env.PORT, 10) || 3001;
 
 app.use(express.json({ limit: '50mb' }));
 app.use(express.static(path.join(__dirname, 'public'), {
@@ -37,15 +41,9 @@ app.get('/api/defaults', (req, res) => {
     res.json({ version: APP_VERSION, backupPath: BACKUP_DIR });
 });
 
-// State: store last comparison result for deployment reference
-let lastComparison = null;
-let lastDevModel = null;
-let lastProdPath = null;
-let lastProdModel = null;
-let lastProdFabricInfo = null; // { workspaceId, semanticModelId }
-
-// Fabric auth state
-let fabricAccessToken = null;
+// Comparison state is per session (per browser tab), never module-global:
+// concurrent tabs used to overwrite each other's comparison and deploy target.
+const stateFor = req => sessionStore.stateFor(req);
 
 /**
  * Resolve the actual definition/ folder path.
@@ -72,12 +70,17 @@ app.post('/api/compare', (req, res) => {
         const devModel = loadModelFromFolder(devPath);
         const prodModel = loadModelFromFolder(prodPath);
         const result = compareModels(devModel, prodModel, devPath, prodPath);
-        
-        // Store for deployment — use resolved definition path
-        lastComparison = result;
-        lastDevModel = devModel;
-        lastProdPath = resolveDefinitionPath(prodPath);
-        
+
+        // Store for deployment — reset EVERY field first. Setting only three of
+        // them left a previous Fabric compare's model and dataset armed, so a
+        // deploy validated against the wrong model and refresh targeted a dataset
+        // that was no longer in play.
+        const state = sessionStore.resetComparison(stateFor(req));
+        state.lastComparison = result;
+        state.lastDevModel = devModel;
+        state.lastProdModel = prodModel;
+        state.lastProdPath = resolveDefinitionPath(prodPath);
+
         logEvent('compare', {
             mode: 'local-local',
             devSource: devPath,
@@ -98,6 +101,9 @@ app.post('/api/compare', (req, res) => {
 app.post('/api/deploy', async (req, res) => {
     const { selectedKeys, dryRun = false, backup = true, backupPath } = req.body;
 
+    const state = stateFor(req);
+    const { lastComparison, lastDevModel, lastProdPath, lastProdModel, lastProdFabricInfo } = state;
+
     if (!selectedKeys || !selectedKeys.length) {
         return res.status(400).json({ error: 'No changes selected for deployment.' });
     }
@@ -111,7 +117,7 @@ app.post('/api/deploy', async (req, res) => {
     try {
         // Find the diffs matching the selected keys
         const selectedDiffs = lastComparison.diffs.filter(d => selectedKeys.includes(d.identityKey));
-        
+
         if (selectedDiffs.length === 0) {
             return res.status(400).json({ error: 'None of the selected keys match current comparison results.' });
         }
@@ -136,7 +142,7 @@ app.post('/api/deploy', async (req, res) => {
             res.json(result);
         } else {
             // Fabric deployment — apply changes via temp dir, then upload
-            const result = await deployToFabric(selectedDiffs, lastDevModel, lastProdModel, lastProdFabricInfo, { dryRun, backup, backupPath, allDiffs: lastComparison.diffs });
+            const result = await deployToFabric(selectedDiffs, lastDevModel, lastProdModel, lastProdFabricInfo, { dryRun, backup, backupPath, allDiffs: lastComparison.diffs, comparison: lastComparison, force: req.body.force === true });
             logEvent('deploy', {
                 mode: 'fabric',
                 dryRun,
@@ -163,6 +169,7 @@ app.post('/api/deploy', async (req, res) => {
 // API: Dry-run deployment (preview)
 app.post('/api/deploy/preview', async (req, res) => {
     const { selectedKeys } = req.body;
+    const { lastComparison, lastDevModel, lastProdPath, lastProdModel, lastProdFabricInfo } = stateFor(req);
 
     if (!selectedKeys || !selectedKeys.length) {
         return res.status(400).json({ error: 'No changes selected.' });
@@ -177,7 +184,7 @@ app.post('/api/deploy/preview', async (req, res) => {
             const result = deployChanges(selectedDiffs, lastDevModel, lastProdPath, { dryRun: true, backup: false, prodModel: lastProdModel, allDiffs: lastComparison.diffs });
             res.json(result);
         } else {
-            const result = await deployToFabric(selectedDiffs, lastDevModel, lastProdModel, lastProdFabricInfo, { dryRun: true, allDiffs: lastComparison.diffs });
+            const result = await deployToFabric(selectedDiffs, lastDevModel, lastProdModel, lastProdFabricInfo, { dryRun: true, allDiffs: lastComparison.diffs, comparison: lastComparison });
             res.json(result);
         }
     } catch (err) {
@@ -187,28 +194,89 @@ app.post('/api/deploy/preview', async (req, res) => {
 });
 
 /**
+ * Get a valid Fabric token or fail with a clear message.
+ *
+ * `await a() || b()` binds the await to the first call only, so when it resolved
+ * null the fallback produced an un-awaited Promise and the upload went out with
+ * `Authorization: Bearer [object Promise]`, failing as a cryptic 401.
+ */
+async function requireFabricToken() {
+    const token = await fabricAuth.getAccessToken();
+    if (!token) {
+        throw new Error('Not authenticated to Fabric (the session token expired). Sign in again and retry.');
+    }
+    return token;
+}
+
+/** Fetch the live definition of a Fabric model as a { relativePath: content } map. */
+async function fetchFabricRawFiles(token, fabricInfo) {
+    const files = await fabricApi.getSemanticModelDefinition(token, fabricInfo.workspaceId, fabricInfo.semanticModelId);
+    const rawFiles = {};
+    for (const file of files || []) {
+        rawFiles[normalizePath(file.path)] = file.content;
+    }
+    return rawFiles;
+}
+
+/**
  * Deploy changes to a Fabric semantic model.
- * Strategy: write PROD rawFiles to temp dir, run deployer, read back, upload to Fabric.
+ * Strategy: re-fetch the live definition, apply changes in a temp dir, upload.
  */
 async function deployToFabric(selectedDiffs, devModel, prodModel, fabricInfo, options = {}) {
-    const { dryRun = false, backup = false, backupPath } = options;
+    const { dryRun = false, backup = false, backupPath, force = false } = options;
     const os = require('os');
     const tmpDir = path.join(os.tmpdir(), `model-alchemist-deploy-${Date.now()}`);
     const result = { success: true, actions: [], errors: [], backupPath: null };
 
     try {
-        // Create backup if requested and backupPath is provided
+        // A Fabric deploy replaces the WHOLE definition. Seeding it from the
+        // snapshot captured at compare time silently reverted anything another
+        // user, a pipeline or a Desktop publish changed in the meantime — with no
+        // warning and no trace. Re-fetch the live definition and refuse to deploy
+        // over changes the user has not seen.
+        let baseFiles = prodModel.rawFiles;
+        if (!dryRun) {
+            const token = await requireFabricToken();
+            const currentFiles = await fetchFabricRawFiles(token, fabricInfo);
+            const drift = compareRawFiles(prodModel.rawFiles, currentFiles);
+
+            if (drift.length > 0 && !force) {
+                result.success = false;
+                const list = drift.slice(0, 10).map(d => `${d.file} (${d.change})`).join(', ');
+                const more = drift.length > 10 ? ` (+${drift.length - 10} more)` : '';
+                result.errors.push({
+                    operation: { action: 'fabric-precheck' },
+                    code: 'PROD_CHANGED_SINCE_COMPARE',
+                    error: `The Fabric model changed after this comparison was taken: ${list}${more}. ` +
+                        `Deploying now would upload the older snapshot and silently revert those changes. ` +
+                        `Re-run the comparison, review the differences, and deploy again.`
+                });
+                return result;
+            }
+            // Deploy on top of the CURRENT definition, never the stale snapshot.
+            baseFiles = currentFiles;
+            if (drift.length > 0) {
+                result.warnings = result.warnings || [];
+                result.warnings.push({
+                    code: 'PROD_CHANGED_SINCE_COMPARE_FORCED',
+                    message: `Deploying over ${drift.length} file(s) changed since the comparison, at your request.`
+                });
+            }
+        }
+
+        // Create backup if requested and backupPath is provided.
+        // Written from the SAME snapshot the deploy is applied to, so a restore
+        // actually returns the model to the state it was in.
         if (backup && backupPath && !dryRun) {
             const modelName = prodModel.name || 'SemanticModel';
             const semanticModelFolder = `${modelName}.SemanticModel`;
             const timestamp = new Date().toISOString().replace(/[:.]/g, '-').substring(0, 19);
             const backupDestination = path.join(backupPath, `${semanticModelFolder}_backup_${timestamp}`);
 
-            // Write PROD rawFiles as backup
             fs.mkdirSync(backupDestination, { recursive: true });
             const defDir = path.join(backupDestination, 'definition');
             fs.mkdirSync(defDir, { recursive: true });
-            for (const [filePath, content] of Object.entries(prodModel.rawFiles)) {
+            for (const [filePath, content] of Object.entries(baseFiles)) {
                 const fullPath = path.join(defDir, filePath);
                 fs.mkdirSync(path.dirname(fullPath), { recursive: true });
                 fs.writeFileSync(fullPath, content, 'utf-8');
@@ -217,9 +285,9 @@ async function deployToFabric(selectedDiffs, devModel, prodModel, fabricInfo, op
             result.actions.push({ type: 'backup', message: `Backup created: ${backupDestination}` });
         }
 
-        // Write PROD rawFiles to temp directory
+        // Write the base definition to a temp directory
         fs.mkdirSync(tmpDir, { recursive: true });
-        for (const [filePath, content] of Object.entries(prodModel.rawFiles)) {
+        for (const [filePath, content] of Object.entries(baseFiles)) {
             const fullPath = path.join(tmpDir, filePath);
             fs.mkdirSync(path.dirname(fullPath), { recursive: true });
             fs.writeFileSync(fullPath, content, 'utf-8');
@@ -242,7 +310,7 @@ async function deployToFabric(selectedDiffs, devModel, prodModel, fabricInfo, op
         readDirRecursive(tmpDir, tmpDir, updatedFiles);
 
         // Upload to Fabric
-        const token = await fabricAuth.getAccessToken() || require('./fabric/auth').getAccessToken();
+        const token = await requireFabricToken();
         await fabricApi.updateSemanticModelDefinition(
             token,
             fabricInfo.workspaceId,
@@ -253,8 +321,11 @@ async function deployToFabric(selectedDiffs, devModel, prodModel, fabricInfo, op
         result.actions = deployResult.actions;
         result.actions.push({ type: 'fabric-upload', message: 'Definition uploaded to Fabric successfully.' });
 
-        // Determine which tables need refresh after metadata deploy
-        const tablesNeedingRefresh = detectTablesNeedingRefresh(selectedDiffs, lastComparison);
+        // Determine which tables need refresh after metadata deploy.
+        // The comparison is passed in, never re-read from shared state after the
+        // upload await — a concurrent compare used to replace it mid-deploy and
+        // affected tables were then silently omitted from the refresh plan.
+        const tablesNeedingRefresh = detectTablesNeedingRefresh(selectedDiffs, options.comparison || null);
         if (tablesNeedingRefresh !== null) {
             result.tablesNeedingRefresh = tablesNeedingRefresh;
         }
@@ -268,7 +339,16 @@ async function deployToFabric(selectedDiffs, devModel, prodModel, fabricInfo, op
         );
         
         let errorMessage = err.message;
-        
+
+        // The client stopped waiting but Fabric may have finished the upload.
+        // Saying "failed" would be a lie the user acts on.
+        if (err.indeterminate) {
+            result.indeterminate = true;
+            errorMessage += '\n\n⚠️ The deployment result is UNKNOWN, not failed. ' +
+                'Check the model in the Fabric portal before retrying — a retry on an already-updated model is safe, ' +
+                'but do not assume nothing changed.';
+        }
+
         // Add helpful context for relationship errors
         if (relChanges.length > 0 && (
             errorMessage.includes('missing options') ||
@@ -613,7 +693,7 @@ app.post('/api/fabric/login', async (req, res) => {
         // This opens a system browser window for Microsoft login
         // and waits for the user to complete authentication
         const token = await fabricAuth.loginInteractive();
-        fabricAccessToken = token;
+        stateFor(req).fabricAccessToken = token;
         const account = fabricAuth.getAccountInfo();
         res.json({ status: 'connected', account });
     } catch (err) {
@@ -628,16 +708,17 @@ app.get('/api/fabric/status', async (req, res) => {
     if (fabricAuth.isLoginPending()) {
         return res.json({ status: 'pending' });
     }
-    if (fabricAuth.isAuthenticated()) {
-        // Try to refresh token
-        const token = await fabricAuth.getAccessToken();
-        if (token) {
-            fabricAccessToken = token;
-            const account = fabricAuth.getAccountInfo();
-            return res.json({ status: 'connected', account });
-        }
+    // getAccessToken drops an expired token it cannot refresh, so a failed silent
+    // refresh now reports disconnected instead of "connected" forever.
+    const token = await fabricAuth.getAccessToken();
+    if (token) {
+        stateFor(req).fabricAccessToken = token;
+        const account = fabricAuth.getAccountInfo();
+        return res.json({ status: 'connected', account });
     }
-    res.json({ status: 'disconnected' });
+    stateFor(req).fabricAccessToken = null;
+    const reason = fabricAuth.getLastAuthError();
+    res.json({ status: 'disconnected', ...(reason ? { reason } : {}) });
 });
 
 // API: Cancel in-progress login
@@ -652,6 +733,7 @@ app.post('/api/fabric/refresh', async (req, res) => {
     // tables: string[] of table names (empty = full model)
     // refreshType: 'automatic'|'dataOnly'|'calculate' (recommended type)
     // tableDetails: [{ table, refreshType, reasons }] (for display/logging)
+    const { lastProdFabricInfo } = stateFor(req);
 
     if (!lastProdFabricInfo) {
         return res.status(400).json({ error: 'No Fabric target available. Deploy to Fabric first.' });
@@ -697,6 +779,7 @@ app.post('/api/fabric/refresh', async (req, res) => {
 // API: Check refresh status (with per-object detail)
 app.get('/api/fabric/refresh/status/:requestId', async (req, res) => {
     const { requestId } = req.params;
+    const { lastProdFabricInfo } = stateFor(req);
 
     if (!lastProdFabricInfo) {
         return res.status(400).json({ error: 'No Fabric target available.' });
@@ -738,9 +821,12 @@ app.get('/api/fabric/refresh/status/:requestId', async (req, res) => {
         // Auto-trigger post-calculate when dataOnly refresh completes successfully
         let postCalculateInfo = null;
         if (record && record.needsPostCalculate && !record.postCalculateTriggered && record.status === 'completed') {
+            // Claim the trigger BEFORE awaiting. The frontend polls this endpoint
+            // from a one-shot timer and a 5s interval, so two polls could both pass
+            // the check during the POST round-trip and fire the calculate twice.
+            record.postCalculateTriggered = true;
             try {
                 const calcResult = await fabricApi.refreshSemanticModel(token, workspaceId, semanticModelId, [], 'calculate');
-                record.postCalculateTriggered = true;
                 record.postCalculateRequestId = calcResult.requestId || null;
 
                 if (calcResult.requestId) {
@@ -769,6 +855,8 @@ app.get('/api/fabric/refresh/status/:requestId', async (req, res) => {
 
                 postCalculateInfo = { requestId: calcResult.requestId, status: 'inProgress' };
             } catch (calcErr) {
+                // Release the claim so a later poll can retry.
+                record.postCalculateTriggered = false;
                 console.error('Auto post-calculate failed:', calcErr.message);
                 logEvent('refresh', {
                     target: `workspace:${workspaceId}/model:${semanticModelId}`,
@@ -808,7 +896,7 @@ app.get('/api/fabric/refresh/active', (req, res) => {
 
 // API: Disconnect from Fabric
 app.post('/api/fabric/disconnect', (req, res) => {
-    fabricAccessToken = null;
+    stateFor(req).fabricAccessToken = null;
     fabricAuth.logout();
     res.json({ status: 'disconnected' });
 });
@@ -816,10 +904,8 @@ app.post('/api/fabric/disconnect', (req, res) => {
 // API: Resolve connection string — parse workspace/model names and verify access
 app.post('/api/fabric/resolve', async (req, res) => {
     const { connectionString } = req.body;
+    const state = stateFor(req);
 
-    if (!fabricAccessToken) {
-        return res.status(401).json({ error: 'Not authenticated. Login to Fabric first.' });
-    }
     if (!connectionString) {
         return res.status(400).json({ error: 'Connection string is required.' });
     }
@@ -827,8 +913,12 @@ app.post('/api/fabric/resolve', async (req, res) => {
     try {
         const parsed = parseConnectionString(connectionString);
 
-        // Refresh token if needed
-        const token = await fabricAuth.getAccessToken() || fabricAccessToken;
+        // Always resolve a fresh, valid token (never fall back to a stale one).
+        const token = await fabricAuth.getAccessToken();
+        if (!token) {
+            return res.status(401).json({ error: 'Not authenticated. Login to Fabric first.' });
+        }
+        state.fabricAccessToken = token;
 
         // Find workspace by name
         const workspaces = await fabricApi.listWorkspaces(token);
@@ -875,12 +965,11 @@ app.post('/api/compare-fabric', async (req, res) => {
         return res.status(400).json({ error: 'Both devSource and prodSource are required.' });
     }
 
-    if (!fabricAccessToken) {
-        return res.status(401).json({ error: 'Not authenticated to Fabric.' });
-    }
-
     try {
-        const token = await fabricAuth.getAccessToken() || fabricAccessToken;
+        const token = await fabricAuth.getAccessToken();
+        if (!token) {
+            return res.status(401).json({ error: 'Not authenticated to Fabric.' });
+        }
         let devModel, prodModel;
         let devLabel, prodLabel;
 
@@ -916,15 +1005,15 @@ app.post('/api/compare-fabric', async (req, res) => {
         const result = compareModels(devModel, prodModel, devLabel, prodLabel);
 
         // Store for potential deployment
-        lastComparison = result;
-        lastDevModel = devModel;
-        lastProdModel = prodModel;
+        const state = sessionStore.resetComparison(stateFor(req));
+        state.lastComparison = result;
+        state.lastDevModel = devModel;
+        state.lastProdModel = prodModel;
+        state.fabricAccessToken = token;
         if (prodSource.type === 'local') {
-            lastProdPath = resolveDefinitionPath(prodSource.path);
-            lastProdFabricInfo = null;
+            state.lastProdPath = resolveDefinitionPath(prodSource.path);
         } else {
-            lastProdPath = null;
-            lastProdFabricInfo = {
+            state.lastProdFabricInfo = {
                 workspaceId: prodSource.workspaceId,
                 semanticModelId: prodSource.semanticModelId,
                 modelName: prodModel.name || 'SemanticModel'
@@ -1041,7 +1130,8 @@ app.get('*', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-function startServer(port, maxAttempts = 20) {
+function startServer(portArg, maxAttempts = 20) {
+    const port = Number(portArg);
     const server = app.listen(port, () => {
         const url = `http://localhost:${port}`;
         console.log(`Model Alchemist v${APP_VERSION} running at ${url}`);

@@ -109,4 +109,4 @@ function normalizePath(filePath) {
     return normalized;
 }
 
-module.exports = { loadModelFromFabric };
+module.exports = { loadModelFromFabric, normalizePath };
