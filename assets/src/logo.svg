@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="Model Alchemist logo">
+  <title>Model Alchemist</title>
+  <desc>A conical flask holding three bands — green, amber and red — for added, modified and removed model objects.</desc>
+  <defs>
+    <linearGradient id="glass" x1="0.1" y1="0" x2="0.9" y2="1">
+      <stop offset="0%"   stop-color="#a396f9"/>
+      <stop offset="50%"  stop-color="#7c6ff7"/>
+      <stop offset="100%" stop-color="#7dcfef"/>
+    </linearGradient>
+    <linearGradient id="plate" x1="0.15" y1="0" x2="0.85" y2="1">
+      <stop offset="0%"   stop-color="#32324a"/>
+      <stop offset="45%"  stop-color="#232336"/>
+      <stop offset="100%" stop-color="#15151d"/>
+    </linearGradient>
+    <clipPath id="flaskInner">
+      <path d="M218 110 L218 214 L112 388 Q100 424 138 424 L374 424 Q412 424 400 388 L294 214 L294 110 Z"/>
+    </clipPath>
+  </defs>
+
+  <!-- Badge -->
+  <rect x="16" y="16" width="480" height="480" rx="116" fill="url(#plate)"/>
+  <rect x="18" y="18" width="476" height="476" rx="114" fill="none" stroke="#4a4a68" stroke-width="3" opacity="0.85"/>
+
+  <!-- The reaction: added over modified over removed -->
+  <g clip-path="url(#flaskInner)">
+    <rect x="90" y="374" width="340" height="60" fill="#e08a8a"/>
+    <rect x="90" y="326" width="340" height="48" fill="#e0d06a"/>
+    <rect x="90" y="280" width="340" height="46" fill="#84e084"/>
+    <rect x="90" y="280" width="340" height="7"  fill="#ffffff" opacity="0.32"/>
+  </g>
+
+  <!-- Bubbles rising through the neck -->
+  <circle cx="246" cy="248" r="12" fill="#7dcfef" opacity="0.9"/>
+  <circle cx="280" cy="214" r="8"  fill="#a396f9" opacity="0.9"/>
+  <circle cx="254" cy="184" r="5"  fill="#84e084" opacity="0.85"/>
+
+  <!-- Flask -->
+  <path d="M218 110 L218 214 L112 388 Q100 424 138 424 L374 424 Q412 424 400 388 L294 214 L294 110"
+        fill="none" stroke="url(#glass)" stroke-width="18"
+        stroke-linejoin="round" stroke-linecap="round"/>
+  <rect x="204" y="92" width="104" height="27" rx="13.5" fill="url(#glass)"/>
+</svg>

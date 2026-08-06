@@ -1,0 +1,55 @@
+/* Shared look for every generated asset — mirrors the app's own palette
+   (public/css/style.css) so the README and the product read as one thing. */
+:root {
+    --bg:        #1e1e2e;
+    --bg-deep:   #16161e;
+    --surface:   #2a2a3e;
+    --surface-2: #33334a;
+    --border:    #3a3a50;
+    --text:      #e8e8f2;
+    --dim:       #9a9ab4;
+    --primary:   #7c6ff7;
+    --primary-2: #9182f7;
+    --added:     #7ddf7d;
+    --removed:   #df7d7d;
+    --modified:  #dfcf5d;
+    --deploy:    #7dcfef;
+    --mono: 'SF Mono', 'JetBrains Mono', 'Fira Code', ui-monospace, Menlo, monospace;
+    --sans: system-ui, -apple-system, 'Segoe UI', Inter, sans-serif;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+    font-family: var(--sans);
+    background: var(--bg);
+    color: var(--text);
+    -webkit-font-smoothing: antialiased;
+}
+/* Subtle grid so large dark areas do not read as empty. */
+.grid-bg {
+    background-image:
+        linear-gradient(rgba(124,111,247,0.055) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(124,111,247,0.055) 1px, transparent 1px);
+    background-size: 40px 40px;
+}
+.canvas { width: 100%; height: 100vh; padding: 44px 52px; display: flex; flex-direction: column; }
+.eyebrow {
+    font-family: var(--mono); font-size: 13px; letter-spacing: 0.16em;
+    text-transform: uppercase; color: var(--primary-2); margin-bottom: 10px;
+}
+.title { font-size: 38px; font-weight: 700; letter-spacing: -0.02em; }
+.subtitle { font-size: 17px; color: var(--dim); margin-top: 8px; line-height: 1.5; }
+.card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 16px; padding: 22px 24px;
+}
+.mono { font-family: var(--mono); }
+.chip {
+    display: inline-block; font-family: var(--mono); font-size: 12.5px;
+    padding: 4px 10px; border-radius: 6px; background: rgba(124,111,247,0.14);
+    color: #b7aefb; border: 1px solid rgba(124,111,247,0.3);
+}
+.foot {
+    margin-top: auto; padding-top: 22px; font-family: var(--mono);
+    font-size: 12.5px; color: #6f6f8c; display: flex; justify-content: space-between;
+    border-top: 1px solid rgba(255,255,255,0.05);
+}

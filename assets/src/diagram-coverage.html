@@ -1,0 +1,81 @@
+<!doctype html><meta charset="utf-8">
+<link rel="stylesheet" href="theme.css">
+<style>
+  body { width: 1400px; height: 1040px; overflow: hidden; }
+  .grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; margin-top: 28px; }
+  .g {
+      background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
+      padding: 16px 17px; border-top: 3px solid var(--accent, var(--primary));
+  }
+  .g h3 { font-size: 16px; font-weight: 700; margin-bottom: 10px; display: flex; align-items: center; gap: 8px; }
+  .g h3 span.ico { font-size: 17px; }
+  .g ul { list-style: none; display: flex; flex-wrap: wrap; gap: 6px; }
+  .g li {
+      font-family: var(--mono); font-size: 11.5px; padding: 3px 8px; border-radius: 5px;
+      background: rgba(255,255,255,0.05); color: #c6c6dd; border: 1px solid rgba(255,255,255,0.06);
+      white-space: nowrap;
+  }
+  .a-tables { --accent: #7dcfef; } .a-meas { --accent: #9182f7; } .a-calc { --accent: #dfcf5d; }
+  .a-hier  { --accent: #7ddf7d; }  .a-rls  { --accent: #df7d7d; } .a-persp { --accent: #c58cf5; }
+  .a-trans { --accent: #6fd4c4; }  .a-ds   { --accent: #f0a868; } .a-expr { --accent: #86a8f7; }
+  .a-fn    { --accent: #b0e57c; }  .a-model{ --accent: #8f8fb8; }
+  .note {
+      margin-top: 18px; display: flex; gap: 14px; align-items: flex-start;
+      background: rgba(124,111,247,0.07); border: 1px solid rgba(124,111,247,0.24);
+      border-radius: 12px; padding: 14px 18px; font-size: 14.5px; color: #cfcfe4; line-height: 1.55;
+  }
+  .note b { color: #b7aefb; }
+</style>
+<div class="canvas grid-bg">
+  <div class="eyebrow">Coverage</div>
+  <div class="title">Every change group Model Alchemist compares</div>
+  <div class="subtitle">Eleven groups, each diffed at property level. The chips below are the actual TMDL properties that are read and compared.</div>
+
+  <div class="grid">
+    <div class="g a-tables"><h3><span class="ico">▦</span> Tables &amp; Relationships</h3>
+      <ul><li>table</li><li>column</li><li>partition</li><li>relationship</li><li>fromCardinality</li><li>toCardinality</li><li>crossFilteringBehavior</li><li>isActive</li><li>refreshPolicy</li><li>variation</li><li>alternateOf</li><li>sortByColumn</li><li>annotations</li></ul></div>
+
+    <div class="g a-meas"><h3><span class="ico">Σ</span> Measures</h3>
+      <ul><li>expression</li><li>formatString</li><li>formatStringDefinition</li><li>detailRowsDefinition</li><li>displayFolder</li><li>isHidden</li><li>description</li><li>kpi.*</li><li>annotations</li></ul></div>
+
+    <div class="g a-calc"><h3><span class="ico">⧉</span> Calculation Groups</h3>
+      <ul><li>calculationGroup</li><li>precedence</li><li>calculationItem</li><li>ordinal</li><li>expression</li><li>formatStringDefinition</li></ul></div>
+
+    <div class="g a-hier"><h3><span class="ico">⌸</span> Hierarchies</h3>
+      <ul><li>hierarchy</li><li>level</li><li>level.column</li><li>displayFolder</li><li>isHidden</li></ul></div>
+
+    <div class="g a-rls"><h3><span class="ico">🔒</span> Roles &amp; Row-Level Security</h3>
+      <ul><li>role</li><li>modelPermission</li><li>tablePermission</li><li>filterExpression</li><li>columnPermission</li><li>dataCoveragePermission</li><li>member</li><li>memberType</li></ul></div>
+
+    <div class="g a-persp"><h3><span class="ico">◈</span> Perspectives</h3>
+      <ul><li>perspective</li><li>perspectiveTable</li><li>perspectiveColumn</li><li>perspectiveMeasure</li><li>perspectiveHierarchy</li></ul></div>
+
+    <div class="g a-trans"><h3><span class="ico">🌐</span> Translations</h3>
+      <ul><li>cultureInfo</li><li>translations</li><li>caption</li><li>description</li><li>displayFolder</li><li>linguisticMetadata</li></ul></div>
+
+    <div class="g a-ds"><h3><span class="ico">⚡</span> Data Sources &amp; Parameters</h3>
+      <ul><li>dataSource</li><li>type</li><li>connectionDetails</li><li>credential</li><li>M parameters</li></ul></div>
+
+    <div class="g a-expr"><h3><span class="ico">ƒ</span> Named Expressions</h3>
+      <ul><li>expression</li><li>kind</li><li>shared M queries</li></ul></div>
+
+    <div class="g a-fn"><h3><span class="ico">λ</span> Functions</h3>
+      <ul><li>function (UDF)</li><li>expression</li><li>description</li><li>compatibilityLevel</li></ul></div>
+
+    <div class="g a-model"><h3><span class="ico">⚙</span> Model Properties</h3>
+      <ul><li>culture</li><li>collation</li><li>defaultMeasure</li><li>sourceQueryCulture</li><li>dataAccessOptions</li><li>annotations</li></ul></div>
+
+    <div class="g" style="--accent:#5a5a78; display:flex; flex-direction:column; justify-content:center;">
+      <h3><span class="ico">🚫</span> Deliberately not compared</h3>
+      <ul><li>lineageTag</li><li>sourceLineageTag</li><li>annotation PBI_*</li></ul>
+      <div style="font-size:12.5px; color:var(--dim); margin-top:10px; line-height:1.5;">Per-environment identifiers and Power BI runtime state. They are preserved in Target on every write.</div>
+    </div>
+  </div>
+
+  <div class="note">
+    <span style="font-size:19px; line-height:1;">🎯</span>
+    <div><b>Identity matches the engine, not the file.</b> Objects are paired case-insensitively, the way Analysis Services treats names, and per-environment GUIDs in partition names are normalised, so a model compared against itself reports no differences instead of a wall of false Added/Removed pairs.</div>
+  </div>
+
+  <div class="foot"><span>Model Alchemist / change groups</span><span>github.com/goreckir/model_alchemist</span></div>
+</div>
