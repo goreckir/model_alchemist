@@ -1,0 +1,98 @@
+<!doctype html><meta charset="utf-8">
+<link rel="stylesheet" href="theme.css">
+<style>
+  body { width: 1400px; height: 830px; overflow: hidden; }
+  .lane { display: grid; grid-template-columns: 190px 1fr; gap: 22px; margin-top: 26px; }
+  .laneName {
+      font-family: var(--mono); font-size: 12.5px; letter-spacing: .1em; text-transform: uppercase;
+      color: var(--dim); padding-top: 16px;
+  }
+  .stack { display: flex; flex-direction: column; gap: 11px; }
+  .gate {
+      display: grid; grid-template-columns: 44px 1fr 250px; align-items: center; gap: 16px;
+      background: var(--surface); border: 1px solid var(--border);
+      border-left: 4px solid var(--c, var(--primary)); border-radius: 12px; padding: 13px 18px;
+  }
+  .gate .n {
+      font-family: var(--mono); font-size: 14px; font-weight: 700; color: var(--c, var(--primary));
+      border: 1.5px solid var(--c, var(--primary)); border-radius: 8px; width: 30px; height: 30px;
+      display: grid; place-items: center;
+  }
+  .gate h4 { font-size: 16.5px; font-weight: 650; margin-bottom: 3px; }
+  .gate p { font-size: 13.5px; color: var(--dim); line-height: 1.45; }
+  .outcome { font-family: var(--mono); font-size: 12px; text-align: right; line-height: 1.5; }
+  .stop  { color: var(--removed); }
+  .warn  { color: var(--modified); }
+  .go    { color: var(--added); }
+  .info  { color: var(--deploy); }
+  .c-block { --c: #df7d7d; } .c-guard { --c: #dfcf5d; } .c-safe { --c: #7dcfef; } .c-write { --c: #7ddf7d; }
+  .split { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .half { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 15px 18px; border-top: 3px solid var(--c); }
+  .half h4 { font-size: 16px; margin-bottom: 7px; }
+  .half p { font-size: 13.5px; color: var(--dim); line-height: 1.5; }
+  .half code { font-family: var(--mono); color: #b7aefb; font-size: 12.5px; }
+</style>
+<div class="canvas grid-bg">
+  <div class="eyebrow">Safety model</div>
+  <div class="title">Six gates stand between “Deploy” and a changed model</div>
+  <div class="subtitle">Nothing is written until every gate passes. If a write fails half-way, the target is put back the way it was.</div>
+
+  <div class="lane">
+    <div class="laneName">Before<br>any write</div>
+    <div class="stack">
+      <div class="gate c-block">
+        <div class="n">1</div>
+        <div><h4>Dependency validation</h4><p>Missing parent table or relationship endpoint, a calculationItem without its calculation group, a duplicate relationship, a perspective or role pointing at something that will not exist, compatibility level too low.</p></div>
+        <div class="outcome stop">hard error<br>→ deploy blocked</div>
+      </div>
+      <div class="gate c-guard">
+        <div class="n">2</div>
+        <div><h4>Cascade and cardinality warnings</h4><p>Relationships orphaned by a removed column or table are listed for automatic removal. A cardinality change states which key column must be unique before the engine will accept it.</p></div>
+        <div class="outcome warn">warning<br>→ shown in preview</div>
+      </div>
+      <div class="gate c-guard">
+        <div class="n">3</div>
+        <div><h4>Fabric drift check</h4><p>The live definition is re-fetched and compared against the snapshot your comparison was taken from. If someone else published in between, the changed files are named.</p></div>
+        <div class="outcome stop">PROD_CHANGED_SINCE_COMPARE<br>→ deploy blocked</div>
+      </div>
+      <div class="gate c-safe">
+        <div class="n">4</div>
+        <div><h4>Backup</h4><p>The whole <span class="mono">.SemanticModel</span> folder is copied, not just <span class="mono">definition/</span>, so <span class="mono">definition.pbism</span>, the diagram layout and every sibling artifact come back too.</p></div>
+        <div class="outcome info">timestamped copy<br>→ next to the model</div>
+      </div>
+      <div class="gate c-safe">
+        <div class="n">5</div>
+        <div><h4>Preview</h4><p>Every planned file operation, in order, with the file it touches. Anything a block-level write ships beyond the properties you reviewed is named explicitly.</p></div>
+        <div class="outcome info">dry run<br>→ nothing written</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="lane" style="margin-top: 20px;">
+    <div class="laneName">Write</div>
+    <div class="stack">
+      <div class="gate c-write">
+        <div class="n">6</div>
+        <div><h4>Apply</h4><p>Only the changes you ticked. Everything else in the target is left byte-for-byte as it was, including its <span class="mono">lineageTag</span>, <span class="mono">sourceLineageTag</span> and <span class="mono">PBI_*</span> annotations.</p></div>
+        <div class="outcome go">applied<br>→ per-object log</div>
+      </div>
+      <div class="split">
+        <div class="half" style="--c:#7ddf7d;">
+          <h4>📁 Local target</h4>
+          <p>Transactional. Every file that an operation can touch is snapshotted first. On the first failure the run stops and all of them are restored. Never a half-written model.</p>
+        </div>
+        <div class="half" style="--c:#7dcfef;">
+          <h4>☁️ Fabric target</h4>
+          <p>Changes are applied on top of the definition just fetched, then uploaded with <code>updateDefinition</code>. A slow upload is reported as unknown, never as failed.</p>
+        </div>
+      </div>
+      <div class="gate c-write" style="--c:#9182f7;">
+        <div class="n">↻</div>
+        <div><h4>Refresh, scoped</h4><p>Only the tables the deployed changes actually affect, each with the cheapest refresh that works: <span class="mono">dataOnly</span>, <span class="mono">calculate</span> or <span class="mono">automatic</span>. A <span class="mono">dataOnly</span> pass is followed automatically by a model-level recalculate.</p></div>
+        <div class="outcome info">Enhanced Refresh<br>→ per-table status</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="foot"><span>Model Alchemist / deployment safety</span><span>github.com/goreckir/model_alchemist</span></div>
+</div>

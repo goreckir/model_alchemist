@@ -1,0 +1,58 @@
+<!doctype html><meta charset="utf-8">
+<link rel="stylesheet" href="theme.css">
+<style>
+  body { width: 1280px; height: 360px; overflow: hidden; }
+  .wrap {
+      width: 100%; height: 100%; display: flex; align-items: center; gap: 44px;
+      padding: 0 64px;
+      background:
+        radial-gradient(760px 420px at 92% 8%, rgba(125,207,239,0.14), transparent 62%),
+        radial-gradient(700px 420px at 4% 98%, rgba(124,111,247,0.22), transparent 62%),
+        var(--bg-deep);
+  }
+  .mark { width: 168px; height: 168px; flex: none; }
+  .copy { flex: 1; min-width: 0; max-width: 630px; }
+  .name { font-size: 58px; font-weight: 800; letter-spacing: -0.03em; line-height: 1; }
+  .name em {
+      font-style: normal;
+      background: linear-gradient(100deg, #a396f9 0%, #7dcfef 100%);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  }
+  .tag { font-size: 21px; color: #c6c6de; margin-top: 15px; line-height: 1.4; white-space: nowrap; }
+  .tag2 { font-size: 18px; color: #8f8fae; margin-top: 5px; white-space: nowrap; }
+  .row { display: flex; gap: 9px; margin-top: 22px; }
+  .pill {
+      font-family: var(--mono); font-size: 13px; padding: 6px 13px; border-radius: 999px;
+      background: rgba(255,255,255,0.045); border: 1px solid var(--border); color: #cfcfe4; white-space: nowrap;
+  }
+  .pill b { color: #a396f9; font-weight: 600; }
+  /* Diff motif on the right so the composition is not left-heavy. */
+  .motif { flex: none; width: 216px; display: flex; flex-direction: column; gap: 9px; }
+  .line {
+      display: flex; align-items: center; gap: 10px; font-family: var(--mono); font-size: 13px;
+      background: rgba(255,255,255,0.035); border: 1px solid var(--border);
+      border-left: 3px solid var(--c); border-radius: 8px; padding: 9px 12px;
+  }
+  .line .s { font-weight: 700; color: var(--c); width: 9px; }
+  .line .n { color: #b6b6cf; }
+</style>
+<div class="wrap grid-bg">
+  <img class="mark" src="logo.svg" alt="">
+  <div class="copy">
+    <div class="name">Model <em>Alchemist</em></div>
+    <div class="tag">Compare and deploy Power BI semantic models.</div>
+    <div class="tag2">TMDL in, reviewed change out.</div>
+    <div class="row">
+      <span class="pill"><b>PBIP</b> / TMDL</span>
+      <span class="pill"><b>Fabric</b> REST</span>
+      <span class="pill">object-level <b>diff</b></span>
+      <span class="pill">selective <b>deploy</b></span>
+    </div>
+  </div>
+  <div class="motif">
+    <div class="line" style="--c:#7ddf7d;"><span class="s">+</span><span class="n">measure Margin %</span></div>
+    <div class="line" style="--c:#dfcf5d;"><span class="s">~</span><span class="n">column Sales.Amount</span></div>
+    <div class="line" style="--c:#dfcf5d;"><span class="s">~</span><span class="n">partition Sales</span></div>
+    <div class="line" style="--c:#df7d7d;"><span class="s">−</span><span class="n">role Legacy</span></div>
+  </div>
+</div>
