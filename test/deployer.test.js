@@ -545,3 +545,49 @@ test('regression: planFileOperations produces ops without touching disk', () => 
     assert.strictEqual(ops.length, 1);
     assert.strictEqual(ops[0].action, 'appendChild');
 });
+
+// ── finding 4.3: a case-only rename was detected but undeployable ─────────────
+test('4.3 a sales -> Sales case-only table rename deploys and the header reads table Sales', () => {
+    const base = { 'database.tmdl': H.databaseTmdl(), 'model.tmdl': H.modelTmdl(['table Sales']) };
+    const s = scenario(
+        { ...base, 'tables/Sales.tmdl': 'table Sales\n\n\tcolumn Id\n\t\tdataType: int64\n' },
+        { ...base, 'tables/Sales.tmdl': 'table sales\n\n\tcolumn Id\n\t\tdataType: int64\n' }
+    );
+
+    const { result } = deploy(s, d => d.objectType === 'table');
+    assert.strictEqual(result.success, true, errorText(result));
+    assert.match(read(s.prodPath, 'tables/Sales.tmdl'), /^table Sales\b/m, 'header rewritten with the DEV casing');
+});
+
+test('4.3 a measure rename differing only by case deploys the same way', () => {
+    const base = { 'database.tmdl': H.databaseTmdl(), 'model.tmdl': H.modelTmdl(['table Sales']) };
+    const s = scenario(
+        { ...base, 'tables/Sales.tmdl': 'table Sales\n\n\tmeasure Total = 1\n\t\tformatString: #,0\n' },
+        { ...base, 'tables/Sales.tmdl': 'table Sales\n\n\tmeasure total = 1\n\t\tformatString: #,0\n' }
+    );
+
+    const { result } = deploy(s, d => d.objectType === 'measure');
+    assert.strictEqual(result.success, true, errorText(result));
+    assert.match(read(s.prodPath, 'tables/Sales.tmdl'), /measure Total = 1/, 'measure header rewritten with the DEV casing');
+});
+
+test('4.3 an unrelated table with a similar name is left untouched by the case-insensitive lookup', () => {
+    const base = { 'database.tmdl': H.databaseTmdl(), 'model.tmdl': H.modelTmdl(['table Sales', 'table Dim']) };
+    const s = scenario(
+        {
+            ...base,
+            'tables/Sales.tmdl': 'table Sales\n\n\tcolumn Id\n\t\tdataType: int64\n',
+            'tables/Dim.tmdl': 'table Dim\n\n\tcolumn Id\n\t\tdataType: int64\n'
+        },
+        {
+            ...base,
+            'tables/Sales.tmdl': 'table sales\n\n\tcolumn Id\n\t\tdataType: int64\n',
+            'tables/Dim.tmdl': 'table Dim\n\n\tcolumn Id\n\t\tdataType: int64\n'
+        }
+    );
+    const before = read(s.prodPath, 'tables/Dim.tmdl');
+
+    const { result } = deploy(s, d => d.objectType === 'table' && d.displayName === 'Sales');
+    assert.strictEqual(result.success, true, errorText(result));
+    assert.strictEqual(read(s.prodPath, 'tables/Dim.tmdl'), before, 'the unrelated Dim table is unaffected');
+});

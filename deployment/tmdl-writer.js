@@ -41,14 +41,18 @@ function findObjectBlock(content, objectType, objectName, parentIndent) {
 
         if (indent !== targetIndent) continue;
 
-        // Check if this line matches our target object
-        const matchesPattern = patterns.some(p =>
-            trimmed === p ||
-            trimmed.startsWith(p + ' ') ||
-            trimmed.startsWith(p + '\t') ||
-            trimmed === p + ' =' ||
-            trimmed.startsWith(p + ' =')
-        );
+        // Case-insensitive: Analysis Services treats object names as unique
+        // case-insensitively, so a case-only rename (`sales` -> `Sales`) must
+        // still locate the existing block in the target file.
+        const matchesPattern = patterns.some(p => {
+            const pl = p.toLowerCase();
+            const tl = trimmed.toLowerCase();
+            return tl === pl ||
+                tl.startsWith(pl + ' ') ||
+                tl.startsWith(pl + '\t') ||
+                tl === pl + ' =' ||
+                tl.startsWith(pl + ' =');
+        });
 
         if (!matchesPattern) continue;
 
