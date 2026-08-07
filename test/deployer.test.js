@@ -517,6 +517,159 @@ test('#74 a clean deploy still applies everything', () => {
     assert.match(read(s.prodPath, 'tables/Dim.tmdl'), /formatString: #,0/);
 });
 
+// ── finding 4.7: rollback failures were silently swallowed ──────────────────
+test('#4.7 a restore that throws during rollback is reported as ROLLBACK_INCOMPLETE, not "unchanged"', (t) => {
+    const base = {
+        'database.tmdl': H.databaseTmdl(),
+        'model.tmdl': H.modelTmdl(['table Sales', 'table Dim'])
+    };
+    const s = scenario(
+        {
+            ...base,
+            'tables/Sales.tmdl': 'table Sales\n\n\tmeasure Total = 1\n\t\tformatString: #,0\n',
+            'tables/Dim.tmdl': 'table Dim\n\n\tmeasure Count = 2\n\t\tformatString: #,0\n'
+        },
+        {
+            ...base,
+            'tables/Sales.tmdl': 'table Sales\n\n\tmeasure Total = 1\n\t\tformatString: 0.00\n',
+            'tables/Dim.tmdl': 'table Dim\n\n\tmeasure Count = 2\n\t\tformatString: 0.00\n'
+        }
+    );
+
+    const salesPath = path.join(s.prodPath, 'tables/Sales.tmdl');
+    const original = fs.writeFileSync;
+    let salesWrites = 0;
+    t.mock.method(fs, 'writeFileSync', (targetPath, ...args) => {
+        if (targetPath === salesPath) {
+            salesWrites++;
+            // Let the real deploy write through; only the rollback restore fails
+            // (simulating the file becoming unwritable, e.g. locked/read-only).
+            if (salesWrites > 1) throw new Error('EACCES: simulated read-only file');
+        }
+        return original.call(fs, targetPath, ...args);
+    });
+
+    const selected = s.comparison.diffs.filter(d => d.objectType === 'measure');
+    assert.strictEqual(selected.length, 2, 'both measures changed');
+    selected.push({
+        type: 2, objectType: 'measure', identityKey: 'measure:sales.ghost', displayName: 'Sales.Ghost',
+        objectName: 'Ghost', targetObjectName: 'Ghost', parentTable: 'Sales',
+        sourceFile: 'tables/Sales.tmdl', targetFile: 'tables/Sales.tmdl',
+        rawBlock: '\tmeasure Ghost = 1', propertyDiffs: []
+    });
+
+    const result = deployChanges(selected, s.devModel, s.prodPath, {
+        backup: false, prodModel: s.prodModel, allDiffs: s.comparison.diffs
+    });
+
+    assert.strictEqual(result.success, false, 'the deploy reports failure');
+    assert.strictEqual(result.rolledBack, true, 'rollback was attempted');
+    const rollbackError = result.errors.find(e => e.code === 'ROLLBACK_INCOMPLETE');
+    assert.ok(rollbackError, 'a ROLLBACK_INCOMPLETE error is reported');
+    assert.match(rollbackError.error, /Sales\.tmdl/);
+    const rollbackAction = result.actions.find(a => a.type === 'rollback');
+    assert.ok(rollbackAction, 'a rollback action is recorded');
+    assert.doesNotMatch(rollbackAction.message, /the target is unchanged/,
+        'must not claim the target is unchanged when a restore failed');
+});
+
+// ── finding 2.2: guessed target paths were silent ────────────────────────────
+test('#2.2 a target model that fails to extract warns TARGET_PATHS_GUESSED', () => {
+    const base = { 'database.tmdl': H.databaseTmdl(), 'model.tmdl': H.modelTmdl(['table Sales']) };
+    const s = scenario(
+        { ...base, 'tables/Sales.tmdl': 'table Sales\n\n\tmeasure Total = 1\n\t\tformatString: #,0\n' },
+        { ...base, 'tables/Sales.tmdl': 'table Sales\n\n\tmeasure Total = 1\n\t\tformatString: 0.00\n' }
+    );
+
+    // A malformed prodModel (missing `.tables` etc.) makes extractAll() throw.
+    const { result } = deploy(s, d => d.objectType === 'measure', { prodModel: {} });
+
+    const warning = result.warnings.find(w => w.code === 'TARGET_PATHS_GUESSED');
+    assert.ok(warning, 'a TARGET_PATHS_GUESSED warning is reported when extraction fails');
+});
+
+// ── live incident: removing a role while its tablePermission was also selected ──
+// A whole-role REMOVE deletes roles/<role>.tmdl outright. A tablePermission/
+// roleMember REMOVE diff for that same role then found its target file already
+// gone and failed with TARGET_FILE_MISSING, which forced a rollback whose
+// restore of the (legitimately, successfully) deleted role file then also
+// failed — because rollback tried to read-compare a file that no longer
+// existed instead of just recreating it. Fixed by (a) skipping the redundant
+// child op, mirroring the existing table-children guard, and (b) making
+// rollback tolerant of files deleted earlier in the same batch.
+test('#78 removing a whole role skips its already-covered tablePermission child', () => {
+    const roleFile = () => [
+        'role Test_Role',
+        '\tmodelPermission: read',
+        '',
+        '\ttablePermission Dim_MRA = [Region] = "EU"',
+        ''
+    ].join('\n');
+
+    const base = {
+        'database.tmdl': H.databaseTmdl(),
+        'model.tmdl': H.modelTmdl(['table Dim_MRA', 'role Test_Role']),
+        'tables/Dim_MRA.tmdl': 'table Dim_MRA\n\n\tcolumn Region\n\t\tdataType: string\n'
+    };
+    const s = scenario(
+        { ...base, 'model.tmdl': H.modelTmdl(['table Dim_MRA']) }, // role removed entirely in DEV
+        { ...base, 'roles/Test_Role.tmdl': roleFile() }
+    );
+
+    const selected = s.comparison.diffs.filter(d => d.objectType === 'role' || d.objectType === 'tablePermission');
+    assert.strictEqual(selected.length, 2, 'both the role removal and its child are selected');
+
+    const ops = planFileOperations(selected, s.devModel, s.prodPath, s.prodModel);
+    assert.strictEqual(ops.length, 1, 'only the whole-role deleteFile op is planned, not a redundant child op');
+
+    const result = deployChanges(selected, s.devModel, s.prodPath, {
+        backup: false, prodModel: s.prodModel, allDiffs: s.comparison.diffs
+    });
+    assert.strictEqual(result.success, true, errorText(result));
+    assert.ok(!exists(s.prodPath, 'roles/Test_Role.tmdl'), 'the role file is gone');
+});
+
+test('#78 rollback recreates a file an earlier operation in the same batch had already deleted', () => {
+    const base = {
+        'database.tmdl': H.databaseTmdl(),
+        'model.tmdl': H.modelTmdl(['table Sales', 'table Ghost'])
+    };
+    const s = scenario(
+        {
+            ...base,
+            'model.tmdl': H.modelTmdl(['table Sales']), // Ghost removed entirely in DEV
+            'tables/Sales.tmdl': 'table Sales\n\n\tmeasure Total = 1\n\t\tformatString: 0.00\n'
+        },
+        {
+            ...base,
+            'tables/Sales.tmdl': 'table Sales\n\n\tmeasure Total = 1\n\t\tformatString: #,0\n',
+            'tables/Ghost.tmdl': 'table Ghost\n\n\tcolumn Id\n\t\tdataType: int64\n'
+        }
+    );
+
+    const ghostFile = read(s.prodPath, 'tables/Ghost.tmdl');
+    const selected = s.comparison.diffs.filter(d => d.objectType === 'table' || d.objectType === 'measure');
+    // A table remove (deletes tables/Ghost.tmdl outright) plus a real measure
+    // modify, plus one that cannot be applied — forces rollback after the
+    // table has already been deleted.
+    selected.push({
+        type: 2, objectType: 'measure', identityKey: 'measure:sales.ghost', displayName: 'Sales.Ghost',
+        objectName: 'Ghost', targetObjectName: 'Ghost', parentTable: 'Sales',
+        sourceFile: 'tables/Sales.tmdl', targetFile: 'tables/Sales.tmdl',
+        rawBlock: '\tmeasure Ghost = 1', propertyDiffs: []
+    });
+
+    const result = deployChanges(selected, s.devModel, s.prodPath, {
+        backup: false, prodModel: s.prodModel, allDiffs: s.comparison.diffs
+    });
+
+    assert.strictEqual(result.success, false, 'the deploy reports failure');
+    assert.strictEqual(result.rolledBack, true, 'rollback happened');
+    assert.ok(!result.errors.some(e => e.code === 'ROLLBACK_INCOMPLETE'),
+        'the deleted table file is fully recreated, not left missing');
+    assert.strictEqual(read(s.prodPath, 'tables/Ghost.tmdl'), ghostFile, 'Ghost.tmdl restored exactly');
+});
+
 // ── regression: a dry run writes nothing ─────────────────────────────────────
 test('regression: a dry run reports actions without touching the target', () => {
     const base = { 'database.tmdl': H.databaseTmdl(), 'model.tmdl': H.modelTmdl(['table Sales']) };
@@ -544,4 +697,50 @@ test('regression: planFileOperations produces ops without touching disk', () => 
     );
     assert.strictEqual(ops.length, 1);
     assert.strictEqual(ops[0].action, 'appendChild');
+});
+
+// ── finding 4.3: a case-only rename was detected but undeployable ─────────────
+test('4.3 a sales -> Sales case-only table rename deploys and the header reads table Sales', () => {
+    const base = { 'database.tmdl': H.databaseTmdl(), 'model.tmdl': H.modelTmdl(['table Sales']) };
+    const s = scenario(
+        { ...base, 'tables/Sales.tmdl': 'table Sales\n\n\tcolumn Id\n\t\tdataType: int64\n' },
+        { ...base, 'tables/Sales.tmdl': 'table sales\n\n\tcolumn Id\n\t\tdataType: int64\n' }
+    );
+
+    const { result } = deploy(s, d => d.objectType === 'table');
+    assert.strictEqual(result.success, true, errorText(result));
+    assert.match(read(s.prodPath, 'tables/Sales.tmdl'), /^table Sales\b/m, 'header rewritten with the DEV casing');
+});
+
+test('4.3 a measure rename differing only by case deploys the same way', () => {
+    const base = { 'database.tmdl': H.databaseTmdl(), 'model.tmdl': H.modelTmdl(['table Sales']) };
+    const s = scenario(
+        { ...base, 'tables/Sales.tmdl': 'table Sales\n\n\tmeasure Total = 1\n\t\tformatString: #,0\n' },
+        { ...base, 'tables/Sales.tmdl': 'table Sales\n\n\tmeasure total = 1\n\t\tformatString: #,0\n' }
+    );
+
+    const { result } = deploy(s, d => d.objectType === 'measure');
+    assert.strictEqual(result.success, true, errorText(result));
+    assert.match(read(s.prodPath, 'tables/Sales.tmdl'), /measure Total = 1/, 'measure header rewritten with the DEV casing');
+});
+
+test('4.3 an unrelated table with a similar name is left untouched by the case-insensitive lookup', () => {
+    const base = { 'database.tmdl': H.databaseTmdl(), 'model.tmdl': H.modelTmdl(['table Sales', 'table Dim']) };
+    const s = scenario(
+        {
+            ...base,
+            'tables/Sales.tmdl': 'table Sales\n\n\tcolumn Id\n\t\tdataType: int64\n',
+            'tables/Dim.tmdl': 'table Dim\n\n\tcolumn Id\n\t\tdataType: int64\n'
+        },
+        {
+            ...base,
+            'tables/Sales.tmdl': 'table sales\n\n\tcolumn Id\n\t\tdataType: int64\n',
+            'tables/Dim.tmdl': 'table Dim\n\n\tcolumn Id\n\t\tdataType: int64\n'
+        }
+    );
+    const before = read(s.prodPath, 'tables/Dim.tmdl');
+
+    const { result } = deploy(s, d => d.objectType === 'table' && d.displayName === 'Sales');
+    assert.strictEqual(result.success, true, errorText(result));
+    assert.strictEqual(read(s.prodPath, 'tables/Dim.tmdl'), before, 'the unrelated Dim table is unaffected');
 });

@@ -1,13 +1,14 @@
 # Model Alchemist — Release Notes
 
-## v4.10.0
+## v5.0.0
 
-Correctness release. It closes 58 verified defects (11 critical, 22 high, 25 medium)
-found in a full review of v4.9.0, and adds the first automated test suite.
+Correctness release. It closes 59 verified defects (11 critical, 23 high, 25 medium)
+found in a full review of v4.9.0 plus live testing against real DEV/UAT and Fabric
+models, and adds the first automated test suite.
 
 ### Read this before upgrading
 
-Three changes alter what the tool does, on purpose:
+Four changes alter what the tool does, on purpose:
 
 1. **A Fabric deploy now refuses to upload a stale snapshot.** If the model changed
    in Fabric after your comparison was taken, the deploy stops with
@@ -21,7 +22,15 @@ Three changes alter what the tool does, on purpose:
    case-insensitive with per-environment GUIDs normalized, matching Analysis Services.
 
 Each browser tab now keeps its own comparison state (`x-ma-session` header), so two
-tabs no longer overwrite each other's deploy target.
+tabs no longer overwrite each other's deploy target. Fabric authentication itself
+remains process-wide (one signed-in account per running server), not per-tab.
+
+4. **`PBI_*` annotations and `sourceLineageTag` are undeployable by design.** They
+   are always preserved from the target during deploy, even when the comparison
+   shows them as a diff, so Fabric's own IDs and Power BI's internal bookkeeping are
+   never overwritten by a cross-environment deploy. To change either value, edit it
+   directly in the target model (e.g. via Fabric/Desktop) rather than through this
+   tool.
 
 ### Changes that were invisible before
 
@@ -66,6 +75,15 @@ table as Added+Removed; quoted relationship endpoints never matched their column
 diffs; refresh groups absorbed unrelated metadata changes; a diff could belong to
 two groups and render twice with desynced checkboxes. A rename detector now pairs
 Add/Remove into one atomic group that states the Fabric data-loss consequence.
+Partition and relationship ordinal keys (`#2`, `#3`, ...) were assigned by raw file
+order, so two candidates sharing a base identity could silently overwrite each
+other, and DEV/PROD listing relationships in different order could pair the wrong
+pair together; both are now assigned by grouping candidates by their natural
+identity and sorting each group by a deterministic content signature first, so the
+same DEV/PROD structure always pairs the same way regardless of file order. The
+rename detector's internal delimiters were raw NUL/control bytes, making the whole
+file look binary to git; they are now literal escape-sequence text with identical
+runtime behavior.
 
 **Validation** — a `calculationItem` could be selected without its calculation
 group; removing a table left dangling perspective, culture and role references; the
@@ -78,7 +96,29 @@ downgrades.
 connected; workspace and model lists read only the first page; a slow but successful
 deploy was reported as failed after 120s (now 10 minutes, and a timeout is reported
 as indeterminate); per-file parse errors silently dropped whole tables; `TimedOut`
-and `Cancelling` refresh statuses never reached a terminal state.
+and `Cancelling` refresh statuses never reached a terminal state. A forced deploy
+over Fabric drift (`force: true`) now re-extracts the target model from the live
+definition and re-plans against it, instead of planning against the stale
+compare-time snapshot and risking a mismatched deploy. A case-only rename (e.g.
+`sales` → `Sales`) is now deployable: block lookup during deploy is case-insensitive,
+matching Analysis Services identity semantics.
+
+**Deployment safety** — a rollback that failed to restore one or more files used to
+be silently swallowed and still reported "the target is unchanged"; it now reports
+a `ROLLBACK_INCOMPLETE` error naming the affected files and never claims the target
+is unchanged unless every file was actually restored. A Fabric deploy's warnings
+(e.g. `UNREVIEWED_BLOCK_CHANGES`) used to be dropped from the response, and the
+backup action recorded before upload could be silently overwritten; both are now
+preserved. When the target model can't be indexed, target file paths are now
+guessed with an explicit `TARGET_PATHS_GUESSED` warning instead of silently.
+Removing a whole role while one of its `tablePermission`/`roleMember` diffs was
+also selected planned a redundant child operation against a file the role removal
+had already deleted, failing with `TARGET_FILE_MISSING` and forcing a rollback
+(mirrors the existing table/child-object guard, now extended to roles). That
+rollback then failed to restore any file deleted earlier in the same batch, because
+it tried to read-compare the file before rewriting it instead of just recreating
+it — both are now fixed, and this exact sequence (found live, not in the original
+review) is locked down by a dedicated regression test.
 
 **Server** — `/api/compare` left the previous Fabric model and dataset armed;
 `detectTablesNeedingRefresh` re-read mutable global state after a long await;
@@ -98,7 +138,7 @@ O(diffs × members) scan re-run on every keystroke.
 
 ### Tests
 
-`npm test` runs 119 tests on Node's built-in runner — no new dependencies. Each test
+`npm test` runs 138 tests on Node's built-in runner — no new dependencies. Each test
 is named after the issue it locks down.
 
 ### Architecture

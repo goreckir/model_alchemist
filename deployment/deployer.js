@@ -84,10 +84,19 @@ function deployChanges(selectedDiffs, devModel, prodPath, options = {}) {
         });
     }
 
+    let extractionFailed = false;
     const context = {
         prodModel,
-        prodObjects: prodModel ? safeExtract(prodModel) : {}
+        prodObjects: prodModel ? safeExtract(prodModel, () => { extractionFailed = true; }) : {}
     };
+    if (!prodModel || extractionFailed) {
+        result.warnings.push({
+            code: 'TARGET_PATHS_GUESSED',
+            message: 'The target model could not be indexed, so target file paths for this deploy are guessed from ' +
+                'object names (e.g. tables/<name>.tmdl) instead of the real file layout. Guessed paths can miss ' +
+                'renamed or relocated files; review the plan carefully before applying it.'
+        });
+    }
 
     // Check for relationship cardinality changes that require data validation
     const cardinalityChanges = selectedDiffs.filter(d =>
@@ -150,8 +159,8 @@ function deployChanges(selectedDiffs, devModel, prodPath, options = {}) {
 }
 
 /** extractAll can throw on a malformed model; never let that kill a deploy plan. */
-function safeExtract(model) {
-    try { return extractAll(model); } catch { return {}; }
+function safeExtract(model, onFailure) {
+    try { return extractAll(model); } catch { if (onFailure) onFailure(); return {}; }
 }
 
 // Ops that are idempotent "ensure" checks — only report/apply them if they'd
@@ -205,12 +214,24 @@ function executeAll(fileOps, prodPath, result, atomic) {
             result.errors.push({ operation: op.description, error: failure });
             result.success = false;
             if (atomic) {
-                const restored = rollback(snapshot);
+                const { restored, failed } = rollback(snapshot);
                 result.rolledBack = true;
-                result.actions.push({
-                    type: 'rollback',
-                    message: `Deployment stopped at a failing operation. ${restored} file(s) restored to their pre-deployment content — the target is unchanged.`
-                });
+                if (failed.length > 0) {
+                    result.errors.push({
+                        operation: { action: 'rollback' },
+                        code: 'ROLLBACK_INCOMPLETE',
+                        error: `${failed.length} file(s) could not be restored during rollback: ${failed.map(f => f.filePath).join(', ')}. The target is left in a partially-deployed state.`
+                    });
+                    result.actions.push({
+                        type: 'rollback',
+                        message: `Deployment stopped at a failing operation. ${restored} file(s) restored, but ${failed.length} file(s) could NOT be restored — the target is NOT guaranteed unchanged.`
+                    });
+                } else {
+                    result.actions.push({
+                        type: 'rollback',
+                        message: `Deployment stopped at a failing operation. ${restored} file(s) restored to their pre-deployment content — the target is unchanged.`
+                    });
+                }
                 return result;
             }
         }
@@ -220,13 +241,22 @@ function executeAll(fileOps, prodPath, result, atomic) {
     return result;
 }
 
-/** Restore every captured file. @returns {number} how many files were touched. */
+/**
+ * Restore every captured file.
+ * @returns {{ restored: number, failed: Array<{ filePath: string, error: string }> }}
+ */
 function rollback(snapshot) {
     let restored = 0;
+    const failed = [];
     for (const [filePath, state] of snapshot) {
         try {
             if (state.existed) {
-                if (fs.readFileSync(filePath, 'utf-8') !== state.content) {
+                // The file may have been deleted outright by an earlier operation
+                // in this same batch (e.g. a whole table/role removal). Reading it
+                // first to compare would throw ENOENT and abort the restore; check
+                // existence instead of assuming the read will succeed.
+                if (!fs.existsSync(filePath) || fs.readFileSync(filePath, 'utf-8') !== state.content) {
+                    fs.mkdirSync(path.dirname(filePath), { recursive: true });
                     fs.writeFileSync(filePath, state.content, 'utf-8');
                     restored++;
                 }
@@ -234,11 +264,12 @@ function rollback(snapshot) {
                 fs.unlinkSync(filePath);
                 restored++;
             }
-        } catch {
-            // A file we cannot restore is reported through the error list already.
+        } catch (err) {
+            // Surfaced to the caller as ROLLBACK_INCOMPLETE — never silently swallowed.
+            failed.push({ filePath, error: err.message });
         }
     }
-    return restored;
+    return { restored, failed };
 }
 
 // ── File resolution ──────────────────────────────────────────────────────────
@@ -291,16 +322,22 @@ function planFileOperations(selectedDiffs, devModel, prodPath, prodModel, contex
     const tablesBeingAdded = new Set();
     const tablesBeingRemoved = new Set();
     const calcGroupsBeingAdded = new Set();
+    const rolesBeingAdded = new Set();
+    const rolesBeingRemoved = new Set();
     for (const d of selectedDiffs) {
         if (d.objectType === 'table') {
             if (d.type === 0) tablesBeingAdded.add(d.displayName);
             else if (d.type === 1) tablesBeingRemoved.add(d.displayName);
         } else if (d.objectType === 'calculationGroup' && d.type === 0 && d.parentTable) {
             calcGroupsBeingAdded.add(d.parentTable);
+        } else if (d.objectType === 'role') {
+            if (d.type === 0) rolesBeingAdded.add(d.displayName);
+            else if (d.type === 1) rolesBeingRemoved.add(d.displayName);
         }
     }
 
     const CHILD_OBJECT_TYPES = new Set(['column', 'measure', 'hierarchy', 'partition', 'calculationGroup', 'calculationItem']);
+    const ROLE_CHILD_DIFF_TYPES = new Set(['tablePermission', 'roleMember']);
 
     // Detect whether any selected diff introduces a calculation group into the
     // target. Calculation groups require `discourageImplicitMeasures: true` on
@@ -328,6 +365,15 @@ function planFileOperations(selectedDiffs, devModel, prodPath, prodModel, contex
             // this the item was inserted a second time and the model became
             // unloadable (duplicate object names).
             if (diff.type === 0 && diff.objectType === 'calculationItem' && calcGroupsBeingAdded.has(diff.parentTable)) continue;
+        }
+        // A whole role ADD/REMOVE already covers its tablePermission/member children
+        // (ADD writes the full DEV file, REMOVE deletes it). Planning a separate op
+        // for the child either duplicated it or failed with TARGET_FILE_MISSING
+        // against a file the role op had already deleted.
+        if (ROLE_CHILD_DIFF_TYPES.has(diff.objectType)) {
+            const roleName = diff.parentRole || String(diff.displayName).split(' → ')[0];
+            if (diff.type === 0 && rolesBeingAdded.has(roleName)) continue;
+            if (diff.type === 1 && rolesBeingRemoved.has(roleName)) continue;
         }
         const ops = planSingleDiff(diff, devModel, prodPath, context);
         operations.push(...ops);
