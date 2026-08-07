@@ -24,13 +24,15 @@ const { getIndentLevel, isObjectDeclaration, quoteName } = require('../parser/tm
 function findObjectBlock(content, objectType, objectName, parentIndent) {
     const lines = content.replace(/\r\n/g, '\n').split('\n');
     const targetIndent = parentIndent + 1;
-    const quotedName = quoteName(objectName);
-    
-    // Build possible patterns for matching
-    const patterns = [
-        `${objectType} ${quotedName}`,
-        `${objectType} ${objectName}`
-    ];
+    const name = objectName == null ? '' : String(objectName);
+    const quotedName = quoteName(name);
+
+    // Build possible patterns for matching. A bare declaration (`calculationGroup`
+    // with no name) has no name part at all — without this the block could never
+    // be found and every calculation-group remove/modify failed.
+    const patterns = name === ''
+        ? [objectType]
+        : [`${objectType} ${quotedName}`, `${objectType} ${name}`];
 
     for (let i = 0; i < lines.length; i++) {
         const line = lines[i];
@@ -40,9 +42,9 @@ function findObjectBlock(content, objectType, objectName, parentIndent) {
         if (indent !== targetIndent) continue;
 
         // Check if this line matches our target object
-        const matchesPattern = patterns.some(p => 
-            trimmed === p || 
-            trimmed.startsWith(p + ' ') || 
+        const matchesPattern = patterns.some(p =>
+            trimmed === p ||
+            trimmed.startsWith(p + ' ') ||
             trimmed.startsWith(p + '\t') ||
             trimmed === p + ' =' ||
             trimmed.startsWith(p + ' =')
@@ -123,13 +125,13 @@ function removeObjectBlock(content, objectType, objectName, parentIndent) {
  * report bindings (PBIR visuals bind to model objects by lineageTag, not by name).
  * @returns {string} Modified file content
  */
-function replaceObjectBlock(content, objectType, objectName, parentIndent, newBlock) {
+function replaceObjectBlock(content, objectType, objectName, parentIndent, newBlock, mergeFn) {
     const location = findObjectBlock(content, objectType, objectName, parentIndent);
     if (!location) return content;
 
     const lines = content.replace(/\r\n/g, '\n').split('\n');
     const oldBlock = lines.slice(location.startLine, location.endLine).join('\n');
-    const mergedBlock = preserveLineageTags(oldBlock, newBlock);
+    const mergedBlock = (mergeFn || mergeReplacementBlock)(oldBlock, newBlock);
     const newBlockLines = mergedBlock.split('\n');
 
     lines.splice(location.startLine, location.endLine - location.startLine, ...newBlockLines);
@@ -138,8 +140,18 @@ function replaceObjectBlock(content, objectType, objectName, parentIndent, newBl
 
 const DECL_KEYWORDS_RE = /^(table|column|measure|hierarchy|level|partition|relationship|role|tablepermission|columnpermission|member|perspective|perspectivetable|perspectivemeasure|perspectivecolumn|perspectivehierarchy|cultureinfo|culture|expression|function|model|calculationgroup|calculationitem|dataSource|annotation|extendedproperty|kpi|alternateof|translations|linguisticmetadata|database)\b/i;
 
+// Both per-environment identifiers. sourceLineageTag drives Fabric git integration
+// and Direct Lake column mapping — overwriting it with DEV's value can silently
+// rebind or break an object's source mapping, so it is preserved like lineageTag.
+const LINEAGE_TAG_RE = /^(lineageTag|sourceLineageTag)(:\s*)(.+?)\s*$/;
+
+/** Indentation prefix of a line, verbatim. */
+function indentOf(line) {
+    return line.substring(0, line.length - line.trimStart().length);
+}
+
 /**
- * Collect map of "indent|declaration" -> lineageTag value from a TMDL block.
+ * Collect map of "indent|declaration|tagName" -> tag value from a TMDL block.
  */
 function collectLineageTags(block) {
     const lines = block.replace(/\r\n/g, '\n').split('\n');
@@ -150,10 +162,10 @@ function collectLineageTags(block) {
         if (!trimmed || trimmed.startsWith('//')) continue;
         const indent = getIndentLevel(line);
         while (stack.length && stack[stack.length - 1][0] >= indent) stack.pop();
-        const tagMatch = trimmed.match(/^lineageTag:\s*(.+?)\s*$/);
+        const tagMatch = trimmed.match(LINEAGE_TAG_RE);
         if (tagMatch) {
             const parent = stack.length ? stack[stack.length - 1] : null;
-            if (parent) tags.set(parent[0] + '|' + parent[1], tagMatch[1]);
+            if (parent) tags.set(`${parent[0]}|${parent[1]}|${tagMatch[1]}`, tagMatch[3]);
             continue;
         }
         if (DECL_KEYWORDS_RE.test(trimmed)) {
@@ -165,8 +177,8 @@ function collectLineageTags(block) {
 }
 
 /**
- * Rewrite a new block: replace lineageTag values with values from oldTags
- * where the parent declaration matches (same indent + same declaration line).
+ * Rewrite a new block: replace lineageTag / sourceLineageTag values with values
+ * from oldTags where the parent declaration matches (same indent + declaration).
  */
 function preserveLineageTags(oldBlock, newBlock) {
     if (!oldBlock || !newBlock) return newBlock;
@@ -181,14 +193,13 @@ function preserveLineageTags(oldBlock, newBlock) {
         if (!trimmed || trimmed.startsWith('//')) continue;
         const indent = getIndentLevel(line);
         while (stack.length && stack[stack.length - 1][0] >= indent) stack.pop();
-        const tagMatch = trimmed.match(/^(lineageTag:\s*)(.+?)\s*$/);
+        const tagMatch = trimmed.match(LINEAGE_TAG_RE);
         if (tagMatch) {
             const parent = stack.length ? stack[stack.length - 1] : null;
             if (parent) {
-                const key = parent[0] + '|' + parent[1];
+                const key = `${parent[0]}|${parent[1]}|${tagMatch[1]}`;
                 if (oldTags.has(key)) {
-                    const indentStr = line.substring(0, line.length - line.trimStart().length);
-                    lines[i] = indentStr + tagMatch[1] + oldTags.get(key);
+                    lines[i] = indentOf(line) + tagMatch[1] + tagMatch[2] + oldTags.get(key);
                 }
             }
             continue;
@@ -199,6 +210,124 @@ function preserveLineageTags(oldBlock, newBlock) {
         }
     }
     return lines.join('\n');
+}
+
+const PBI_ANNOTATION_RE = /^annotation\s+PBI_/i;
+
+/**
+ * Walk a block and report, for every line, the enclosing declaration key.
+ * @returns {Array<{ indent: number, trimmed: string, parentKey: string|null }>}
+ */
+function walkBlock(lines) {
+    const stack = [];
+    return lines.map(line => {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith('//')) {
+            return { indent: getIndentLevel(line), trimmed, parentKey: stack.length ? stack[stack.length - 1][2] : null };
+        }
+        const indent = getIndentLevel(line);
+        while (stack.length && stack[stack.length - 1][0] >= indent) stack.pop();
+        const parentKey = stack.length ? stack[stack.length - 1][2] : null;
+        if (DECL_KEYWORDS_RE.test(trimmed) && !PBI_ANNOTATION_RE.test(trimmed)) {
+            const decl = trimmed.replace(/\s*=.*$/, '').trim();
+            stack.push([indent, decl, `${indent}|${decl}`]);
+        }
+        return { indent, trimmed, parentKey };
+    });
+}
+
+/** Extract every `annotation PBI_*` block, grouped by enclosing declaration. */
+function collectPbiAnnotations(block) {
+    const lines = String(block).replace(/\r\n/g, '\n').split('\n');
+    const walked = walkBlock(lines);
+    const byParent = new Map();
+
+    for (let i = 0; i < lines.length; i++) {
+        if (!PBI_ANNOTATION_RE.test(walked[i].trimmed)) continue;
+        const annIndent = walked[i].indent;
+        let end = i + 1;
+        while (end < lines.length) {
+            const t = lines[end].trim();
+            if (t && getIndentLevel(lines[end]) <= annIndent) break;
+            end++;
+        }
+        while (end > i + 1 && !lines[end - 1].trim()) end--;
+        const parent = walked[i].parentKey || '';
+        if (!byParent.has(parent)) byParent.set(parent, []);
+        byParent.get(parent).push(lines.slice(i, end));
+        i = end - 1;
+    }
+    return byParent;
+}
+
+/**
+ * Carry the TARGET's PBI_* annotations into a replacement block and drop the
+ * source's.
+ *
+ * PBI_* annotations are Power BI engine runtime state (PBI_ResultType,
+ * PBI_QueryOrder, PBI_FormatHint …). The extractor deliberately excludes them
+ * from comparison, so shipping DEV's copies inside a raw block replacement
+ * deployed a change the user never reviewed.
+ */
+function preserveTargetAnnotations(oldBlock, newBlock) {
+    if (!oldBlock || !newBlock) return newBlock;
+    const targetAnnotations = collectPbiAnnotations(oldBlock);
+
+    // 1. Strip the source's PBI_* annotations.
+    const srcLines = String(newBlock).replace(/\r\n/g, '\n').split('\n');
+    const srcWalk = walkBlock(srcLines);
+    const kept = [];
+    const keptWalk = [];
+    for (let i = 0; i < srcLines.length; i++) {
+        if (PBI_ANNOTATION_RE.test(srcWalk[i].trimmed)) {
+            const annIndent = srcWalk[i].indent;
+            let end = i + 1;
+            while (end < srcLines.length) {
+                const t = srcLines[end].trim();
+                if (t && getIndentLevel(srcLines[end]) <= annIndent) break;
+                end++;
+            }
+            i = end - 1;
+            continue;
+        }
+        kept.push(srcLines[i]);
+        keptWalk.push(srcWalk[i]);
+    }
+
+    if (targetAnnotations.size === 0) return kept.join('\n');
+
+    // 2. Re-insert the target's annotations at the end of the matching parent region.
+    const insertions = [];
+    for (const [parentKey, blocks] of targetAnnotations) {
+        const parentIndent = parentKey === '' ? -1 : parseInt(parentKey.split('|')[0], 10);
+        let insertAt = -1;
+        for (let i = 0; i < kept.length; i++) {
+            if (keptWalk[i].parentKey !== parentKey) continue;
+            insertAt = i + 1;
+        }
+        if (insertAt < 0) {
+            // Parent no longer exists in the replacement block — only re-attach
+            // top-level annotations, otherwise the indentation would be wrong.
+            if (parentKey !== '') continue;
+            insertAt = kept.length;
+        }
+        void parentIndent;
+        insertions.push({ at: insertAt, lines: blocks.flat() });
+    }
+
+    insertions.sort((a, b) => b.at - a.at);
+    for (const insertion of insertions) {
+        kept.splice(insertion.at, 0, ...insertion.lines);
+    }
+    return kept.join('\n');
+}
+
+/**
+ * Full merge applied to every raw-block replacement: keep the target's
+ * per-environment identifiers and its PBI_* runtime annotations.
+ */
+function mergeReplacementBlock(oldBlock, newBlock) {
+    return preserveTargetAnnotations(oldBlock, preserveLineageTags(oldBlock, newBlock));
 }
 
 /**
@@ -341,10 +470,20 @@ function removeRefEntry(content, refType, refName) {
  * @returns {{ headerStart: number, headerEnd: number, firstChildStart: number|null, blockStart: number, blockEnd: number, headerLines: string[] } | null}
  */
 function findTableHeader(content, tableName) {
-    const block = findTopLevelBlock(content, 'table', tableName);
+    return findBlockHeader(content, 'table', tableName,
+        ['column', 'measure', 'hierarchy', 'partition', 'calculationGroup', 'calculationItem']);
+}
+
+/**
+ * Generalised header locator: the declaration plus its scalar properties, down to
+ * (but excluding) the first child declaration listed in `childKeywords`.
+ * Used for tables and for roles, whose members and tablePermissions must survive
+ * a header-only replacement.
+ */
+function findBlockHeader(content, keyword, name, childKeywords) {
+    const block = findTopLevelBlock(content, keyword, name);
     if (!block) return null;
     const lines = content.replace(/\r\n/g, '\n').split('\n');
-    const childKeywords = ['column', 'measure', 'hierarchy', 'partition', 'calculationGroup', 'calculationItem'];
     let firstChildStart = null;
     for (let i = block.startLine + 1; i <= block.endLine; i++) {
         const ln = lines[i];
@@ -379,18 +518,62 @@ function findTableHeader(content, tableName) {
  * @returns {string} New target content with header replaced; throws if either block missing
  */
 function replaceTableHeader(targetContent, devContent, tableName) {
-    const targetH = findTableHeader(targetContent, tableName);
-    const devH = findTableHeader(devContent, tableName);
-    if (!targetH) throw new Error(`Table '${tableName}' not found in target content`);
-    if (!devH) throw new Error(`Table '${tableName}' not found in DEV content`);
+    return replaceBlockHeader(targetContent, devContent, 'table', tableName,
+        ['column', 'measure', 'hierarchy', 'partition', 'calculationGroup', 'calculationItem']);
+}
+
+/**
+ * Replace ONLY a block's header, preserving its children and the target's
+ * per-environment identifiers.
+ *
+ * The header splice used to insert DEV's lines verbatim, lineage tags included,
+ * so a cosmetic isHidden toggle rewrote the target's lineageTag and broke PBIR
+ * bindings and Fabric object identity.
+ */
+function replaceBlockHeader(targetContent, devContent, keyword, name, childKeywords) {
+    const targetH = findBlockHeader(targetContent, keyword, name, childKeywords);
+    const devH = findBlockHeader(devContent, keyword, name, childKeywords);
+    if (!targetH) throw new Error(`${keyword} '${name}' not found in target content`);
+    if (!devH) throw new Error(`${keyword} '${name}' not found in DEV content`);
 
     const targetLines = targetContent.replace(/\r\n/g, '\n').split('\n');
+    const mergedHeader = mergeReplacementBlock(
+        targetH.headerLines.join('\n'),
+        devH.headerLines.join('\n')
+    ).split('\n');
+
     const newLines = [
         ...targetLines.slice(0, targetH.headerStart),
-        ...devH.headerLines,
+        ...mergedHeader,
         ...targetLines.slice(targetH.headerEnd + 1)
     ];
     return newLines.join('\n');
+}
+
+/**
+ * Build the replacement for a `model` block.
+ *
+ * `findObjectBlock` keeps indented lines inside the block, and `ref` entries may
+ * legitimately be indented under `model Model`. Sending DEV's whole model block
+ * therefore deleted every ref from the target — a dangling model. This keeps the
+ * target's ref lines and its PBI_* annotations, and takes DEV's properties.
+ */
+function mergeModelBlock(targetBlock, devBlock) {
+    const REF_RE = /^ref\s+\S+/;
+    const targetLines = String(targetBlock).replace(/\r\n/g, '\n').split('\n');
+    const targetRefs = targetLines.filter(l => REF_RE.test(l.trim()));
+
+    const withoutDevRefs = String(devBlock).replace(/\r\n/g, '\n').split('\n')
+        .filter(l => !REF_RE.test(l.trim()))
+        .join('\n');
+
+    let merged = mergeReplacementBlock(targetBlock, withoutDevRefs);
+    if (targetRefs.length > 0) {
+        const lines = merged.split('\n');
+        while (lines.length > 0 && !lines[lines.length - 1].trim()) lines.pop();
+        merged = [...lines, ...targetRefs].join('\n');
+    }
+    return merged;
 }
 
 /**
@@ -481,8 +664,11 @@ function appendChildBlockNested(content, childBlock, parentIndent) {
     }
 
     if (parentStart < 0) {
-        // Fallback: append at end of file like regular appendChildBlock
-        return appendChildBlock(content, childBlock);
+        // No calculationGroup in the target. Appending at the end of the file used
+        // to nest the item under whatever the last block was, at the wrong indent,
+        // producing TMDL Power BI cannot parse. Signal failure instead so the
+        // deployer reports it rather than writing a broken model.
+        return null;
     }
 
     // Find end of this parent block (first line at indent <= parentIndent after start)
@@ -509,14 +695,20 @@ module.exports = {
     findObjectBlock,
     findTopLevelBlock,
     findTableHeader,
+    findBlockHeader,
     removeObjectBlock,
     replaceObjectBlock,
     replaceTableHeader,
+    replaceBlockHeader,
     appendTopLevelBlock,
     appendChildBlock,
     appendChildBlockNested,
     addRefEntry,
     removeRefEntry,
     ensureModelProperty,
-    ensureTopLevelProperty
+    ensureTopLevelProperty,
+    preserveLineageTags,
+    preserveTargetAnnotations,
+    mergeReplacementBlock,
+    mergeModelBlock
 };

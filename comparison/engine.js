@@ -6,6 +6,8 @@
  */
 
 const { extractAll, CHANGE_GROUPS } = require('./extractor');
+const { tableFromColRef, colFromRef } = require('./refs');
+const { detectRenames } = require('./rename-detector');
 
 function compareModels(devModel, prodModel, devPath, prodPath) {
     const devObjects = extractAll(devModel);
@@ -24,6 +26,8 @@ function compareModels(devModel, prodModel, devPath, prodPath) {
                 modelName: devObj.modelName,
                 changeGroup: devObj.changeGroup,
                 parentTable: devObj.parentTable || null,
+                parentRole: devObj.parentRole || null,
+                objectName: devObj.objectName,
                 sourceFile: devObj.sourceFile,
                 rawBlock: devObj.rawBlock,
                 propertyDiffs: Object.entries(devObj.properties).map(([name, value]) => ({
@@ -46,7 +50,14 @@ function compareModels(devModel, prodModel, devPath, prodPath) {
                 modelName: prodObj.modelName,
                 changeGroup: prodObj.changeGroup,
                 parentTable: prodObj.parentTable || null,
+                parentRole: prodObj.parentRole || null,
+                objectName: prodObj.objectName,
+                // Real name in the TARGET file (partition GUID suffix, relationship
+                // GUID): the deployer locates the block to delete with this, never
+                // by re-deriving a name from displayName.
+                targetObjectName: prodObj.realName || prodObj.objectName,
                 sourceFile: prodObj.sourceFile,
+                targetFile: prodObj.sourceFile,
                 rawBlock: prodObj.rawBlock,
                 propertyDiffs: Object.entries(prodObj.properties).map(([name, value]) => ({
                     propertyName: name,
@@ -72,11 +83,17 @@ function compareModels(devModel, prodModel, devPath, prodPath) {
                 modelName: devObj.modelName,
                 changeGroup: devObj.changeGroup,
                 parentTable: devObj.parentTable || null,
+                parentRole: devObj.parentRole || null,
+                objectName: devObj.objectName,
                 sourceFile: devObj.sourceFile,
+                targetFile: prodObj.sourceFile,
                 rawBlock: devObj.rawBlock,
                 // For relationships: real TMDL name (GUID) in target — used by deployer
                 // to locate the existing block during replace/remove (DEV's GUID differs).
                 targetRelName: prodObj.relName,
+                // Same idea generalised: the target's real name for any object whose
+                // TMDL name differs from its logical name (partition GUID suffixes).
+                targetObjectName: prodObj.realName || prodObj.objectName,
                 propertyDiffs
             };
 
@@ -103,6 +120,11 @@ function compareModels(devModel, prodModel, devPath, prodPath) {
         }
     }
 
+    // Pair up Add/Remove diffs that are really one rename, so the user sees a
+    // correlated change with a data-loss warning instead of dozens of unrelated
+    // Add and Remove entries.
+    const renames = detectRenames(diffs, devObjects, prodObjects);
+
     const summary = {};
     for (const group of Object.values(CHANGE_GROUPS)) {
         summary[group] = 0;
@@ -118,7 +140,8 @@ function compareModels(devModel, prodModel, devPath, prodPath) {
         prodSource: prodPath,
         timestamp: new Date().toISOString(),
         diffs,
-        groups: computeGroups(diffs, devObjects),
+        renames,
+        groups: computeGroups(diffs, devObjects, renames),
         summary
     };
 }
@@ -148,12 +171,55 @@ function normalizeValue(value) {
 
 /**
  * Compute atomic groups for diffs that must be deployed together.
- * Rule: If a partition expression changed, group it with all sourceColumn-based
- * column changes (add/remove/structural modify) in that table.
- * Metadata-only column changes (isHidden, formatString, etc.) stay independent.
+ *
+ * Rule: if a partition expression changed, group it with the STRUCTURAL changes
+ * of that table (column add/remove, column expression/sourceColumn/dataType
+ * changes, other partitions, the table object itself). Metadata-only changes
+ * (formatString, isHidden, displayFolder, description, annotations) stay
+ * independent — they deploy on their own and must not drag an unrelated fix into
+ * an atomic group, which used to raise a false "incomplete atomic group" warning.
+ *
+ * Groups are made DISJOINT at the end: a diff that qualified for two groups was
+ * rendered twice in the UI with independent checkboxes that fell out of sync.
  */
-function computeGroups(diffs, devObjects) {
+
+/** Structural properties whose change alters the shape or the data of a table. */
+const STRUCTURAL_PROPERTIES = new Set(['expression', 'sourceColumn', 'dataType', 'type', 'mode', 'source']);
+
+function isStructuralDiff(diff) {
+    switch (diff.objectType) {
+        case 'table':
+            return diff.type === 0 || diff.type === 1;
+        case 'partition':
+            return true;
+        case 'column':
+            if (diff.type === 0 || diff.type === 1) return true;
+            return (diff.propertyDiffs || []).some(p => STRUCTURAL_PROPERTIES.has(p.propertyName));
+        case 'calculationItem':
+            if (diff.type === 0 || diff.type === 1) return true;
+            return (diff.propertyDiffs || []).some(p => p.propertyName === 'ordinal');
+        case 'calculationGroup':
+            return (diff.propertyDiffs || []).some(p => p.propertyName === 'precedence');
+        default:
+            return false;
+    }
+}
+
+function computeGroups(diffs, devObjects, renames = []) {
     const groups = [];
+
+    // Indexes built once. The previous per-group `diffs.filter(...)` scans made
+    // both compare and every UI re-render quadratic in the number of diffs.
+    const diffsByTable = new Map();
+    const tableDiffByName = new Map();
+    for (const diff of diffs) {
+        if (diff.parentTable) {
+            if (!diffsByTable.has(diff.parentTable)) diffsByTable.set(diff.parentTable, []);
+            diffsByTable.get(diff.parentTable).push(diff);
+        }
+        if (diff.objectType === 'table') tableDiffByName.set(diff.displayName, diff);
+    }
+    const structuralDiffsOf = tableName => (diffsByTable.get(tableName) || []).filter(isStructuralDiff);
 
     // Find all partition diffs (added, removed, or modified)
     const partitionDiffs = diffs.filter(d => d.objectType === 'partition');
@@ -283,16 +349,14 @@ function computeGroups(diffs, devObjects) {
         }
     }
 
-    // For each table needing refresh, gather ALL diffs for that table
+    // For each table needing refresh, gather its STRUCTURAL diffs (see header).
     for (const [tableName, extraKeys] of refreshTables) {
-        const tableDiffs = diffs.filter(d => d.parentTable === tableName);
-        const tableObjDiff = diffs.find(d => d.objectType === 'table' && d.displayName === tableName);
-
         const memberKeys = new Set(extraKeys);
-        for (const d of tableDiffs) {
+        for (const d of structuralDiffsOf(tableName)) {
             memberKeys.add(d.identityKey);
         }
-        if (tableObjDiff) {
+        const tableObjDiff = tableDiffByName.get(tableName);
+        if (tableObjDiff && isStructuralDiff(tableObjDiff)) {
             memberKeys.add(tableObjDiff.identityKey);
         }
 
@@ -338,14 +402,12 @@ function computeGroups(diffs, devObjects) {
         // Skip if already in a refresh group from partition logic
         if (refreshTables.has(tableName)) continue;
 
-        const tableDiffs = diffs.filter(d => d.parentTable === tableName);
-        const tableObjDiff = diffs.find(d => d.objectType === 'table' && d.displayName === tableName);
-
         const memberKeys = new Set();
-        for (const d of tableDiffs) {
+        for (const d of structuralDiffsOf(tableName)) {
             memberKeys.add(d.identityKey);
         }
-        if (tableObjDiff) {
+        const tableObjDiff = tableDiffByName.get(tableName);
+        if (tableObjDiff && isStructuralDiff(tableObjDiff)) {
             memberKeys.add(tableObjDiff.identityKey);
         }
 
@@ -368,24 +430,9 @@ function computeGroups(diffs, devObjects) {
     //  2. Set requiresRefresh: true on the endpoint tables — the AS engine must
     //     recalculate after any structural relationship change.
     //
-    // Supersedes the previous "Column/Table deletions" cascade-only logic and extends it
-    // to cover all relationship change types (added / removed / modified).
-
-    // Helpers: parse TMDL column reference ("'Table Name'.Col" or "Table.Col")
-    function tableFromColRef(colRef) {
-        if (!colRef) return null;
-        const m = colRef.match(/^'([^']+)'\./);
-        if (m) return m[1];
-        const dot = colRef.lastIndexOf('.');
-        return dot > 0 ? colRef.substring(0, dot) : null;
-    }
-    function colFromRef(colRef) {
-        if (!colRef) return null;
-        const m = colRef.match(/^'[^']+'\.(.*)/);
-        if (m) return m[1];
-        const dot = colRef.lastIndexOf('.');
-        return dot >= 0 ? colRef.substring(dot + 1) : colRef;
-    }
+    // Endpoint refs are parsed with the shared TMDL ref parser: keeping the quotes
+    // meant a relationship on `Sales.'Order Date'` never matched its column diff,
+    // so the column could be left behind and the deployed model was broken.
 
     const allRelDiffs  = diffs.filter(d => d.objectType === 'relationship');
     const allColDiffs  = diffs.filter(d => d.objectType === 'column');
@@ -423,10 +470,10 @@ function computeGroups(diffs, devObjects) {
 
         // Key column diffs on the endpoint columns (any change type: added / removed / modified)
         for (const cd of allColDiffs) {
-            if (fromTable && cd.parentTable === fromTable && cd.displayName === `${fromTable}.${fromCol}`) {
+            if (fromTable && cd.parentTable === fromTable && cd.objectName === fromCol) {
                 memberKeys.add(cd.identityKey);
             }
-            if (toTable && cd.parentTable === toTable && cd.displayName === `${toTable}.${toCol}`) {
+            if (toTable && cd.parentTable === toTable && cd.objectName === toCol) {
                 memberKeys.add(cd.identityKey);
             }
         }
@@ -439,8 +486,8 @@ function computeGroups(diffs, devObjects) {
             memberKeys.add(tblDiff.identityKey);
             if (relDiff.type === 1) {
                 // Table removal: pull all child diffs (columns, partitions, measures …)
-                for (const cd of diffs.filter(d => d.type === 1 && d.parentTable === tblName)) {
-                    memberKeys.add(cd.identityKey);
+                for (const cd of (diffsByTable.get(tblName) || [])) {
+                    if (cd.type === 1) memberKeys.add(cd.identityKey);
                 }
             }
         }
@@ -489,37 +536,33 @@ function computeGroups(diffs, devObjects) {
         }
     }
 
+    // ── Renames ──────────────────────────────────────────────────────────────────
+    // A rename arrives as an Add + a Remove. Bind them (and everything they drag
+    // along) into one group carrying the data-loss warning, so the pair cannot be
+    // deployed half-way and the consequence is stated up front.
+    for (const rename of renames) {
+        groups.push({
+            groupId: `rename:${rename.removedKey}->${rename.addedKey}`,
+            label: `${rename.fromName} → ${rename.toName} (renamed ${rename.objectType})`,
+            reason: rename.objectType === 'table'
+                ? `Rename detected. Deploying this drops '${rename.fromName}' and creates '${rename.toName}': all partition data is discarded and the new table needs a full refresh. Deploy the whole group or none of it.`
+                : `Rename detected: '${rename.fromName}' becomes '${rename.toName}'. Deploy the whole group or none of it.`,
+            memberKeys: [...rename.memberKeys],
+            affectedTables: rename.affectedTables,
+            requiresRefresh: rename.objectType === 'table',
+            isRename: true,
+            rename: { from: rename.fromName, to: rename.toName, objectType: rename.objectType }
+        });
+    }
+
     // Sort groups alphabetically by label
     groups.sort((a, b) => a.label.localeCompare(b.label));
 
-    // Merge groups that share named expression members (expression referenced by multiple tables)
-    // Only merge non-parameter groups
-    let merged = true;
-    while (merged) {
-        merged = false;
-        for (let i = 0; i < groups.length; i++) {
-            if (groups[i].isParameterGroup) continue;
-            for (let j = i + 1; j < groups.length; j++) {
-                if (groups[j].isParameterGroup) continue;
-                // Check if they share any named expression key
-                const sharedExpr = groups[i].memberKeys.some(k =>
-                    k.startsWith('expression:') && groups[j].memberKeys.includes(k)
-                );
-                if (sharedExpr) {
-                    // Merge j into i
-                    const mergedKeys = new Set([...groups[i].memberKeys, ...groups[j].memberKeys]);
-                    const labels = [...new Set([...groups[i].label.split(', '), ...groups[j].label.split(', ')])];
-                    groups[i].memberKeys = [...mergedKeys];
-                    groups[i].label = labels.join(', ');
-                    groups[i].groupId = `refresh:${labels.join('+')}`;
-                    groups.splice(j, 1);
-                    merged = true;
-                    break;
-                }
-            }
-            if (merged) break;
-        }
-    }
+    // Merge overlapping groups until every diff belongs to at most ONE group.
+    // Before this, a diff shared by two groups (e.g. an M expression used by two
+    // tables) rendered twice with checkboxes that toggled independently, so the
+    // deployed set could differ from what the screen showed.
+    mergeOverlappingGroups(groups);
 
     // Add parameter groups at the beginning
     groups.unshift(...parameterGroups.sort((a, b) => a.label.localeCompare(b.label)));
@@ -527,4 +570,39 @@ function computeGroups(diffs, devObjects) {
     return groups;
 }
 
-module.exports = { compareModels };
+/** Union-merge every pair of groups that share a member key. Mutates `groups`. */
+function mergeOverlappingGroups(groups) {
+    let merged = true;
+    while (merged) {
+        merged = false;
+        for (let i = 0; i < groups.length && !merged; i++) {
+            if (groups[i].isParameterGroup) continue;
+            const keysI = new Set(groups[i].memberKeys);
+            for (let j = i + 1; j < groups.length; j++) {
+                if (groups[j].isParameterGroup) continue;
+                if (!groups[j].memberKeys.some(k => keysI.has(k))) continue;
+
+                const target = groups[i];
+                const source = groups[j];
+                target.memberKeys = [...new Set([...target.memberKeys, ...source.memberKeys])];
+                const labels = [...new Set([...target.label.split(', '), ...source.label.split(', ')])];
+                target.label = labels.join(', ');
+                target.groupId = `merged:${labels.join('+')}`;
+                target.requiresRefresh = target.requiresRefresh || source.requiresRefresh;
+                target.isRename = target.isRename || source.isRename;
+                target.rename = target.rename || source.rename;
+                if (source.affectedTables && source.affectedTables.length > 0) {
+                    target.affectedTables = [...new Set([...(target.affectedTables || []), ...source.affectedTables])];
+                }
+                if (source.reason && target.reason !== source.reason && !target.reason.includes(source.reason)) {
+                    target.reason = `${target.reason} | ${source.reason}`;
+                }
+                groups.splice(j, 1);
+                merged = true;
+                break;
+            }
+        }
+    }
+}
+
+module.exports = { compareModels, computeGroups, isStructuralDiff };

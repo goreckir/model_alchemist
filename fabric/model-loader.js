@@ -13,11 +13,12 @@ const { getSemanticModelDefinition } = require('./api-client');
  * @param {string} workspaceId - Fabric workspace ID
  * @param {string} semanticModelId - Semantic model ID
  * @param {string} modelName - Display name of the model
+ * @param {function} [fetchDefinition] - definition fetcher (injectable for tests)
  * @returns {object} Parsed model (same structure as loadModelFromFolder)
  */
-async function loadModelFromFabric(accessToken, workspaceId, semanticModelId, modelName) {
+async function loadModelFromFabric(accessToken, workspaceId, semanticModelId, modelName, fetchDefinition = getSemanticModelDefinition) {
     // Retrieve TMDL definition from Fabric REST API
-    const files = await getSemanticModelDefinition(accessToken, workspaceId, semanticModelId);
+    const files = await fetchDefinition(accessToken, workspaceId, semanticModelId);
 
     if (!files || files.length === 0) {
         throw new Error(`No TMDL files returned for model "${modelName}".`);
@@ -41,7 +42,12 @@ async function loadModelFromFabric(accessToken, workspaceId, semanticModelId, mo
         rawFiles: {}
     };
 
-    // Organize files by path and parse them
+    // Organize files by path and parse them.
+    // A parse failure is collected and rethrown: downgrading it to console.warn
+    // silently dropped the whole file, so a table simply vanished from the model
+    // and every object in it was reported as missing in the target.
+    const parseErrors = [];
+
     for (const file of files) {
         const filePath = normalizePath(file.path);
         model.rawFiles[filePath] = file.content;
@@ -75,8 +81,16 @@ async function loadModelFromFabric(accessToken, workspaceId, semanticModelId, mo
                 model.cultures.push(...parsed);
             }
         } catch (err) {
-            console.warn(`Warning: Failed to parse Fabric TMDL file "${filePath}": ${err.message}`);
+            parseErrors.push(`${filePath}: ${err.message}`);
         }
+    }
+
+    if (parseErrors.length > 0) {
+        throw new Error(
+            `Failed to parse ${parseErrors.length} TMDL file(s) in Fabric model "${modelName}". ` +
+            `Comparing an incomplete model would report every object in them as missing.\n  - ` +
+            parseErrors.join('\n  - ')
+        );
     }
 
     return model;
@@ -95,4 +109,4 @@ function normalizePath(filePath) {
     return normalized;
 }
 
-module.exports = { loadModelFromFabric };
+module.exports = { loadModelFromFabric, normalizePath };

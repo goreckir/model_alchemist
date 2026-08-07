@@ -513,6 +513,16 @@ body {
     margin-top: 16px; padding: 12px; background: var(--color-removed);
     border-radius: 8px; color: var(--color-removed-text); font-size: 14px;
 }
+/* Page-level banner: always visible, whichever panel is on screen. */
+.error-banner {
+    margin: 0 0 16px 0; display: flex; align-items: flex-start; gap: 12px;
+    border: 1px solid var(--color-removed-text); white-space: pre-wrap;
+}
+.error-banner > span { flex: 1; min-width: 0; }
+.error-banner-close {
+    background: none; border: none; color: inherit; cursor: pointer;
+    font-size: 20px; line-height: 1; padding: 0 4px;
+}
 .loading {
     margin-top: 16px; display: flex; align-items: center; gap: 12px;
     justify-content: center; color: var(--color-text-dim);

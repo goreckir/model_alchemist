@@ -94,6 +94,9 @@ function parseObjectBlock(lines, startLine, baseIndent, filePath) {
                 type: 'ref',
                 refType: parts[1],
                 refName: extractName(trimmed.substring(trimmed.indexOf(parts[1]) + parts[1].length).trim()),
+                // refs carry no body, but a preceding `///` comment still writes a
+                // description onto the object — keep the bag so that never throws.
+                properties: {},
                 line: startLine + 1,
                 startLine,
                 endLine: startLine + 1
@@ -164,14 +167,19 @@ function parseObjectBlock(lines, startLine, baseIndent, filePath) {
                 }
                 i++;
                 pendingDescription = [];
-            } else if (childTrimmed.includes(':') && !childTrimmed.startsWith("'")) {
-                // 2. Property assignment (key: value)
+            } else if (PROP_COLON_RE.test(childTrimmed)) {
+                // 2. Property assignment (key: value).
+                //    A TMDL property name is a single identifier, so a DAX/M line that
+                //    merely contains a colon (e.g. `IF(x, "a:b", "c")`) is not a property.
                 const prop = parseProperty(childTrimmed);
                 if (prop) obj.properties[prop.name] = prop.value;
                 i++;
                 pendingDescription = [];
-            } else if (childTrimmed.includes(' =') || childTrimmed.endsWith(' =')) {
-                // 3. Multi-line expression property
+            } else if (PROP_ASSIGN_RE.test(childTrimmed)) {
+                // 3. Multi-line expression property (`propName = ...`). Same rule:
+                //    the left side must be a single identifier, otherwise a DAX
+                //    continuation line such as `VAR x = 1` would be swallowed as a
+                //    property and truncate the expression.
                 const exprResult = parseMultiLineExpression(lines, i, baseIndent + 1);
                 if (exprResult.propName) {
                     obj.properties[exprResult.propName] = exprResult.value;
@@ -255,8 +263,37 @@ function parseMultiLineExpression(lines, startLine, baseIndent) {
 }
 
 /**
+ * A TMDL property name is a single identifier. Both regexes anchor on that so a
+ * DAX/M continuation line is never mistaken for a property assignment.
+ */
+const PROP_COLON_RE = /^[A-Za-z_][A-Za-z0-9_]*\s*:/;
+const PROP_ASSIGN_RE = /^[A-Za-z_][A-Za-z0-9_]*\s*=/;
+
+/**
+ * Split a declaration line at the first `=` that sits OUTSIDE a quoted name.
+ * `measure 'A = B' = 1 + 1` must split after the quoted name, not inside it.
+ * @returns {{ head: string, expr: string, hasExpr: boolean }}
+ */
+function splitDeclaration(line) {
+    let inQuote = false;
+    for (let i = 0; i < line.length; i++) {
+        const ch = line[i];
+        if (ch === "'") {
+            if (inQuote && line[i + 1] === "'") { i++; continue; } // '' = escaped quote
+            inQuote = !inQuote;
+            continue;
+        }
+        if (!inQuote && ch === '=') {
+            return { head: line.substring(0, i).trim(), expr: line.substring(i + 1).trim(), hasExpr: true };
+        }
+    }
+    return { head: line.trim(), expr: '', hasExpr: false };
+}
+
+/**
  * Parse a declaration line like "table 'Sales Amount'" or "measure Total ="
  * Also handles bare keywords without names (e.g. "calculationGroup", "translations")
+ * and bare keywords carrying an expression (e.g. "formatStringDefinition =").
  */
 function parseDeclaration(line) {
     // Handle bare keyword (no name, no expression) — e.g. "calculationGroup", "translations"
@@ -267,22 +304,28 @@ function parseDeclaration(line) {
         return { type, name: '', hasExpression: false, expressionValue: '' };
     }
 
-    const match = line.match(/^(\w+)\s+(.+?)(?:\s*=\s*(.*))?$/);
-    if (!match) return null;
+    const { head, expr, hasExpr } = splitDeclaration(line);
 
-    const type = match[1].toLowerCase();
-    const nameAndRest = match[2];
-    const exprPart = match[3];
+    const named = head.match(/^(\w+)\s+(.+)$/);
+    if (!named) {
+        // Bare keyword with an expression — e.g. `formatStringDefinition =`
+        const kw = head.match(/^(\w+)$/);
+        if (kw && hasExpr) {
+            const type = kw[1].toLowerCase();
+            if (type === 'ref') return null;
+            return { type, name: '', hasExpression: true, expressionValue: expr };
+        }
+        return null;
+    }
 
+    const type = named[1].toLowerCase();
     if (type === 'ref') return null;
-
-    const name = extractName(nameAndRest.replace(/\s*=\s*$/, '').trim());
 
     return {
         type,
-        name,
-        hasExpression: exprPart !== undefined || nameAndRest.endsWith('='),
-        expressionValue: exprPart || ''
+        name: extractName(named[2].trim()),
+        hasExpression: hasExpr,
+        expressionValue: expr
     };
 }
 
@@ -306,18 +349,29 @@ function extractName(str) {
     return str;
 }
 
+const OBJECT_TYPES = [
+    'table', 'column', 'measure', 'hierarchy', 'level',
+    'partition', 'relationship', 'role', 'tablepermission',
+    'columnpermission', 'member', 'perspective', 'perspectivetable',
+    'perspectivemeasure', 'perspectivecolumn', 'perspectivehierarchy',
+    'cultureinfo', 'culture', 'expression', 'datasource', 'function',
+    'database', 'model', 'calculationgroup', 'calculationitem',
+    'kpi', 'annotation', 'extendedproperty', 'alternateof',
+    'translations', 'linguisticmetadata',
+    // Blocks below were missing: their bodies leaked into the parent object's
+    // `expression`, which made every property they carry invisible to the diff.
+    'refreshpolicy',            // incremental refresh windows
+    'variation',                // auto date/time column variations
+    'dataaccessoptions',        // model-level data access flags
+    'datacoveragepermission',   // tablePermission data coverage
+    'formatstringdefinition',   // dynamic format strings (DAX)
+    'detailrowsdefinition',     // detail rows expressions (DAX)
+    'connectiondetails',        // dataSource connection (server, database, protocol)
+    'credential'                // dataSource credential settings
+];
+
 function isObjectDeclaration(line) {
-    const objectTypes = [
-        'table', 'column', 'measure', 'hierarchy', 'level',
-        'partition', 'relationship', 'role', 'tablepermission',
-        'columnpermission', 'member', 'perspective', 'perspectivetable',
-        'perspectivemeasure', 'perspectivecolumn', 'perspectivehierarchy',
-        'cultureinfo', 'culture', 'expression', 'datasource', 'function',
-        'database', 'model', 'calculationgroup', 'calculationitem',
-        'kpi', 'annotation', 'extendedproperty', 'alternateof',
-        'translations', 'linguisticmetadata'
-    ];
-    return objectTypes.includes(line.split(/\s+/)[0].toLowerCase());
+    return OBJECT_TYPES.includes(line.split(/\s+/)[0].toLowerCase());
 }
 
 function isBooleanShorthand(line) {
@@ -342,12 +396,20 @@ function getIndentLevel(line) {
 
 /**
  * Quote a TMDL name if necessary.
+ *
+ * A bare TMDL identifier is `[A-Za-z_][A-Za-z0-9_]*`. Anything else — spaces,
+ * dots, parentheses, %, -, +, commas, a leading digit — must be quoted, or the
+ * emitted `ref` / declaration line is invalid and the object cannot be found
+ * again on remove. Quoting more than strictly required is always safe.
  */
 function quoteName(name) {
-    if (/[\s.=:']/.test(name)) {
-        return "'" + name.replace(/'/g, "''") + "'";
-    }
-    return name;
+    const str = String(name == null ? '' : name);
+    if (str === '') return '';
+    if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(str)) return str;
+    return "'" + str.replace(/'/g, "''") + "'";
 }
 
-module.exports = { parseTmdlFile, extractName, getIndentLevel, quoteName, isObjectDeclaration };
+module.exports = {
+    parseTmdlFile, extractName, getIndentLevel, quoteName,
+    isObjectDeclaration, parseDeclaration, splitDeclaration, OBJECT_TYPES
+};

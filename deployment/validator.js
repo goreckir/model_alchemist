@@ -13,6 +13,8 @@
  */
 
 const { extractAll } = require('../comparison/extractor');
+const { rootKey, childKey } = require('../comparison/keys');
+const { parseColumnRef, unquote } = require('../comparison/refs');
 
 // Minimum compatibility level required for specific TMDL features.
 const COMPAT_LEVEL_REQUIREMENTS = {
@@ -54,7 +56,7 @@ function validateDependencies(selectedDiffs, devModel, prodModel, allDiffs = [])
                 warnings.push({
                     code: 'COMPAT_LEVEL_AUTO_BUMP',
                     identityKey: d.identityKey,
-                    message: `Obiekt ${d.objectType} '${d.displayName}' wymaga compatibilityLevel >= ${required}, target ma ${targetCompat}. compatibilityLevel zostanie automatycznie podniesiony do ${required} w database.tmdl.`
+                    message: `${d.objectType} '${d.displayName}' requires compatibilityLevel >= ${required}, target is at ${targetCompat}. compatibilityLevel will be raised to ${required} in database.tmdl automatically.`
                 });
             }
         }
@@ -76,23 +78,36 @@ function validateDependencies(selectedDiffs, devModel, prodModel, allDiffs = [])
     // 1. Adding column requires its parent table to exist after.
     for (const d of selectedDiffs) {
         if (d.type === 0 && d.objectType === 'column' && d.parentTable) {
-            const tableKey = `table:${d.parentTable}`;
+            const tableKey = rootKey('table', d.parentTable);
             if (!afterKeys.has(tableKey)) {
                 errors.push({
                     code: 'MISSING_PARENT_TABLE',
                     identityKey: d.identityKey,
-                    message: `Dodawana kolumna ${d.displayName} wymaga tabeli '${d.parentTable}' \u2014 brak jej w target i nie zaznaczono jej do dodania.`
+                    message: `Column ${d.displayName} needs table '${d.parentTable}', which is not in the target and is not selected to be added.`
                 });
             }
         }
         // Same for measure/hierarchy/partition
         if (d.type === 0 && ['measure', 'hierarchy', 'partition', 'calculationItem'].includes(d.objectType) && d.parentTable) {
-            const tableKey = `table:${d.parentTable}`;
+            const tableKey = rootKey('table', d.parentTable);
             if (!afterKeys.has(tableKey)) {
                 errors.push({
                     code: 'MISSING_PARENT_TABLE',
                     identityKey: d.identityKey,
-                    message: `Dodawany obiekt ${d.displayName} (${d.objectType}) wymaga tabeli '${d.parentTable}' \u2014 brak jej w target.`
+                    message: `${d.objectType} ${d.displayName} needs table '${d.parentTable}', which is not in the target.`
+                });
+            }
+        }
+        // A calculationItem also needs its calculationGroup. Without this check a
+        // partially selected item was appended at the wrong indent and the model
+        // could not be parsed by Power BI.
+        if (d.type === 0 && d.objectType === 'calculationItem' && d.parentTable) {
+            const cgKey = rootKey('calculationGroup', d.parentTable);
+            if (!afterKeys.has(cgKey)) {
+                errors.push({
+                    code: 'MISSING_CALCULATION_GROUP',
+                    identityKey: d.identityKey,
+                    message: `calculationItem ${d.displayName} needs a calculation group in table '${d.parentTable}', which is not in the target and is not selected to be added.`
                 });
             }
         }
@@ -107,20 +122,46 @@ function validateDependencies(selectedDiffs, devModel, prodModel, allDiffs = [])
             const toCol = devRel.properties.toColumn || '';
             for (const colRef of [fromCol, toCol]) {
                 if (!colRef) continue;
-                // colRef is typically Table.Column or 'Table'.'Column'
-                const norm = colRef.replace(/'/g, '');
-                const dotIdx = norm.lastIndexOf('.');
-                if (dotIdx < 0) continue;
-                const tbl = norm.substring(0, dotIdx);
-                const col = norm.substring(dotIdx + 1);
-                const colKey = `column:${tbl}.${col}`;
-                if (!afterKeys.has(colKey)) {
+                const { table: tbl, column: col } = parseColumnRef(colRef);
+                if (!tbl || !col) continue;
+                if (!afterKeys.has(childKey('column', tbl, col))) {
                     errors.push({
                         code: 'MISSING_RELATIONSHIP_ENDPOINT',
                         identityKey: d.identityKey,
-                        message: `Dodawana relacja ${d.displayName} wymaga kolumny '${colRef}' \u2014 brak jej w target i nie zaznaczono do dodania.`
+                        message: `Relationship ${d.displayName} needs column '${colRef}', which is not in the target and is not selected to be added.`
                     });
                 }
+            }
+        }
+    }
+
+    // 2b. Adding a relationship on a column pair the target already uses.
+    // Analysis Services rejects a duplicate relationship, and the upload fails
+    // after a plan that looked clean.
+    {
+        const endpointsOf = obj => {
+            const from = parseColumnRef(obj.properties.fromColumn || '');
+            const to = parseColumnRef(obj.properties.toColumn || '');
+            return `${String(from.table).toLowerCase()}.${String(from.column).toLowerCase()}` +
+                ` -> ${String(to.table).toLowerCase()}.${String(to.column).toLowerCase()}`;
+        };
+        const targetEndpoints = new Map();
+        for (const obj of Object.values(prodObjects)) {
+            if (obj.objectType !== 'relationship') continue;
+            if (removedKeys.has(obj.identityKey)) continue;
+            targetEndpoints.set(endpointsOf(obj), obj.displayName);
+        }
+        for (const d of selectedDiffs) {
+            if (d.type !== 0 || d.objectType !== 'relationship') continue;
+            const devRel = devObjects[d.identityKey];
+            if (!devRel) continue;
+            const existing = targetEndpoints.get(endpointsOf(devRel));
+            if (existing) {
+                errors.push({
+                    code: 'DUPLICATE_RELATIONSHIP',
+                    identityKey: d.identityKey,
+                    message: `Relationship ${d.displayName} uses the same column pair as '${existing}', which already exists in the target. Analysis Services rejects duplicate relationships: deploy this as a modification of the existing relationship, or remove that one.`
+                });
             }
         }
     }
@@ -130,38 +171,93 @@ function validateDependencies(selectedDiffs, devModel, prodModel, allDiffs = [])
     const targetRels = Object.values(prodObjects).filter(o => o.objectType === 'relationship');
     const cascadeRels = []; // relationships to auto-remove (will be handled by deployer)
     const cascadedRelKeys = new Set();
+    const relEndpoints = rel => [
+        parseColumnRef(rel.properties.fromColumn || ''),
+        parseColumnRef(rel.properties.toColumn || '')
+    ];
+    const sameName = (a, b) => String(a || '').toLowerCase() === String(b || '').toLowerCase();
+
     for (const d of selectedDiffs) {
         if (d.type === 1 && d.objectType === 'column') {
             const colName = d.displayName; // "Table.Column"
             for (const rel of targetRels) {
-                const fromCol = (rel.properties.fromColumn || '').replace(/'/g, '');
-                const toCol = (rel.properties.toColumn || '').replace(/'/g, '');
-                if ((fromCol === colName || toCol === colName) && !removedKeys.has(rel.identityKey) && !cascadedRelKeys.has(rel.identityKey)) {
+                const refsColumn = relEndpoints(rel).some(ep =>
+                    sameName(ep.table, d.parentTable) && sameName(ep.column, d.objectName));
+                if (refsColumn && !removedKeys.has(rel.identityKey) && !cascadedRelKeys.has(rel.identityKey)) {
                     cascadedRelKeys.add(rel.identityKey);
                     cascadeRels.push(rel);
                     warnings.push({
                         code: 'CASCADE_RELATIONSHIP_REMOVE',
                         identityKey: rel.identityKey,
-                        message: `Relacja '${rel.displayName}' zostanie automatycznie usunieta (kolumna '${colName}' jest usuwana).`
+                        message: `Relationship '${rel.displayName}' will be removed automatically because column '${colName}' is being removed.`
                     });
                 }
             }
         }
-        // 4. Removing a table → check relationships using its columns
+        // 4. Removing a table → check relationships using its columns.
+        // Endpoint tables are compared by EXACT parsed name. A `startsWith(tbl + '.')`
+        // test also matched a different table whose name extends this one with a dot
+        // segment ('Sales' vs 'Sales.EU') and silently removed its relationship.
         if (d.type === 1 && d.objectType === 'table') {
             const tbl = d.displayName;
             for (const rel of targetRels) {
-                const fromCol = (rel.properties.fromColumn || '').replace(/'/g, '');
-                const toCol = (rel.properties.toColumn || '').replace(/'/g, '');
-                const refsTable = fromCol.startsWith(tbl + '.') || toCol.startsWith(tbl + '.');
+                const refsTable = relEndpoints(rel).some(ep => sameName(ep.table, tbl));
                 if (refsTable && !removedKeys.has(rel.identityKey) && !cascadedRelKeys.has(rel.identityKey)) {
                     cascadedRelKeys.add(rel.identityKey);
                     cascadeRels.push(rel);
                     warnings.push({
                         code: 'CASCADE_RELATIONSHIP_REMOVE',
                         identityKey: rel.identityKey,
-                        message: `Relacja '${rel.displayName}' zostanie automatycznie usunieta (tabela '${tbl}' jest usuwana).`
+                        message: `Relationship '${rel.displayName}' will be removed automatically because table '${tbl}' is being removed.`
                     });
+                }
+            }
+        }
+    }
+
+    // 4b. Removing a table also strands every perspective, culture translation and
+    // role tablePermission that references it. Only relationships were cascaded, so
+    // the written model was invalid: the local PBIP would not load and the Fabric
+    // upload failed after a plan that reported success.
+    {
+        const removedTables = selectedDiffs
+            .filter(d => d.type === 1 && d.objectType === 'table')
+            .map(d => d.displayName);
+
+        if (removedTables.length > 0) {
+            const selectedKeys = new Set(selectedDiffs.map(d => d.identityKey));
+            const dangling = [];
+
+            for (const tbl of removedTables) {
+                for (const obj of Object.values(prodObjects)) {
+                    // Skip holders that are themselves being removed or replaced by a
+                    // DEV version in this same deploy.
+                    if (selectedKeys.has(obj.identityKey)) continue;
+
+                    if (obj.objectType === 'perspective') {
+                        const tables = String(obj.properties.includedTables || '').split(', ').filter(Boolean);
+                        if (tables.some(t => sameName(t, tbl))) {
+                            dangling.push(`perspective '${obj.displayName}'`);
+                        }
+                    } else if (obj.objectType === 'tablePermission') {
+                        if (sameName(obj.objectName, tbl) && !selectedKeys.has(rootKey('role', obj.parentRole))) {
+                            dangling.push(`role '${obj.parentRole}' (tablePermission ${obj.objectName})`);
+                        }
+                    } else if (obj.objectType === 'culture') {
+                        if (cultureReferencesTable(obj.rawBlock, tbl)) {
+                            dangling.push(`translations '${obj.displayName}'`);
+                        }
+                    }
+                }
+
+                if (dangling.length > 0) {
+                    errors.push({
+                        code: 'DANGLING_TABLE_REF',
+                        identityKey: rootKey('table', tbl),
+                        message: `Removing table '${tbl}' would leave dangling references in: ${[...new Set(dangling)].join(', ')}. ` +
+                            `The written model would be invalid. Select those objects for deployment too (their source versions no longer reference the table), or remove them along with the table.`
+                    });
+                    dangling.length = 0;
                 }
             }
         }
@@ -197,12 +293,7 @@ function validateDependencies(selectedDiffs, devModel, prodModel, allDiffs = [])
                 toRef   = tp ? tp[vp] : null;
                 if (!fromRef && !toRef) [fromRef, toRef] = relDiff.displayName.split(' \u2192 ');
             }
-            function tableOf(ref) {
-                if (!ref) return null;
-                const m = ref.match(/^'([^']+)'\./); if (m) return m[1];
-                const dot = ref.lastIndexOf('.'); return dot > 0 ? ref.substring(0, dot) : null;
-            }
-            return { fromTable: tableOf(fromRef), toTable: tableOf(toRef) };
+            return { fromTable: parseColumnRef(fromRef).table, toTable: parseColumnRef(toRef).table };
         }
 
         for (const relKey of selectedRelKeys) {
@@ -250,8 +341,8 @@ function validateDependencies(selectedDiffs, devModel, prodModel, allDiffs = [])
             while ((m = refRe.exec(expr)) !== null) {
                 const tbl = m[1].trim();
                 const col = m[2].trim();
-                const colKey = `column:${tbl}.${col}`;
-                const measKey = `measure:${tbl}.${col}`;
+                const colKey = childKey('column', tbl, col);
+                const measKey = childKey('measure', tbl, col);
                 if (!afterKeys.has(colKey) && !afterKeys.has(measKey)) {
                     missing.add(`${tbl}[${col}]`);
                 }
@@ -260,7 +351,7 @@ function validateDependencies(selectedDiffs, devModel, prodModel, allDiffs = [])
                 warnings.push({
                     code: 'MEASURE_REF_MISSING',
                     identityKey: d.identityKey,
-                    message: `Dodawany measure ${d.displayName} odwoluje sie do nieobecnych obiektow: ${[...missing].join(', ')}. Sprawdz czy sa zaznaczone do dodania.`
+                    message: `Measure ${d.displayName} references objects that are not present: ${[...missing].join(', ')}. Check whether they are selected to be added.`
                 });
             }
         }
@@ -283,7 +374,7 @@ function validateDependencies(selectedDiffs, devModel, prodModel, allDiffs = [])
             errors.push({
                 code: 'PERSPECTIVE_REF_MISSING',
                 identityKey: d.identityKey,
-                message: `Perspektywa '${d.displayName}' odwoluje sie do nieistniejacych w targecie obiektow: ${list}${more}. Dodaj brakujace obiekty do deployu, albo usun te referencje z perspektywy w DEV i wykonaj porownanie ponownie.`
+                message: `Perspective '${d.displayName}' references objects that do not exist in the target: ${list}${more}. Add the missing objects to this deployment, or remove those references from the perspective in the source and compare again.`
             });
         }
     }
@@ -302,7 +393,10 @@ function validateDependencies(selectedDiffs, devModel, prodModel, allDiffs = [])
 function findMissingPerspectiveRefs(rawBlock, afterKeys) {
     const missing = [];
     const lines = rawBlock.replace(/\r\n/g, '\n').split('\n');
-    const stripName = s => s.replace(/^'+|'+$/g, '').trim();
+    // `unquote` also un-escapes doubled apostrophes. Stripping only the outer
+    // quotes left `Int''l Sales`, which never matched the real name `Int'l Sales`
+    // and aborted a valid deploy with a false PERSPECTIVE_REF_MISSING error.
+    const stripName = s => unquote(s);
     let currentTable = null;
     let currentTableMissing = false;
 
@@ -311,7 +405,7 @@ function findMissingPerspectiveRefs(rawBlock, afterKeys) {
         let m;
         if ((m = trimmed.match(/^perspectiveTable\s+(.+?)\s*$/i))) {
             currentTable = stripName(m[1]);
-            currentTableMissing = !afterKeys.has(`table:${currentTable}`);
+            currentTableMissing = !afterKeys.has(rootKey('table', currentTable));
             if (currentTableMissing) {
                 missing.push({ type: 'table', path: currentTable });
             }
@@ -320,17 +414,17 @@ function findMissingPerspectiveRefs(rawBlock, afterKeys) {
         if (!currentTable || currentTableMissing) continue; // skip children of missing table to avoid noise
         if ((m = trimmed.match(/^perspectiveColumn\s+(.+?)\s*$/i))) {
             const col = stripName(m[1]);
-            if (!afterKeys.has(`column:${currentTable}.${col}`)) {
+            if (!afterKeys.has(childKey('column', currentTable, col))) {
                 missing.push({ type: 'column', path: `${currentTable}.${col}` });
             }
         } else if ((m = trimmed.match(/^perspectiveMeasure\s+(.+?)\s*$/i))) {
             const meas = stripName(m[1]);
-            if (!afterKeys.has(`measure:${currentTable}.${meas}`)) {
+            if (!afterKeys.has(childKey('measure', currentTable, meas))) {
                 missing.push({ type: 'measure', path: `${currentTable}.${meas}` });
             }
         } else if ((m = trimmed.match(/^perspectiveHierarchy\s+(.+?)\s*$/i))) {
             const hier = stripName(m[1]);
-            if (!afterKeys.has(`hierarchy:${currentTable}.${hier}`)) {
+            if (!afterKeys.has(childKey('hierarchy', currentTable, hier))) {
                 missing.push({ type: 'hierarchy', path: `${currentTable}.${hier}` });
             }
         }
@@ -338,4 +432,18 @@ function findMissingPerspectiveRefs(rawBlock, afterKeys) {
     return missing;
 }
 
-module.exports = { validateDependencies, COMPAT_LEVEL_REQUIREMENTS, getCompatibilityLevel };
+/** Does a culture (translations) block translate the given table? */
+function cultureReferencesTable(rawBlock, tableName) {
+    if (!rawBlock) return false;
+    const target = String(tableName).toLowerCase();
+    for (const line of String(rawBlock).replace(/\r\n/g, '\n').split('\n')) {
+        const m = line.trim().match(/^table\s+(.+?)\s*$/i);
+        if (m && String(unquote(m[1])).toLowerCase() === target) return true;
+    }
+    return false;
+}
+
+module.exports = {
+    validateDependencies, COMPAT_LEVEL_REQUIREMENTS, getCompatibilityLevel,
+    findMissingPerspectiveRefs, cultureReferencesTable
+};
