@@ -158,6 +158,126 @@ test('#30 the real GUID name is still carried for the deployer', () => {
     assert.strictEqual(partition.realName, 'Sales-aaaaaaaa-1111-2222-3333-444444444444');
 });
 
+// ── finding 4.1: partition key collisions silently dropped an object ─────────
+test('4.1 two partitions normalizing to the same base name both survive extractAll', () => {
+    const objects = objectsOf({
+        ...BASE,
+        'tables/Sales.tmdl': [
+            'table Sales', '',
+            '\tpartition Foo-aaaaaaaa-1111-2222-3333-444444444444 = m',
+            '\t\tmode: import',
+            '\t\tsource =',
+            '\t\t\t\tlet Source = Sql.Database("s", "d1") in Source',
+            '',
+            '\tpartition Foo-bbbbbbbb-5555-6666-7777-888888888888 = m',
+            '\t\tmode: import',
+            '\t\tsource =',
+            '\t\t\t\tlet Source = Sql.Database("s", "d2") in Source',
+            ''
+        ].join('\n')
+    });
+    const partitionKeys = Object.keys(objects).filter(k => k.startsWith('partition:'));
+    assert.strictEqual(partitionKeys.length, 2, 'both colliding partitions are kept, not overwritten');
+});
+
+test('4.1 DEV/PROD listing the same colliding partitions in opposite file order yields zero diffs', () => {
+    const block = (guid, source) => [
+        `\tpartition Foo-${guid} = m`,
+        '\t\tmode: import',
+        '\t\tsource =',
+        `\t\t\t\tlet Source = Sql.Database("s", "${source}") in Source`,
+        ''
+    ].join('\n');
+
+    const devTable = ['table Sales', '',
+        block('aaaaaaaa-1111-2222-3333-444444444444', 'd1'),
+        block('bbbbbbbb-5555-6666-7777-888888888888', 'd2')
+    ].join('\n');
+    // Same two partitions, listed in the opposite order, with GUIDs regenerated per environment.
+    const prodTable = ['table Sales', '',
+        block('22222222-5555-6666-7777-888888888888', 'd2'),
+        block('11111111-1111-2222-3333-444444444444', 'd1')
+    ].join('\n');
+
+    const result = diffOf(
+        { ...BASE, 'tables/Sales.tmdl': devTable },
+        { ...BASE, 'tables/Sales.tmdl': prodTable }
+    );
+    assert.deepStrictEqual(result.diffs.filter(d => d.objectType === 'partition'), []);
+});
+
+test('4.1 a genuinely changed partition among collisions is still detected', () => {
+    const block = (guid, source) => [
+        `\tpartition Foo-${guid} = m`,
+        '\t\tmode: import',
+        '\t\tsource =',
+        `\t\t\t\tlet Source = Sql.Database("s", "${source}") in Source`,
+        ''
+    ].join('\n');
+
+    const devTable = ['table Sales', '',
+        block('aaaaaaaa-1111-2222-3333-444444444444', 'd1'),
+        block('bbbbbbbb-5555-6666-7777-888888888888', 'd2')
+    ].join('\n');
+    const prodTable = ['table Sales', '',
+        block('11111111-1111-2222-3333-444444444444', 'd1'),
+        block('22222222-5555-6666-7777-888888888888', 'd3') // genuinely different source
+    ].join('\n');
+
+    const result = diffOf(
+        { ...BASE, 'tables/Sales.tmdl': devTable },
+        { ...BASE, 'tables/Sales.tmdl': prodTable }
+    );
+    const partitionDiffs = result.diffs.filter(d => d.objectType === 'partition');
+    assert.strictEqual(partitionDiffs.length, 1, 'only the genuinely changed partition is reported');
+});
+
+// ── finding 4.2: relationship ordinal keys were file-order-dependent ─────────
+function relPairFiles({ devOrder, prodOrder, prodCross }) {
+    const relBlock = (guid, isActive) => [
+        `relationship ${guid}`,
+        isActive !== undefined ? `\tisActive: ${isActive}` : null,
+        prodCross && guid === prodCross.guid ? `\tcrossFilteringBehavior: ${prodCross.value}` : null,
+        '\tfromColumn: Sales.DimId',
+        '\ttoColumn: Dim.Id',
+        ''
+    ].filter(l => l !== null).join('\n');
+
+    const base = {
+        'database.tmdl': H.databaseTmdl(),
+        'model.tmdl': H.modelTmdl(['table Sales', 'table Dim']),
+        'tables/Sales.tmdl': 'table Sales\n\n\tcolumn DimId\n\t\tdataType: int64\n',
+        'tables/Dim.tmdl': 'table Dim\n\n\tcolumn Id\n\t\tdataType: int64\n'
+    };
+    return {
+        ...base,
+        'relationships.tmdl': devOrder.map(([guid, isActive]) => relBlock(guid, isActive)).join('\n')
+    };
+}
+
+test('4.2 an active+inactive pair listed in opposite order in DEV vs PROD produces zero diffs', () => {
+    const dev = relPairFiles({ devOrder: [['11111111-1111-1111-1111-111111111111', 'false'], ['22222222-2222-2222-2222-222222222222', 'true']] });
+    // Opposite file order, GUIDs regenerated per environment, semantically identical.
+    const prod = relPairFiles({ devOrder: [['44444444-4444-4444-4444-444444444444', 'true'], ['33333333-3333-3333-3333-333333333333', 'false']] });
+
+    const result = diffOf(dev, prod);
+    assert.deepStrictEqual(result.diffs.filter(d => d.objectType === 'relationship'), []);
+});
+
+test('4.2 one relationship gaining crossFilteringBehavior targets the correct PROD GUID', () => {
+    const dev = relPairFiles({ devOrder: [['11111111-1111-1111-1111-111111111111', 'false'], ['22222222-2222-2222-2222-222222222222', 'true']] });
+    const prod = relPairFiles({
+        devOrder: [['33333333-3333-3333-3333-333333333333', 'false'], ['44444444-4444-4444-4444-444444444444', 'true']],
+        prodCross: { guid: '33333333-3333-3333-3333-333333333333', value: 'bothDirections' }
+    });
+
+    const result = diffOf(dev, prod);
+    const relDiffs = result.diffs.filter(d => d.objectType === 'relationship');
+    assert.strictEqual(relDiffs.length, 1, 'exactly one relationship diff');
+    assert.strictEqual(relDiffs[0].targetObjectName, '33333333-3333-3333-3333-333333333333', 'targets the relationship that actually changed');
+    assert.ok(relDiffs[0].propertyDiffs.some(p => p.propertyName === 'crossFilteringBehavior'));
+});
+
 // ── #32: alternateOf never compared ───────────────────────────────────────────
 test('#32 an alternateOf change is reported', () => {
     const table = (summarization, base) => [

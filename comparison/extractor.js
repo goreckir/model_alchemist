@@ -74,11 +74,49 @@ function copyProperties(obj) {
 const GUID_SUFFIX_RE = /-[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
 const BARE_GUID_RE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
 
-function normalizePartitionName(name, index) {
+// Returns the GUID-stripped base name, or '' when the name carries no stable
+// signal at all (a bare GUID, or a name that strips down to nothing) — such
+// partitions are grouped and ordered by content signature instead.
+function normalizePartitionName(name) {
     const raw = String(name || '');
-    if (BARE_GUID_RE.test(raw)) return `#${index}`;
-    const stripped = raw.replace(GUID_SUFFIX_RE, '');
-    return stripped || `#${index}`;
+    if (BARE_GUID_RE.test(raw)) return '';
+    return raw.replace(GUID_SUFFIX_RE, '') || '';
+}
+
+// Deterministic content fingerprint used to order same-named (or nameless)
+// partitions independently of file listing order, so DEV/PROD pair up even
+// when the two environments enumerate partitions in a different order.
+function partitionContentSignature(partition) {
+    const mode = partition.properties.mode || 'import';
+    const sourceExpression = partition.properties.source || partition.expression || '';
+    return `${mode}\u0001${sourceExpression}`;
+}
+
+// Assigns a final identity name to every partition child of a table. Partitions
+// that normalize to the same base name (or share no stable name at all) are
+// sorted by content signature — never by file order — before collision
+// ordinals (`Foo`, `Foo#2`, …) are appended, so identical DEV/PROD listings
+// pair up regardless of order and no partition is silently overwritten.
+function assignPartitionNames(partitionChildren) {
+    const groups = new Map();
+    for (const child of partitionChildren) {
+        const base = normalizePartitionName(child.name);
+        if (!groups.has(base)) groups.set(base, []);
+        groups.get(base).push(child);
+    }
+
+    const names = new Map();
+    for (const [base, children] of groups) {
+        const sorted = [...children].sort((a, b) => {
+            const sigA = partitionContentSignature(a);
+            const sigB = partitionContentSignature(b);
+            return sigA < sigB ? -1 : sigA > sigB ? 1 : 0;
+        });
+        sorted.forEach((child, i) => {
+            names.set(child, base ? (i === 0 ? base : `${base}#${i + 1}`) : `#${i + 1}`);
+        });
+    }
+    return names;
 }
 
 /**
@@ -91,9 +129,7 @@ function extractAll(model) {
     for (const table of model.tables) {
         if (table.type === 'table') extractTable(table, objects);
     }
-    for (const rel of model.relationships) {
-        if (rel.type === 'relationship') extractRelationship(rel, objects);
-    }
+    extractRelationships(model.relationships.filter(r => r.type === 'relationship'), objects);
     for (const expr of model.expressions) {
         if (expr.type === 'expression') extractExpression(expr, objects);
     }
@@ -151,13 +187,13 @@ function extractTable(table, objects) {
         }
     };
 
-    let partitionIndex = 0;
+    const partitionNames = assignPartitionNames(table.children.filter(c => c.type === 'partition'));
     for (const child of table.children) {
         switch (child.type) {
             case 'column': extractColumn(tableName, child, table.file, objects, hasCalcGroup); break;
             case 'measure': extractMeasure(tableName, child, table.file, objects); break;
             case 'hierarchy': extractHierarchy(tableName, child, table.file, objects); break;
-            case 'partition': extractPartition(tableName, child, table.file, objects, hasCalcGroup, partitionIndex++); break;
+            case 'partition': extractPartition(tableName, child, table.file, objects, hasCalcGroup, partitionNames.get(child)); break;
             case 'calculationgroup': extractCalculationGroup(tableName, child, table.file, objects); break;
         }
     }
@@ -279,8 +315,7 @@ function extractHierarchy(tableName, hier, sourceFile, objects) {
     };
 }
 
-function extractPartition(tableName, partition, sourceFile, objects, isCalcGroupTable, index) {
-    const normalized = normalizePartitionName(partition.name, index);
+function extractPartition(tableName, partition, sourceFile, objects, isCalcGroupTable, normalized) {
     const key = childKey('partition', tableName, normalized);
     const partitionType = partition.expression || '';
     const sourceExpression = partition.properties.source || '';
@@ -349,22 +384,49 @@ function extractCalculationGroup(tableName, calcGroup, sourceFile, objects) {
     }
 }
 
-function extractRelationship(rel, objects) {
+// Deterministic tiebreaker for relationships sharing a fromColumn/toColumn pair —
+// sorted by property signature (never by file order) before ordinal suffixes are
+// assigned, so DEV/PROD listing the same relationships in different order still
+// produce identical keys and diffs never point at the wrong PROD relationship.
+function relationshipSortSignature(rel) {
+    const isActive = rel.properties.isActive || 'true';
+    const crossFilter = rel.properties.crossFilteringBehavior || 'oneDirection';
+    const securityFilter = rel.properties.securityFilteringBehavior || '';
+    // GUID (rel.name) is a last-resort tiebreaker only — used solely to keep the
+    // sort stable when two relationships in the SAME file share every other
+    // property; it does not attempt to pair across environments by itself.
+    return `${isActive}\u0001${crossFilter}\u0001${securityFilter}\u0001${rel.name || ''}`;
+}
+
+function extractRelationships(relationships, objects) {
+    const groups = new Map();
+    for (const rel of relationships) {
+        const fromCol = rel.properties.fromColumn || '';
+        const toCol = rel.properties.toColumn || '';
+        const displayName = `${fromCol} → ${toCol}`;
+        if (!groups.has(displayName)) groups.set(displayName, []);
+        groups.get(displayName).push(rel);
+    }
+
+    for (const [displayName, group] of groups) {
+        const sorted = [...group].sort((a, b) => {
+            const sigA = relationshipSortSignature(a);
+            const sigB = relationshipSortSignature(b);
+            return sigA < sigB ? -1 : sigA > sigB ? 1 : 0;
+        });
+        const baseKey = rootKey('relationship', displayName);
+        sorted.forEach((rel, i) => {
+            const key = i === 0 ? baseKey : `${baseKey}#${i + 1}`;
+            extractRelationship(rel, key, displayName, objects);
+        });
+    }
+}
+
+function extractRelationship(rel, key, displayName, objects) {
     const fromCol = rel.properties.fromColumn || '';
     const toCol = rel.properties.toColumn || '';
     const isActive = rel.properties.isActive || 'true';
     const crossFilter = rel.properties.crossFilteringBehavior || 'oneDirection';
-    const displayName = `${fromCol} → ${toCol}`;
-
-    // Identity is the endpoint pair ONLY. Including isActive / crossFilteringBehavior
-    // made a flipped isActive look like an unrelated Add + Remove: deploying the Add
-    // appended a duplicate relationship on the same column pair, which AS rejects.
-    // Several relationships may legitimately share a pair — later ones get a stable
-    // ordinal suffix so they still have distinct identities.
-    const baseKey = rootKey('relationship', displayName);
-    let key = baseKey;
-    let ordinal = 1;
-    while (objects[key]) key = `${baseKey}#${++ordinal}`;
 
     objects[key] = {
         objectType: 'relationship',
