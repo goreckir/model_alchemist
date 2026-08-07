@@ -162,7 +162,7 @@ The server runs on any platform with Node.js and the comparison and deployment w
 
 ## Contributing
 
-Project layout, the test suite, and how the images in this README are regenerated are documented in [CONTRIBUTING.md](CONTRIBUTING.md). Release history is in [RELEASE_NOTES.md](RELEASE_NOTES.md), and the reasoning behind the relationship cardinality warnings is in [RELATIONSHIP_CARDINALITY_WARNINGS.md](RELATIONSHIP_CARDINALITY_WARNINGS.md).
+Project layout, the test suite, and how the images in this README are regenerated are documented in [CONTRIBUTING.md](CONTRIBUTING.md). Release history is in [RELEASE_NOTES.md](RELEASE_NOTES.md), the reasoning behind the relationship cardinality warnings is in [RELATIONSHIP_CARDINALITY_WARNINGS.md](RELATIONSHIP_CARDINALITY_WARNINGS.md), and a full reference of deploy warning/error codes is in [DEPLOYMENT_TROUBLESHOOTING.md](DEPLOYMENT_TROUBLESHOOTING.md).
 
 ## License
 
