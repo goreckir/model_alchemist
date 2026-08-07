@@ -573,6 +573,21 @@ test('#4.7 a restore that throws during rollback is reported as ROLLBACK_INCOMPL
         'must not claim the target is unchanged when a restore failed');
 });
 
+// ── finding 2.2: guessed target paths were silent ────────────────────────────
+test('#2.2 a target model that fails to extract warns TARGET_PATHS_GUESSED', () => {
+    const base = { 'database.tmdl': H.databaseTmdl(), 'model.tmdl': H.modelTmdl(['table Sales']) };
+    const s = scenario(
+        { ...base, 'tables/Sales.tmdl': 'table Sales\n\n\tmeasure Total = 1\n\t\tformatString: #,0\n' },
+        { ...base, 'tables/Sales.tmdl': 'table Sales\n\n\tmeasure Total = 1\n\t\tformatString: 0.00\n' }
+    );
+
+    // A malformed prodModel (missing `.tables` etc.) makes extractAll() throw.
+    const { result } = deploy(s, d => d.objectType === 'measure', { prodModel: {} });
+
+    const warning = result.warnings.find(w => w.code === 'TARGET_PATHS_GUESSED');
+    assert.ok(warning, 'a TARGET_PATHS_GUESSED warning is reported when extraction fails');
+});
+
 // ── regression: a dry run writes nothing ─────────────────────────────────────
 test('regression: a dry run reports actions without touching the target', () => {
     const base = { 'database.tmdl': H.databaseTmdl(), 'model.tmdl': H.modelTmdl(['table Sales']) };

@@ -84,10 +84,19 @@ function deployChanges(selectedDiffs, devModel, prodPath, options = {}) {
         });
     }
 
+    let extractionFailed = false;
     const context = {
         prodModel,
-        prodObjects: prodModel ? safeExtract(prodModel) : {}
+        prodObjects: prodModel ? safeExtract(prodModel, () => { extractionFailed = true; }) : {}
     };
+    if (!prodModel || extractionFailed) {
+        result.warnings.push({
+            code: 'TARGET_PATHS_GUESSED',
+            message: 'The target model could not be indexed, so target file paths for this deploy are guessed from ' +
+                'object names (e.g. tables/<name>.tmdl) instead of the real file layout. Guessed paths can miss ' +
+                'renamed or relocated files; review the plan carefully before applying it.'
+        });
+    }
 
     // Check for relationship cardinality changes that require data validation
     const cardinalityChanges = selectedDiffs.filter(d =>
@@ -150,8 +159,8 @@ function deployChanges(selectedDiffs, devModel, prodPath, options = {}) {
 }
 
 /** extractAll can throw on a malformed model; never let that kill a deploy plan. */
-function safeExtract(model) {
-    try { return extractAll(model); } catch { return {}; }
+function safeExtract(model, onFailure) {
+    try { return extractAll(model); } catch { if (onFailure) onFailure(); return {}; }
 }
 
 // Ops that are idempotent "ensure" checks — only report/apply them if they'd
