@@ -228,6 +228,9 @@ async function deployToFabric(selectedDiffs, devModel, prodModel, fabricInfo, op
     const os = require('os');
     const tmpDir = path.join(os.tmpdir(), `model-alchemist-deploy-${Date.now()}`);
     const result = { success: true, actions: [], errors: [], backupPath: null };
+    // Set to a freshly-loaded model when a forced deploy re-plans against the
+    // live Fabric definition (finding 4.6); otherwise the original snapshot is used.
+    let effectiveProdModel = prodModel;
 
     try {
         // A Fabric deploy replaces the WHOLE definition. Seeding it from the
@@ -236,6 +239,7 @@ async function deployToFabric(selectedDiffs, devModel, prodModel, fabricInfo, op
         // warning and no trace. Re-fetch the live definition and refuse to deploy
         // over changes the user has not seen.
         let baseFiles = prodModel.rawFiles;
+        let forcedOverDrift = false;
         if (!dryRun) {
             const token = await requireFabricToken();
             const currentFiles = await fetchFabricRawFiles(token, fabricInfo);
@@ -257,10 +261,12 @@ async function deployToFabric(selectedDiffs, devModel, prodModel, fabricInfo, op
             // Deploy on top of the CURRENT definition, never the stale snapshot.
             baseFiles = currentFiles;
             if (drift.length > 0) {
+                forcedOverDrift = true;
                 result.warnings = result.warnings || [];
                 result.warnings.push({
                     code: 'PROD_CHANGED_SINCE_COMPARE_FORCED',
-                    message: `Deploying over ${drift.length} file(s) changed since the comparison, at your request.`
+                    message: `Deploying over ${drift.length} file(s) changed since the comparison, at your request. ` +
+                        `The deployment plan was re-computed against the live definition, not the stale comparison snapshot.`
                 });
             }
         }
@@ -294,8 +300,17 @@ async function deployToFabric(selectedDiffs, devModel, prodModel, fabricInfo, op
             fs.writeFileSync(fullPath, content, 'utf-8');
         }
 
+        // Finding 4.6: a forced deploy over drift used to keep planning operations
+        // against the compare-time prodModel while uploading the live files as the
+        // base — target names/paths could then point at blocks that had moved or
+        // no longer existed. Re-extract the model from what was actually just
+        // written (the live definition) so the plan matches the upload base.
+        if (forcedOverDrift) {
+            effectiveProdModel = loadModelFromFolder(tmpDir);
+        }
+
         // Run deployer against temp dir (no backup for Fabric)
-        const deployResult = deployChanges(selectedDiffs, devModel, tmpDir, { dryRun, backup: false, prodModel, allDiffs: options.allDiffs || [] });
+        const deployResult = deployChanges(selectedDiffs, devModel, tmpDir, { dryRun, backup: false, prodModel: effectiveProdModel, allDiffs: options.allDiffs || [] });
 
         if (!deployResult.success) {
             return deployResult;
