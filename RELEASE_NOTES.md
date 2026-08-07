@@ -7,7 +7,7 @@ found in a full review of v4.9.0, and adds the first automated test suite.
 
 ### Read this before upgrading
 
-Three changes alter what the tool does, on purpose:
+Four changes alter what the tool does, on purpose:
 
 1. **A Fabric deploy now refuses to upload a stale snapshot.** If the model changed
    in Fabric after your comparison was taken, the deploy stops with
@@ -74,6 +74,15 @@ table as Added+Removed; quoted relationship endpoints never matched their column
 diffs; refresh groups absorbed unrelated metadata changes; a diff could belong to
 two groups and render twice with desynced checkboxes. A rename detector now pairs
 Add/Remove into one atomic group that states the Fabric data-loss consequence.
+Partition and relationship ordinal keys (`#2`, `#3`, ...) were assigned by raw file
+order, so two candidates sharing a base identity could silently overwrite each
+other, and DEV/PROD listing relationships in different order could pair the wrong
+pair together; both are now assigned by grouping candidates by their natural
+identity and sorting each group by a deterministic content signature first, so the
+same DEV/PROD structure always pairs the same way regardless of file order. The
+rename detector's internal delimiters were raw NUL/control bytes, making the whole
+file look binary to git; they are now literal escape-sequence text with identical
+runtime behavior.
 
 **Validation** — a `calculationItem` could be selected without its calculation
 group; removing a table left dangling perspective, culture and role references; the
@@ -86,7 +95,21 @@ downgrades.
 connected; workspace and model lists read only the first page; a slow but successful
 deploy was reported as failed after 120s (now 10 minutes, and a timeout is reported
 as indeterminate); per-file parse errors silently dropped whole tables; `TimedOut`
-and `Cancelling` refresh statuses never reached a terminal state.
+and `Cancelling` refresh statuses never reached a terminal state. A forced deploy
+over Fabric drift (`force: true`) now re-extracts the target model from the live
+definition and re-plans against it, instead of planning against the stale
+compare-time snapshot and risking a mismatched deploy. A case-only rename (e.g.
+`sales` → `Sales`) is now deployable: block lookup during deploy is case-insensitive,
+matching Analysis Services identity semantics.
+
+**Deployment safety** — a rollback that failed to restore one or more files used to
+be silently swallowed and still reported "the target is unchanged"; it now reports
+a `ROLLBACK_INCOMPLETE` error naming the affected files and never claims the target
+is unchanged unless every file was actually restored. A Fabric deploy's warnings
+(e.g. `UNREVIEWED_BLOCK_CHANGES`) used to be dropped from the response, and the
+backup action recorded before upload could be silently overwritten; both are now
+preserved. When the target model can't be indexed, target file paths are now
+guessed with an explicit `TARGET_PATHS_GUESSED` warning instead of silently.
 
 **Server** — `/api/compare` left the previous Fabric model and dataset armed;
 `detectTablesNeedingRefresh` re-read mutable global state after a long await;
