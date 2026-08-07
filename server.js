@@ -709,7 +709,6 @@ app.post('/api/fabric/login', async (req, res) => {
         // This opens a system browser window for Microsoft login
         // and waits for the user to complete authentication
         const token = await fabricAuth.loginInteractive();
-        stateFor(req).fabricAccessToken = token;
         const account = fabricAuth.getAccountInfo();
         res.json({ status: 'connected', account });
     } catch (err) {
@@ -728,11 +727,9 @@ app.get('/api/fabric/status', async (req, res) => {
     // refresh now reports disconnected instead of "connected" forever.
     const token = await fabricAuth.getAccessToken();
     if (token) {
-        stateFor(req).fabricAccessToken = token;
         const account = fabricAuth.getAccountInfo();
         return res.json({ status: 'connected', account });
     }
-    stateFor(req).fabricAccessToken = null;
     const reason = fabricAuth.getLastAuthError();
     res.json({ status: 'disconnected', ...(reason ? { reason } : {}) });
 });
@@ -912,7 +909,6 @@ app.get('/api/fabric/refresh/active', (req, res) => {
 
 // API: Disconnect from Fabric
 app.post('/api/fabric/disconnect', (req, res) => {
-    stateFor(req).fabricAccessToken = null;
     fabricAuth.logout();
     res.json({ status: 'disconnected' });
 });
@@ -1025,7 +1021,6 @@ app.post('/api/compare-fabric', async (req, res) => {
         state.lastComparison = result;
         state.lastDevModel = devModel;
         state.lastProdModel = prodModel;
-        state.fabricAccessToken = token;
         if (prodSource.type === 'local') {
             state.lastProdPath = resolveDefinitionPath(prodSource.path);
         } else {

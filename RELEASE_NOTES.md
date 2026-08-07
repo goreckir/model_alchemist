@@ -21,7 +21,15 @@ Three changes alter what the tool does, on purpose:
    case-insensitive with per-environment GUIDs normalized, matching Analysis Services.
 
 Each browser tab now keeps its own comparison state (`x-ma-session` header), so two
-tabs no longer overwrite each other's deploy target.
+tabs no longer overwrite each other's deploy target. Fabric authentication itself
+remains process-wide (one signed-in account per running server), not per-tab.
+
+4. **`PBI_*` annotations and `sourceLineageTag` are undeployable by design.** They
+   are always preserved from the target during deploy, even when the comparison
+   shows them as a diff, so Fabric's own IDs and Power BI's internal bookkeeping are
+   never overwritten by a cross-environment deploy. To change either value, edit it
+   directly in the target model (e.g. via Fabric/Desktop) rather than through this
+   tool.
 
 ### Changes that were invisible before
 
@@ -98,7 +106,7 @@ O(diffs × members) scan re-run on every keystroke.
 
 ### Tests
 
-`npm test` runs 119 tests on Node's built-in runner — no new dependencies. Each test
+`npm test` runs 136 tests on Node's built-in runner — no new dependencies. Each test
 is named after the issue it locks down.
 
 ### Architecture
