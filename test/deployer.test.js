@@ -517,6 +517,62 @@ test('#74 a clean deploy still applies everything', () => {
     assert.match(read(s.prodPath, 'tables/Dim.tmdl'), /formatString: #,0/);
 });
 
+// ── finding 4.7: rollback failures were silently swallowed ──────────────────
+test('#4.7 a restore that throws during rollback is reported as ROLLBACK_INCOMPLETE, not "unchanged"', (t) => {
+    const base = {
+        'database.tmdl': H.databaseTmdl(),
+        'model.tmdl': H.modelTmdl(['table Sales', 'table Dim'])
+    };
+    const s = scenario(
+        {
+            ...base,
+            'tables/Sales.tmdl': 'table Sales\n\n\tmeasure Total = 1\n\t\tformatString: #,0\n',
+            'tables/Dim.tmdl': 'table Dim\n\n\tmeasure Count = 2\n\t\tformatString: #,0\n'
+        },
+        {
+            ...base,
+            'tables/Sales.tmdl': 'table Sales\n\n\tmeasure Total = 1\n\t\tformatString: 0.00\n',
+            'tables/Dim.tmdl': 'table Dim\n\n\tmeasure Count = 2\n\t\tformatString: 0.00\n'
+        }
+    );
+
+    const salesPath = path.join(s.prodPath, 'tables/Sales.tmdl');
+    const original = fs.writeFileSync;
+    let salesWrites = 0;
+    t.mock.method(fs, 'writeFileSync', (targetPath, ...args) => {
+        if (targetPath === salesPath) {
+            salesWrites++;
+            // Let the real deploy write through; only the rollback restore fails
+            // (simulating the file becoming unwritable, e.g. locked/read-only).
+            if (salesWrites > 1) throw new Error('EACCES: simulated read-only file');
+        }
+        return original.call(fs, targetPath, ...args);
+    });
+
+    const selected = s.comparison.diffs.filter(d => d.objectType === 'measure');
+    assert.strictEqual(selected.length, 2, 'both measures changed');
+    selected.push({
+        type: 2, objectType: 'measure', identityKey: 'measure:sales.ghost', displayName: 'Sales.Ghost',
+        objectName: 'Ghost', targetObjectName: 'Ghost', parentTable: 'Sales',
+        sourceFile: 'tables/Sales.tmdl', targetFile: 'tables/Sales.tmdl',
+        rawBlock: '\tmeasure Ghost = 1', propertyDiffs: []
+    });
+
+    const result = deployChanges(selected, s.devModel, s.prodPath, {
+        backup: false, prodModel: s.prodModel, allDiffs: s.comparison.diffs
+    });
+
+    assert.strictEqual(result.success, false, 'the deploy reports failure');
+    assert.strictEqual(result.rolledBack, true, 'rollback was attempted');
+    const rollbackError = result.errors.find(e => e.code === 'ROLLBACK_INCOMPLETE');
+    assert.ok(rollbackError, 'a ROLLBACK_INCOMPLETE error is reported');
+    assert.match(rollbackError.error, /Sales\.tmdl/);
+    const rollbackAction = result.actions.find(a => a.type === 'rollback');
+    assert.ok(rollbackAction, 'a rollback action is recorded');
+    assert.doesNotMatch(rollbackAction.message, /the target is unchanged/,
+        'must not claim the target is unchanged when a restore failed');
+});
+
 // ── regression: a dry run writes nothing ─────────────────────────────────────
 test('regression: a dry run reports actions without touching the target', () => {
     const base = { 'database.tmdl': H.databaseTmdl(), 'model.tmdl': H.modelTmdl(['table Sales']) };

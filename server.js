@@ -5,6 +5,7 @@ const { execFile } = require('child_process');
 const { loadModelFromFolder } = require('./parser/model-loader');
 const { compareModels } = require('./comparison/engine');
 const { deployChanges } = require('./deployment/deployer');
+const { mergeDeployResultIntoResponse } = require('./lib/deploy-response');
 const fabricAuth = require('./fabric/auth');
 const fabricApi = require('./fabric/api-client');
 const { loadModelFromFabric, normalizePath } = require('./fabric/model-loader');
@@ -318,7 +319,7 @@ async function deployToFabric(selectedDiffs, devModel, prodModel, fabricInfo, op
             updatedFiles
         );
 
-        result.actions = deployResult.actions;
+        mergeDeployResultIntoResponse(result, deployResult);
         result.actions.push({ type: 'fabric-upload', message: 'Definition uploaded to Fabric successfully.' });
 
         // Determine which tables need refresh after metadata deploy.

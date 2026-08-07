@@ -205,12 +205,24 @@ function executeAll(fileOps, prodPath, result, atomic) {
             result.errors.push({ operation: op.description, error: failure });
             result.success = false;
             if (atomic) {
-                const restored = rollback(snapshot);
+                const { restored, failed } = rollback(snapshot);
                 result.rolledBack = true;
-                result.actions.push({
-                    type: 'rollback',
-                    message: `Deployment stopped at a failing operation. ${restored} file(s) restored to their pre-deployment content — the target is unchanged.`
-                });
+                if (failed.length > 0) {
+                    result.errors.push({
+                        operation: { action: 'rollback' },
+                        code: 'ROLLBACK_INCOMPLETE',
+                        error: `${failed.length} file(s) could not be restored during rollback: ${failed.map(f => f.filePath).join(', ')}. The target is left in a partially-deployed state.`
+                    });
+                    result.actions.push({
+                        type: 'rollback',
+                        message: `Deployment stopped at a failing operation. ${restored} file(s) restored, but ${failed.length} file(s) could NOT be restored — the target is NOT guaranteed unchanged.`
+                    });
+                } else {
+                    result.actions.push({
+                        type: 'rollback',
+                        message: `Deployment stopped at a failing operation. ${restored} file(s) restored to their pre-deployment content — the target is unchanged.`
+                    });
+                }
                 return result;
             }
         }
@@ -220,9 +232,13 @@ function executeAll(fileOps, prodPath, result, atomic) {
     return result;
 }
 
-/** Restore every captured file. @returns {number} how many files were touched. */
+/**
+ * Restore every captured file.
+ * @returns {{ restored: number, failed: Array<{ filePath: string, error: string }> }}
+ */
 function rollback(snapshot) {
     let restored = 0;
+    const failed = [];
     for (const [filePath, state] of snapshot) {
         try {
             if (state.existed) {
@@ -234,11 +250,12 @@ function rollback(snapshot) {
                 fs.unlinkSync(filePath);
                 restored++;
             }
-        } catch {
-            // A file we cannot restore is reported through the error list already.
+        } catch (err) {
+            // Surfaced to the caller as ROLLBACK_INCOMPLETE — never silently swallowed.
+            failed.push({ filePath, error: err.message });
         }
     }
-    return restored;
+    return { restored, failed };
 }
 
 // ── File resolution ──────────────────────────────────────────────────────────
