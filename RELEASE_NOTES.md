@@ -1,9 +1,10 @@
 # Model Alchemist — Release Notes
 
-## v4.10.0
+## v5.0.0
 
-Correctness release. It closes 58 verified defects (11 critical, 22 high, 25 medium)
-found in a full review of v4.9.0, and adds the first automated test suite.
+Correctness release. It closes 59 verified defects (11 critical, 23 high, 25 medium)
+found in a full review of v4.9.0 plus live testing against real DEV/UAT and Fabric
+models, and adds the first automated test suite.
 
 ### Read this before upgrading
 
@@ -110,6 +111,14 @@ is unchanged unless every file was actually restored. A Fabric deploy's warnings
 backup action recorded before upload could be silently overwritten; both are now
 preserved. When the target model can't be indexed, target file paths are now
 guessed with an explicit `TARGET_PATHS_GUESSED` warning instead of silently.
+Removing a whole role while one of its `tablePermission`/`roleMember` diffs was
+also selected planned a redundant child operation against a file the role removal
+had already deleted, failing with `TARGET_FILE_MISSING` and forcing a rollback
+(mirrors the existing table/child-object guard, now extended to roles). That
+rollback then failed to restore any file deleted earlier in the same batch, because
+it tried to read-compare the file before rewriting it instead of just recreating
+it — both are now fixed, and this exact sequence (found live, not in the original
+review) is locked down by a dedicated regression test.
 
 **Server** — `/api/compare` left the previous Fabric model and dataset armed;
 `detectTablesNeedingRefresh` re-read mutable global state after a long await;
@@ -129,7 +138,7 @@ O(diffs × members) scan re-run on every keystroke.
 
 ### Tests
 
-`npm test` runs 136 tests on Node's built-in runner — no new dependencies. Each test
+`npm test` runs 138 tests on Node's built-in runner — no new dependencies. Each test
 is named after the issue it locks down.
 
 ### Architecture
