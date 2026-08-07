@@ -251,7 +251,12 @@ function rollback(snapshot) {
     for (const [filePath, state] of snapshot) {
         try {
             if (state.existed) {
-                if (fs.readFileSync(filePath, 'utf-8') !== state.content) {
+                // The file may have been deleted outright by an earlier operation
+                // in this same batch (e.g. a whole table/role removal). Reading it
+                // first to compare would throw ENOENT and abort the restore; check
+                // existence instead of assuming the read will succeed.
+                if (!fs.existsSync(filePath) || fs.readFileSync(filePath, 'utf-8') !== state.content) {
+                    fs.mkdirSync(path.dirname(filePath), { recursive: true });
                     fs.writeFileSync(filePath, state.content, 'utf-8');
                     restored++;
                 }
@@ -317,16 +322,22 @@ function planFileOperations(selectedDiffs, devModel, prodPath, prodModel, contex
     const tablesBeingAdded = new Set();
     const tablesBeingRemoved = new Set();
     const calcGroupsBeingAdded = new Set();
+    const rolesBeingAdded = new Set();
+    const rolesBeingRemoved = new Set();
     for (const d of selectedDiffs) {
         if (d.objectType === 'table') {
             if (d.type === 0) tablesBeingAdded.add(d.displayName);
             else if (d.type === 1) tablesBeingRemoved.add(d.displayName);
         } else if (d.objectType === 'calculationGroup' && d.type === 0 && d.parentTable) {
             calcGroupsBeingAdded.add(d.parentTable);
+        } else if (d.objectType === 'role') {
+            if (d.type === 0) rolesBeingAdded.add(d.displayName);
+            else if (d.type === 1) rolesBeingRemoved.add(d.displayName);
         }
     }
 
     const CHILD_OBJECT_TYPES = new Set(['column', 'measure', 'hierarchy', 'partition', 'calculationGroup', 'calculationItem']);
+    const ROLE_CHILD_DIFF_TYPES = new Set(['tablePermission', 'roleMember']);
 
     // Detect whether any selected diff introduces a calculation group into the
     // target. Calculation groups require `discourageImplicitMeasures: true` on
@@ -354,6 +365,15 @@ function planFileOperations(selectedDiffs, devModel, prodPath, prodModel, contex
             // this the item was inserted a second time and the model became
             // unloadable (duplicate object names).
             if (diff.type === 0 && diff.objectType === 'calculationItem' && calcGroupsBeingAdded.has(diff.parentTable)) continue;
+        }
+        // A whole role ADD/REMOVE already covers its tablePermission/member children
+        // (ADD writes the full DEV file, REMOVE deletes it). Planning a separate op
+        // for the child either duplicated it or failed with TARGET_FILE_MISSING
+        // against a file the role op had already deleted.
+        if (ROLE_CHILD_DIFF_TYPES.has(diff.objectType)) {
+            const roleName = diff.parentRole || String(diff.displayName).split(' → ')[0];
+            if (diff.type === 0 && rolesBeingAdded.has(roleName)) continue;
+            if (diff.type === 1 && rolesBeingRemoved.has(roleName)) continue;
         }
         const ops = planSingleDiff(diff, devModel, prodPath, context);
         operations.push(...ops);
