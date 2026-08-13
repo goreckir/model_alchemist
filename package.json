@@ -7,10 +7,13 @@
     "start": "node server.js",
     "dev": "node --watch server.js",
     "test": "node --test \"test/**/*.test.js\"",
-    "smoke": "node smoke-test.js"
+    "smoke": "node smoke-test.js",
+    "verify-fabric-readiness": "node verify-fabric-readiness.js"
   },
   "dependencies": {
     "@azure/msal-node": "^2.16.0",
-    "express": "^4.21.0"
+    "apache-arrow": "^21.2.0",
+    "express": "^4.21.0",
+    "lz4js": "^0.2.0"
   }
 }

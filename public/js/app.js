@@ -1279,9 +1279,20 @@
             html += '</div>';
         }
 
-        // Offer refresh for Fabric deployments with data-affecting changes
-        if (result.success && result.tablesNeedingRefresh != null) {
-            const refreshInfo = result.tablesNeedingRefresh;
+        // Target processing state (MVP): post-deployment engine readiness, independent
+        // of the diff-based tablesNeedingRefresh heuristic below.
+        if (result.success && result.targetReadiness) {
+            html += renderTargetReadiness(result.targetReadiness);
+        }
+
+        // Offer refresh for Fabric deployments with data-affecting changes.
+        // The table list is the union of the diff-based heuristic and objects
+        // observed to actually require refresh/recalculation post-deployment.
+        const mergedRefreshInfo = result.success
+            ? mergeRefreshInfoWithReadiness(result.tablesNeedingRefresh, result.targetReadiness)
+            : null;
+        if (mergedRefreshInfo != null) {
+            const refreshInfo = mergedRefreshInfo;
             const { refreshType, tables: refreshTables, isFullModel } = refreshInfo;
 
             const typeLabels = { automatic: 'Automatic', dataOnly: 'Data Refresh', calculate: 'Recalculate', full: 'Full Refresh' };
@@ -1324,12 +1335,82 @@
         const btnTriggerRefresh = document.getElementById('btn-trigger-refresh');
         const btnSkipRefresh = document.getElementById('btn-skip-refresh');
         if (btnTriggerRefresh) {
-            const refreshInfo = result.tablesNeedingRefresh;
-            btnTriggerRefresh.addEventListener('click', () => triggerFabricRefresh(refreshInfo));
+            btnTriggerRefresh.addEventListener('click', () => triggerFabricRefresh(mergedRefreshInfo));
             btnSkipRefresh.addEventListener('click', () => {
                 document.getElementById('refresh-offer').style.display = 'none';
             });
         }
+    }
+
+    /** Object-requiring-attention action → API refresh type, for merging into the refresh offer. */
+    const READINESS_ACTION_TO_REFRESH_TYPE = { refresh: 'dataOnly', recalculate: 'calculate' };
+    /** Matches the escalation order used by server.js detectTablesNeedingRefresh(): full > dataOnly > calculate > automatic. */
+    const REFRESH_TYPE_STRENGTH = { automatic: 0, calculate: 1, dataOnly: 2, full: 3 };
+
+    /**
+     * Union the diff-based tablesNeedingRefresh recommendation with objects
+     * observed post-deployment to actually require refresh/recalculation.
+     * Returns null when neither source has anything to report.
+     */
+    function mergeRefreshInfoWithReadiness(tablesNeedingRefresh, targetReadiness) {
+        const base = tablesNeedingRefresh || { refreshType: 'automatic', tables: [], isFullModel: false };
+        const tableMap = new Map();
+        for (const t of (base.tables || [])) {
+            tableMap.set(t.table, { table: t.table, refreshType: t.refreshType, reasons: [...(t.reasons || [])] });
+        }
+
+        if (targetReadiness && targetReadiness.availability === 'available') {
+            for (const obj of (targetReadiness.objectsRequiringAttention || [])) {
+                const refreshType = READINESS_ACTION_TO_REFRESH_TYPE[obj.action];
+                if (!refreshType) continue; // 'repair'/'inspect' objects are not auto-refreshable
+                const reason = `observed state: ${obj.state}`;
+                const existing = tableMap.get(obj.table);
+                if (!existing) {
+                    tableMap.set(obj.table, { table: obj.table, refreshType, reasons: [reason] });
+                } else if (!existing.reasons.includes(reason)) {
+                    existing.reasons.push(reason);
+                    if ((REFRESH_TYPE_STRENGTH[refreshType] || 0) > (REFRESH_TYPE_STRENGTH[existing.refreshType] || 0)) {
+                        existing.refreshType = refreshType;
+                    }
+                }
+            }
+        }
+
+        const tables = Array.from(tableMap.values());
+        if (tables.length === 0 && !base.isFullModel) return null;
+        return { refreshType: base.refreshType || 'automatic', tables, isFullModel: base.isFullModel || false };
+    }
+
+    /** Render the "Target processing state" section shown before the refresh offer. */
+    function renderTargetReadiness(targetReadiness) {
+        if (targetReadiness.availability === 'unavailable') {
+            return `<div style="margin-top: 16px; padding: 12px 16px; background: rgba(240, 180, 40, 0.08); border: 1px solid rgba(240, 180, 40, 0.35); border-radius: 8px;">` +
+                `<p style="font-weight: 600; margin-bottom: 4px;">⚠ Target processing state unknown</p>` +
+                `<p style="font-size: 12px; opacity: 0.85;">Deployment succeeded, but Model Alchemist could not inspect the target processing state.${targetReadiness.message ? ' ' + escapeHtml(targetReadiness.message) : ''}</p>` +
+                `</div>`;
+        }
+
+        const objects = targetReadiness.objectsRequiringAttention || [];
+        if (objects.length === 0) {
+            return `<div style="margin-top: 16px; padding: 12px 16px; background: rgba(60, 180, 100, 0.08); border: 1px solid rgba(60, 180, 100, 0.3); border-radius: 8px;">` +
+                `<p style="font-weight: 600; margin: 0;">✓ Target processing state checked: no objects require refresh or recalculation.</p>` +
+                `</div>`;
+        }
+
+        const actionLabels = { refresh: 'Refresh data', recalculate: 'Recalculate', repair: 'Repair dependency', inspect: 'Inspect expression' };
+        let html = `<div style="margin-top: 16px; padding: 12px 16px; background: rgba(240, 90, 40, 0.08); border: 1px solid rgba(240, 90, 40, 0.3); border-radius: 8px;">`;
+        html += `<p style="font-weight: 600; margin-bottom: 8px;">⚠ Target processing state: ${objects.length} object(s) require attention</p>`;
+        html += `<table class="refresh-objects-table" style="margin-bottom: 4px;">`;
+        html += `<thead><tr><th>Object</th><th>Type</th><th>State</th><th>Required action</th></tr></thead><tbody>`;
+        for (const obj of objects) {
+            const label = actionLabels[obj.action] || obj.action;
+            html += `<tr><td><code>${escapeHtml(obj.table)} / ${escapeHtml(obj.name || '')}</code></td>` +
+                `<td>${escapeHtml(obj.objectType || '')}</td>` +
+                `<td>${escapeHtml(obj.state || '')}</td>` +
+                `<td>${escapeHtml(label)}${obj.errorMessage ? `<br><span style="font-size: 11px; opacity: 0.75;">${escapeHtml(obj.errorMessage)}</span>` : ''}</td></tr>`;
+        }
+        html += `</tbody></table></div>`;
+        return html;
     }
 
     // ===== Fabric Refresh (centralized) =====
