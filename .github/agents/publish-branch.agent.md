@@ -1,5 +1,5 @@
 ---
-description: "Use when: publishing a new version, creating release branch, bumping version, updating release notes, updating readme version, preparing a release. Agent for automating the full release workflow: branch creation, version bump, changelog, validation, commit & push."
+description: "Use when: publishing a new version, creating release branch, bumping version, updating release notes, preparing a release. Agent for automating the full release workflow: branch creation, version bump, changelog, validation, commit & push."
 tools: [read, edit, search, execute, todo]
 ---
 
@@ -25,7 +25,7 @@ Before running `git push`, ALL items below must be completed and verified:
 
 1. `package.json` version updated to the target release.
 2. `RELEASE_NOTES.md` has a new top section for that exact version.
-3. `README.md` title version (`v{major.minor}`) updated to match.
+3. `README.md` contains no release version number; update it only when user-facing behavior or usage documentation changed.
 4. BACKLOG updated **if file exists** at `../Requirements/BACKLOG.md`.
 5. Validation passed (server startup + no new errors in modified files).
 
@@ -104,8 +104,9 @@ Populate based on:
 
 ### Step 6: Update README.md
 
-- Update version in the `# Model Alchemist v{major.minor}` title
 - If new features change user-facing behavior (e.g., new UI elements, changed workflow), update the Usage section accordingly
+- Do not add or update a release version anywhere in README.md; the title must remain `# Model Alchemist`
+- If README.md already contains a release version, remove it as part of the release
 - **Language: all README.md content must be written in English.**
 
 ### Step 7: Update BACKLOG.md (outside repo)
@@ -153,7 +154,7 @@ Report to user:
 ## Version Formatting Rules
 
 - `package.json`: full semver `"4.3.0"`
-- `README.md` title: major.minor only `v4.3`
+- `README.md`: no release version; title is `# Model Alchemist`
 - `RELEASE_NOTES.md`: full semver `v4.3.0`
 - `BACKLOG.md` header: full semver `v4.3.0`
 - Branch name: major.minor + slug `4.3-quality-of-life`

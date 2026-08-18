@@ -9,7 +9,7 @@
   <img src="https://img.shields.io/badge/Microsoft%20Fabric-REST%20API-7ddf7d" alt="Works with Microsoft Fabric over the REST API">
 </p>
 
-# Model Alchemist v5.1
+# Model Alchemist
 
 **See exactly what changed between two Power BI semantic models, then deploy only the parts you picked.**
 
