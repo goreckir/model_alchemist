@@ -8,6 +8,8 @@ const { deployChanges } = require('./deployment/deployer');
 const { mergeDeployResultIntoResponse } = require('./lib/deploy-response');
 const fabricAuth = require('./fabric/auth');
 const fabricApi = require('./fabric/api-client');
+const readinessClient = require('./fabric/readiness-client');
+const modelReadiness = require('./lib/model-readiness');
 const { loadModelFromFabric, normalizePath } = require('./fabric/model-loader');
 const { parseConnectionString } = require('./fabric/connection-parser');
 const { logEvent, readEvents } = require('./lib/activity-log');
@@ -156,7 +158,8 @@ app.post('/api/deploy', async (req, res) => {
                 warnings: result.warnings || [],
                 errors: result.errors || [],
                 backupPath: result.backupPath || null,
-                tablesNeedingRefresh: result.tablesNeedingRefresh || null
+                tablesNeedingRefresh: result.tablesNeedingRefresh || null,
+                targetReadiness: result.targetReadiness || null
             });
             res.json(result);
         }
@@ -217,6 +220,24 @@ async function fetchFabricRawFiles(token, fabricInfo) {
         rawFiles[normalizePath(file.path)] = file.content;
     }
     return rawFiles;
+}
+
+/**
+ * Post-deployment target model readiness inspection (MVP).
+ * Never throws — a failed inspection is reported as "unavailable", not as a
+ * deployment failure and never as a fabricated "ready" state.
+ */
+async function inspectTargetReadiness(token, fabricInfo) {
+    try {
+        const records = await readinessClient.getPartitionReadiness(token, fabricInfo.workspaceId, fabricInfo.semanticModelId);
+        return modelReadiness.buildReadinessSnapshot(records);
+    } catch (err) {
+        const reasonCode = err.reasonCode || 'READINESS_REQUEST_FAILED';
+        const message = err.reasonCode
+            ? err.message
+            : 'The definition was deployed, but runtime object state could not be inspected.';
+        return modelReadiness.buildUnavailableSnapshot(reasonCode, message);
+    }
 }
 
 /**
@@ -345,6 +366,11 @@ async function deployToFabric(selectedDiffs, devModel, prodModel, fabricInfo, op
         if (tablesNeedingRefresh !== null) {
             result.tablesNeedingRefresh = tablesNeedingRefresh;
         }
+
+        // Post-deployment runtime-state inspection (MVP): informational only.
+        // A failed inspection must NOT fail the deployment or be reported as ready —
+        // see requirements/TARGET_MODEL_READINESS_MVP_PLAN.md.
+        result.targetReadiness = await inspectTargetReadiness(token, fabricInfo);
     } catch (err) {
         result.success = false;
         
@@ -907,6 +933,28 @@ app.get('/api/fabric/refresh/active', (req, res) => {
     res.json({ active: active || null });
 });
 
+// API: On-demand target model readiness check (independent of a deployment)
+app.get('/api/fabric/readiness', async (req, res) => {
+    const { lastProdFabricInfo } = stateFor(req);
+
+    if (!lastProdFabricInfo) {
+        return res.status(400).json({ error: 'No Fabric target available. Compare against a Fabric target first.' });
+    }
+
+    try {
+        const token = await fabricAuth.getAccessToken();
+        if (!token) {
+            return res.status(401).json({ error: 'Not authenticated. Login to Fabric first.' });
+        }
+
+        const readiness = await inspectTargetReadiness(token, lastProdFabricInfo);
+        res.json(readiness);
+    } catch (err) {
+        console.error('Readiness check error:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // API: Disconnect from Fabric
 app.post('/api/fabric/disconnect', (req, res) => {
     fabricAuth.logout();
@@ -1160,4 +1208,9 @@ function startServer(portArg, maxAttempts = 20) {
     });
 }
 
-startServer(PORT);
+// Guarded so tests can `require('../server')` for its exports without binding a real port.
+if (require.main === module) {
+    startServer(PORT);
+}
+
+module.exports = { app, deployToFabric, inspectTargetReadiness, detectTablesNeedingRefresh };

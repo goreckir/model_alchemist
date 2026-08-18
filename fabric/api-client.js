@@ -321,6 +321,59 @@ async function getRefreshStatus(accessToken, workspaceId, semanticModelId, reque
     return await apiRequest(url, accessToken);
 }
 
+/** Default readiness-check request timeout — this is a metadata query, not a big data pull. */
+const EXECUTE_DAX_QUERIES_TIMEOUT_MS = 30000;
+
+/**
+ * Execute a DAX query via the Power BI `executeDaxQueries` endpoint.
+ * Unlike apiRequest(), the response body is binary (concatenated Apache Arrow
+ * IPC streams), not JSON — the caller is responsible for decoding it.
+ * Used for target model readiness inspection (INFO.* functions are not
+ * supported by the older JSON `executeQueries` endpoint).
+ *
+ * @param {string} accessToken
+ * @param {string} workspaceId
+ * @param {string} semanticModelId
+ * @param {string} query - DAX query text (a single EVALUATE statement)
+ * @param {{ queryTimeout?: number, timeoutMs?: number }} [options]
+ * @returns {Promise<{ status: number, headers: object, body: Buffer }>}
+ */
+function executeDaxQueriesRequest(accessToken, workspaceId, semanticModelId, query, options = {}) {
+    return new Promise((resolve, reject) => {
+        const url = `${POWERBI_API_BASE}/groups/${workspaceId}/datasets/${semanticModelId}/executeDaxQueries`;
+        const parsed = new URL(url);
+        const requestBody = JSON.stringify({ query, queryTimeout: options.queryTimeout || 100 });
+
+        const req = https.request({
+            hostname: parsed.hostname,
+            path: parsed.pathname + parsed.search,
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${accessToken}`,
+                'Content-Type': 'application/json',
+                'Accept': 'application/vnd.apache.arrow.stream'
+            }
+        }, (res) => {
+            const chunks = [];
+            res.on('data', chunk => chunks.push(chunk));
+            res.on('end', () => {
+                resolve({ status: res.statusCode, headers: res.headers, body: Buffer.concat(chunks) });
+            });
+        });
+
+        req.on('error', reject);
+        req.setTimeout(options.timeoutMs || EXECUTE_DAX_QUERIES_TIMEOUT_MS, () => {
+            req.destroy();
+            const err = new Error('Readiness check request timed out');
+            err.code = 'REQUEST_TIMEOUT';
+            reject(err);
+        });
+
+        req.write(requestBody);
+        req.end();
+    });
+}
+
 module.exports = {
     listWorkspaces,
     listSemanticModels,
@@ -329,6 +382,7 @@ module.exports = {
     updateSemanticModelDefinition,
     refreshSemanticModel,
     getRefreshStatus,
+    executeDaxQueriesRequest,
     pollOperation,
     operationTimeoutError
 };
