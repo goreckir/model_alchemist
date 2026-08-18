@@ -27,6 +27,16 @@ function ensureLz4CodecRegistered() {
     compressionRegistry.set(CompressionType.LZ4_FRAME, {
         decode: (bytes) => lz4js.decompress(bytes)
     });
+    if (process.env.MA_READINESS_DEBUG) {
+        // Temporary diagnostic: log which CompressionType a batch actually asked for
+        // when no codec is registered for it (helps tell LZ4_FRAME vs ZSTD apart).
+        const originalGet = compressionRegistry.get.bind(compressionRegistry);
+        compressionRegistry.get = (type) => {
+            const codec = originalGet(type);
+            if (!codec) console.error(`[readiness-debug] no codec for compression type ${type} (${CompressionType[type]})`);
+            return codec;
+        };
+    }
     lz4CodecRegistered = true;
 }
 

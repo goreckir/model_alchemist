@@ -120,3 +120,131 @@ test('#71 line-ending differences alone are not drift', () => {
     const after = { 'model.tmdl': 'model Model\n\tculture: en-US' };
     assert.deepStrictEqual(compareRawFiles(before, after), []);
 });
+
+// ── Target model readiness (MVP): deployToFabric/inspectTargetReadiness wiring ─
+const { deployToFabric, detectTablesNeedingRefresh } = require('../server');
+const fabricAuth = require('../fabric/auth');
+const fabricApi = require('../fabric/api-client');
+const readinessClient = require('../fabric/readiness-client');
+const { ReadinessUnavailableError } = readinessClient;
+
+/** Swap out the Fabric-facing methods for the duration of `fn`, then restore them. */
+async function withFabricStubs(stubs, fn) {
+    const originals = {
+        getAccessToken: fabricAuth.getAccessToken,
+        getSemanticModelDefinition: fabricApi.getSemanticModelDefinition,
+        updateSemanticModelDefinition: fabricApi.updateSemanticModelDefinition,
+        getPartitionReadiness: readinessClient.getPartitionReadiness
+    };
+    Object.assign(fabricAuth, { getAccessToken: stubs.getAccessToken || (async () => 'fake-token') });
+    Object.assign(fabricApi, {
+        getSemanticModelDefinition: stubs.getSemanticModelDefinition || (async () => []),
+        updateSemanticModelDefinition: stubs.updateSemanticModelDefinition || (async () => ({}))
+    });
+    Object.assign(readinessClient, { getPartitionReadiness: stubs.getPartitionReadiness || (async () => []) });
+    try {
+        return await fn();
+    } finally {
+        Object.assign(fabricAuth, { getAccessToken: originals.getAccessToken });
+        Object.assign(fabricApi, {
+            getSemanticModelDefinition: originals.getSemanticModelDefinition,
+            updateSemanticModelDefinition: originals.updateSemanticModelDefinition
+        });
+        Object.assign(readinessClient, { getPartitionReadiness: originals.getPartitionReadiness });
+    }
+}
+
+const fakeProdModel = () => ({ rawFiles: {}, name: 'TestModel' });
+const fakeFabricInfo = () => ({ workspaceId: 'W1', semanticModelId: 'M1' });
+
+test('readiness wiring: a dry-run deploy never calls the readiness client and carries no targetReadiness', async () => {
+    let readinessCalled = false;
+    await withFabricStubs({ getPartitionReadiness: async () => { readinessCalled = true; return []; } }, async () => {
+        const result = await deployToFabric([], {}, fakeProdModel(), fakeFabricInfo(), { dryRun: true });
+        assert.strictEqual(result.success, true);
+        assert.strictEqual(readinessCalled, false, 'the readiness client must not be called on a dry run');
+        assert.strictEqual(result.targetReadiness, undefined);
+    });
+});
+
+test('readiness wiring: a real deploy attaches an available targetReadiness snapshot with non-ready objects', async () => {
+    await withFabricStubs({
+        getPartitionReadiness: async () => [
+            { table: 'Sales', name: 'Sales', stateCode: 3 },
+            { table: 'Calendar', name: 'Calendar', stateCode: 1 } // Ready — excluded from objectsRequiringAttention
+        ]
+    }, async () => {
+        const result = await deployToFabric([], {}, fakeProdModel(), fakeFabricInfo(), {});
+        assert.strictEqual(result.success, true);
+        assert.strictEqual(result.targetReadiness.availability, 'available');
+        assert.strictEqual(result.targetReadiness.objectsRequiringAttention.length, 1);
+        assert.strictEqual(result.targetReadiness.objectsRequiringAttention[0].table, 'Sales');
+        assert.strictEqual(result.targetReadiness.objectsRequiringAttention[0].action, 'refresh');
+    });
+});
+
+test('readiness wiring: a ReadinessUnavailableError never fails the deploy, and is reported as unavailable with its reasonCode', async () => {
+    await withFabricStubs({
+        getPartitionReadiness: async () => { throw new ReadinessUnavailableError('READINESS_FORBIDDEN', 'Insufficient permissions.'); }
+    }, async () => {
+        const result = await deployToFabric([], {}, fakeProdModel(), fakeFabricInfo(), {});
+        assert.strictEqual(result.success, true, 'a failed inspection must not fail the deployment');
+        assert.strictEqual(result.targetReadiness.availability, 'unavailable');
+        assert.strictEqual(result.targetReadiness.reasonCode, 'READINESS_FORBIDDEN');
+        assert.strictEqual(result.targetReadiness.message, 'Insufficient permissions.');
+    });
+});
+
+test('readiness wiring: an unexpected error from the readiness client falls back to a generic reasonCode, never crashes the deploy', async () => {
+    await withFabricStubs({
+        getPartitionReadiness: async () => { throw new Error('ECONNRESET'); }
+    }, async () => {
+        const result = await deployToFabric([], {}, fakeProdModel(), fakeFabricInfo(), {});
+        assert.strictEqual(result.success, true);
+        assert.strictEqual(result.targetReadiness.availability, 'unavailable');
+        assert.strictEqual(result.targetReadiness.reasonCode, 'READINESS_REQUEST_FAILED');
+    });
+});
+
+test('readiness wiring: two independent deploys do not leak readiness state into each other', async () => {
+    const first = await withFabricStubs({
+        getPartitionReadiness: async () => [{ table: 'Sales', name: 'Sales', stateCode: 3 }]
+    }, () => deployToFabric([], {}, fakeProdModel(), fakeFabricInfo(), {}));
+
+    const second = await withFabricStubs({
+        getPartitionReadiness: async () => []
+    }, () => deployToFabric([], {}, fakeProdModel(), fakeFabricInfo(), {}));
+
+    assert.strictEqual(first.targetReadiness.objectsRequiringAttention.length, 1);
+    assert.strictEqual(second.targetReadiness.objectsRequiringAttention.length, 0);
+});
+
+test('readiness wiring: tablesNeedingRefresh (from the diff) and targetReadiness (from post-deploy inspection) coexist independently', async () => {
+    await withFabricStubs({
+        getPartitionReadiness: async () => [{ table: 'Calendar', name: 'Calendar', stateCode: 4 }]
+    }, async () => {
+        const result = await deployToFabric([], {}, fakeProdModel(), fakeFabricInfo(), {
+            comparison: { groups: [] },
+            allDiffs: []
+        });
+        // No diffs were selected, so there is nothing for detectTablesNeedingRefresh to report —
+        // but targetReadiness must still be populated from the independent post-deploy inspection.
+        assert.strictEqual(result.tablesNeedingRefresh, undefined);
+        assert.strictEqual(result.targetReadiness.availability, 'available');
+        assert.strictEqual(result.targetReadiness.objectsRequiringAttention.length, 1);
+    });
+});
+
+// ── detectTablesNeedingRefresh: exported so it is directly unit-testable ──────
+test('detectTablesNeedingRefresh: a newly added table requires a full refresh', () => {
+    const result = detectTablesNeedingRefresh([
+        { objectType: 'table', type: 0, displayName: 'Sales', identityKey: 'table:Sales' }
+    ], null);
+    assert.ok(result, 'a new table must produce a refresh recommendation');
+    const sales = result.tables.find(t => t.table === 'Sales');
+    assert.strictEqual(sales.refreshType, 'full');
+});
+
+test('detectTablesNeedingRefresh: no diffs at all means no refresh is needed', () => {
+    assert.strictEqual(detectTablesNeedingRefresh([], null), null);
+});

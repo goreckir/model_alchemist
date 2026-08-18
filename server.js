@@ -933,6 +933,28 @@ app.get('/api/fabric/refresh/active', (req, res) => {
     res.json({ active: active || null });
 });
 
+// API: On-demand target model readiness check (independent of a deployment)
+app.get('/api/fabric/readiness', async (req, res) => {
+    const { lastProdFabricInfo } = stateFor(req);
+
+    if (!lastProdFabricInfo) {
+        return res.status(400).json({ error: 'No Fabric target available. Compare against a Fabric target first.' });
+    }
+
+    try {
+        const token = await fabricAuth.getAccessToken();
+        if (!token) {
+            return res.status(401).json({ error: 'Not authenticated. Login to Fabric first.' });
+        }
+
+        const readiness = await inspectTargetReadiness(token, lastProdFabricInfo);
+        res.json(readiness);
+    } catch (err) {
+        console.error('Readiness check error:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // API: Disconnect from Fabric
 app.post('/api/fabric/disconnect', (req, res) => {
     fabricAuth.logout();
@@ -1186,4 +1208,9 @@ function startServer(portArg, maxAttempts = 20) {
     });
 }
 
-startServer(PORT);
+// Guarded so tests can `require('../server')` for its exports without binding a real port.
+if (require.main === module) {
+    startServer(PORT);
+}
+
+module.exports = { app, deployToFabric, inspectTargetReadiness, detectTablesNeedingRefresh };

@@ -5,6 +5,7 @@ const path = require('path');
 const Pure = require('../public/js/pure.js');
 
 const APP_JS = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app.js'), 'utf-8');
+const PURE_JS = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'pure.js'), 'utf-8');
 const INDEX_HTML = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf-8');
 
 const diff = (key, name, type = 2, changeGroup = 'Measures') =>
@@ -228,9 +229,10 @@ test('every element id app.js binds exists in index.html', () => {
     for (const match of APP_JS.matchAll(/getElementById\('([^']+)'\)/g)) ids.add(match[1]);
     assert.ok(ids.size > 20, `expected many ids, found ${ids.size}`);
 
-    // An id is fine if the page declares it, or if app.js itself creates the
-    // element (deploy animation overlay, the refresh offer inside the result modal).
-    const createdInJs = id => APP_JS.includes(`id="${id}"`) || APP_JS.includes(`overlay.id = '${id}'`);
+    // An id is fine if the page declares it, or if app.js (or the pure renderers
+    // it calls, e.g. renderTargetReadiness in pure.js) creates the element
+    // (deploy animation overlay, the refresh offer inside the result modal).
+    const createdInJs = id => APP_JS.includes(`id="${id}"`) || APP_JS.includes(`overlay.id = '${id}'`) || PURE_JS.includes(`id="${id}"`);
     const missing = [...ids].filter(id => !INDEX_HTML.includes(`id="${id}"`) && !createdInJs(id));
     assert.deepStrictEqual(missing, [], `ids referenced by app.js but absent from index.html: ${missing.join(', ')}`);
 });
@@ -250,4 +252,128 @@ test('pure.js loads in a browser-like global and exports the same API', () => {
     vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'pure.js'), 'utf-8'), sandbox);
     assert.ok(sandbox.MAPure, 'the MAPure global is defined for the browser');
     assert.deepStrictEqual(Object.keys(sandbox.MAPure).sort(), Object.keys(Pure).sort());
+});
+
+// ── Target model readiness (MVP): rendering and merge logic ───────────────────
+const readinessObj = (overrides = {}) => ({
+    table: 'Sales', objectType: 'partition', name: 'Sales', stateCode: 3,
+    state: 'NoData', action: 'refresh', refreshedTime: null, errorMessage: null,
+    ...overrides
+});
+
+test('renderTargetReadiness: an all-ready snapshot shows the green "no attention needed" message', () => {
+    const html = Pure.renderTargetReadiness({ availability: 'available', objectsRequiringAttention: [] });
+    assert.match(html, /no objects require refresh or recalculation/);
+    assert.doesNotMatch(html, /require attention/);
+});
+
+test('renderTargetReadiness: non-ready objects are rendered as a table with table/type/state/action', () => {
+    const html = Pure.renderTargetReadiness({
+        availability: 'available',
+        objectsRequiringAttention: [readinessObj(), readinessObj({ table: 'Calendar', name: 'Calendar', action: 'recalculate', state: 'CalculationNeeded' })]
+    });
+    assert.match(html, /2 object\(s\) require attention/);
+    assert.match(html, /Sales/);
+    assert.match(html, /Refresh data/);
+    assert.match(html, /Calendar/);
+    assert.match(html, /Recalculate/);
+});
+
+test('renderTargetReadiness: an unavailable snapshot never shows a "ready"/green message', () => {
+    const html = Pure.renderTargetReadiness({ availability: 'unavailable', reasonCode: 'READINESS_FORBIDDEN', message: 'Insufficient permissions.' });
+    assert.match(html, /Target processing state unknown/);
+    assert.match(html, /Insufficient permissions\./);
+    assert.doesNotMatch(html, /no objects require refresh/);
+    assert.doesNotMatch(html, /require attention/);
+});
+
+test('renderTargetReadiness: engine error messages and object names are HTML-escaped', () => {
+    const html = Pure.renderTargetReadiness({
+        availability: 'available',
+        objectsRequiringAttention: [readinessObj({
+            name: '<img src=x onerror=alert(1)>',
+            errorMessage: '<script>alert(1)</script>'
+        })]
+    });
+    assert.doesNotMatch(html, /<img src=x/);
+    assert.doesNotMatch(html, /<script>alert/);
+    assert.match(html, /&lt;script&gt;/);
+});
+
+test('renderTargetReadiness: actionable mode adds a per-row refresh button only for refresh/recalculate actions', () => {
+    const html = Pure.renderTargetReadiness({
+        availability: 'available',
+        objectsRequiringAttention: [readinessObj(), readinessObj({ table: 'Broken', name: 'Broken', action: 'repair', state: 'DependencyError' })]
+    }, { actionable: true });
+    assert.match(html, /class="btn btn-secondary btn-readiness-refresh"/);
+    // The 'repair' row has no auto-refresh action, so it gets an em-dash, not a checkbox/button.
+    assert.match(html, /—<\/td>/);
+});
+
+test('renderTargetReadiness: actionable mode adds selectable row checkboxes and a bulk-refresh button', () => {
+    const html = Pure.renderTargetReadiness({
+        availability: 'available',
+        objectsRequiringAttention: [readinessObj(), readinessObj({ table: 'Calendar', name: 'Calendar', action: 'recalculate' })]
+    }, { actionable: true });
+    assert.match(html, /id="readiness-select-all"/);
+    assert.match(html, /id="btn-readiness-refresh-bulk"/);
+    assert.match(html, /class="readiness-row-checkbox" data-idx="0"/);
+    assert.match(html, /class="readiness-row-checkbox" data-idx="1"/);
+    assert.match(html, /Refresh all \(2\)/);
+});
+
+test('renderTargetReadiness: a non-empty selectedIndices set checks those rows and relabels the bulk button', () => {
+    const html = Pure.renderTargetReadiness({
+        availability: 'available',
+        objectsRequiringAttention: [readinessObj(), readinessObj({ table: 'Calendar', name: 'Calendar', action: 'recalculate' })]
+    }, { actionable: true, selectedIndices: new Set([1]) });
+    assert.match(html, /Refresh selected \(1\)/);
+    assert.match(html, /data-idx="1" checked/);
+    assert.doesNotMatch(html, /data-idx="0" checked/);
+});
+
+test('mergeRefreshInfoWithReadiness: unions diff-based tables with observed non-ready objects, deduplicated', () => {
+    const merged = Pure.mergeRefreshInfoWithReadiness(
+        { refreshType: 'dataOnly', tables: [{ table: 'Sales', refreshType: 'dataOnly', reasons: ['diff'] }], isFullModel: false },
+        { availability: 'available', objectsRequiringAttention: [readinessObj({ table: 'Sales' }), readinessObj({ table: 'Calendar', name: 'Calendar', action: 'recalculate', state: 'CalculationNeeded' })] }
+    );
+    assert.strictEqual(merged.tables.length, 2, 'Sales is not duplicated, Calendar is added');
+    const sales = merged.tables.find(t => t.table === 'Sales');
+    assert.ok(sales.reasons.includes('diff'));
+    assert.ok(sales.reasons.some(r => r.includes('NoData')));
+});
+
+test('mergeRefreshInfoWithReadiness: escalates to the stronger action (dataOnly over calculate) for one table', () => {
+    const merged = Pure.mergeRefreshInfoWithReadiness(
+        { refreshType: 'calculate', tables: [{ table: 'Sales', refreshType: 'calculate', reasons: ['diff'] }], isFullModel: false },
+        { availability: 'available', objectsRequiringAttention: [readinessObj({ table: 'Sales', action: 'refresh', state: 'NoData' })] }
+    );
+    const sales = merged.tables.find(t => t.table === 'Sales');
+    assert.strictEqual(sales.refreshType, 'dataOnly', 'refresh (dataOnly) is stronger than calculate');
+});
+
+test('mergeRefreshInfoWithReadiness: an unavailable readiness snapshot never contributes tables', () => {
+    const merged = Pure.mergeRefreshInfoWithReadiness(
+        { refreshType: 'automatic', tables: [], isFullModel: false },
+        { availability: 'unavailable', reasonCode: 'READINESS_FORBIDDEN' }
+    );
+    assert.strictEqual(merged, null, 'nothing to refresh when neither source has anything');
+});
+
+test('buildBulkRefreshInfo: groups selected objects by table and escalates the strongest action', () => {
+    const info = Pure.buildBulkRefreshInfo([
+        readinessObj({ table: 'Sales', action: 'refresh', state: 'NoData' }),
+        readinessObj({ table: 'Sales', name: 'Sales2', action: 'recalculate', state: 'CalculationNeeded' }),
+        readinessObj({ table: 'Calendar', name: 'Calendar', action: 'recalculate', state: 'CalculationNeeded' })
+    ]);
+    assert.strictEqual(info.refreshType, 'dataOnly', 'the batch escalates to the strongest table-level action');
+    assert.strictEqual(info.tables.length, 2);
+    const sales = info.tables.find(t => t.table === 'Sales');
+    assert.strictEqual(sales.refreshType, 'dataOnly');
+    assert.strictEqual(sales.reasons.length, 2);
+});
+
+test('buildBulkRefreshInfo: objects with no auto-refresh action (repair/inspect) are ignored, and an empty result is null', () => {
+    assert.strictEqual(Pure.buildBulkRefreshInfo([readinessObj({ action: 'repair' }), readinessObj({ action: 'inspect' })]), null);
+    assert.strictEqual(Pure.buildBulkRefreshInfo([]), null);
 });

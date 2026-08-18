@@ -130,16 +130,53 @@
     const btnModelRefresh = document.getElementById('btn-model-refresh');
     const refreshModal = document.getElementById('refresh-modal');
     const refreshPanelContent = document.getElementById('refresh-panel-content');
+    const targetReadinessPanel = document.getElementById('target-readiness-panel');
     const btnManualCalculate = document.getElementById('btn-manual-calculate');
     btnModelRefresh.addEventListener('click', openRefreshPanel);
     document.getElementById('refresh-modal-close').addEventListener('click', () => refreshModal.classList.add('hidden'));
     document.getElementById('btn-refresh-modal-ok').addEventListener('click', () => refreshModal.classList.add('hidden'));
     btnManualCalculate.addEventListener('click', handleManualCalculate);
+    // Delegated: targetReadinessPanel's innerHTML is rebuilt on every render, its buttons are not bound individually.
+    targetReadinessPanel.addEventListener('click', (e) => {
+        if (e.target.closest('#btn-check-readiness')) {
+            loadTargetReadiness();
+            return;
+        }
+        const refreshBtn = e.target.closest('.btn-readiness-refresh');
+        if (refreshBtn) {
+            handleReadinessRefresh(refreshBtn.dataset.table, refreshBtn.dataset.action, refreshBtn.dataset.state, refreshBtn);
+            return;
+        }
+        if (e.target.closest('#btn-readiness-refresh-bulk')) {
+            handleReadinessRefreshBulk();
+        }
+    });
+    // Delegated 'change' for the row/select-all checkboxes — they don't exist until the panel renders.
+    targetReadinessPanel.addEventListener('change', (e) => {
+        if (e.target.id === 'readiness-select-all') {
+            const objects = (targetReadinessSnapshot && targetReadinessSnapshot.objectsRequiringAttention) || [];
+            const refreshableIndices = objects
+                .map((obj, i) => (Pure.READINESS_ACTION_TO_REFRESH_TYPE[obj.action] ? i : -1))
+                .filter(i => i !== -1);
+            selectedReadinessIndices = e.target.checked ? new Set(refreshableIndices) : new Set();
+            renderTargetReadinessPanel();
+            return;
+        }
+        if (e.target.classList.contains('readiness-row-checkbox')) {
+            const idx = Number(e.target.dataset.idx);
+            if (e.target.checked) selectedReadinessIndices.add(idx);
+            else selectedReadinessIndices.delete(idx);
+            renderTargetReadinessPanel();
+        }
+    });
 
     // Refresh state
     let refreshHistory = []; // session refresh records
     let activeRefreshId = null;
     const refreshPollers = new Map(); // requestId -> { interval, timeout }
+    let targetReadinessSnapshot = null; // last /api/fabric/readiness result, null until checked
+    let targetReadinessLoading = false;
+    let selectedReadinessIndices = new Set(); // indices into targetReadinessSnapshot.objectsRequiringAttention selected for bulk refresh
 
     // Export dropdown
     btnExport.addEventListener('click', (e) => {
@@ -1342,75 +1379,87 @@
         }
     }
 
-    /** Object-requiring-attention action → API refresh type, for merging into the refresh offer. */
-    const READINESS_ACTION_TO_REFRESH_TYPE = { refresh: 'dataOnly', recalculate: 'calculate' };
-    /** Matches the escalation order used by server.js detectTablesNeedingRefresh(): full > dataOnly > calculate > automatic. */
-    const REFRESH_TYPE_STRENGTH = { automatic: 0, calculate: 1, dataOnly: 2, full: 3 };
+    /** Object-requiring-attention action → API refresh type; see public/js/pure.js for the full merge/render logic. */
+    const READINESS_ACTION_TO_REFRESH_TYPE = Pure.READINESS_ACTION_TO_REFRESH_TYPE;
+    const mergeRefreshInfoWithReadiness = Pure.mergeRefreshInfoWithReadiness;
+    const renderTargetReadiness = (targetReadiness, options = {}) =>
+        Pure.renderTargetReadiness(targetReadiness, { ...options, selectedIndices: selectedReadinessIndices });
 
-    /**
-     * Union the diff-based tablesNeedingRefresh recommendation with objects
-     * observed post-deployment to actually require refresh/recalculation.
-     * Returns null when neither source has anything to report.
-     */
-    function mergeRefreshInfoWithReadiness(tablesNeedingRefresh, targetReadiness) {
-        const base = tablesNeedingRefresh || { refreshType: 'automatic', tables: [], isFullModel: false };
-        const tableMap = new Map();
-        for (const t of (base.tables || [])) {
-            tableMap.set(t.table, { table: t.table, refreshType: t.refreshType, reasons: [...(t.reasons || [])] });
-        }
+    // ===== Model Refresh panel: on-demand target readiness check =====
 
-        if (targetReadiness && targetReadiness.availability === 'available') {
-            for (const obj of (targetReadiness.objectsRequiringAttention || [])) {
-                const refreshType = READINESS_ACTION_TO_REFRESH_TYPE[obj.action];
-                if (!refreshType) continue; // 'repair'/'inspect' objects are not auto-refreshable
-                const reason = `observed state: ${obj.state}`;
-                const existing = tableMap.get(obj.table);
-                if (!existing) {
-                    tableMap.set(obj.table, { table: obj.table, refreshType, reasons: [reason] });
-                } else if (!existing.reasons.includes(reason)) {
-                    existing.reasons.push(reason);
-                    if ((REFRESH_TYPE_STRENGTH[refreshType] || 0) > (REFRESH_TYPE_STRENGTH[existing.refreshType] || 0)) {
-                        existing.refreshType = refreshType;
-                    }
-                }
+    /** Fetch the target model's current processing state on demand, independent of a deployment. */
+    async function loadTargetReadiness() {
+        targetReadinessLoading = true;
+        selectedReadinessIndices = new Set(); // indices belong to the previous snapshot's array order
+        renderTargetReadinessPanel();
+        try {
+            const response = await apiFetch('/api/fabric/readiness');
+            const data = await response.json();
+            if (!response.ok) {
+                targetReadinessSnapshot = { availability: 'unavailable', noTarget: response.status === 400, message: data.error || 'Could not check the target model state.' };
+            } else {
+                targetReadinessSnapshot = data;
             }
+        } catch (err) {
+            targetReadinessSnapshot = { availability: 'unavailable', message: err.message };
         }
-
-        const tables = Array.from(tableMap.values());
-        if (tables.length === 0 && !base.isFullModel) return null;
-        return { refreshType: base.refreshType || 'automatic', tables, isFullModel: base.isFullModel || false };
+        targetReadinessLoading = false;
+        renderTargetReadinessPanel();
     }
 
-    /** Render the "Target processing state" section shown before the refresh offer. */
-    function renderTargetReadiness(targetReadiness) {
-        if (targetReadiness.availability === 'unavailable') {
-            return `<div style="margin-top: 16px; padding: 12px 16px; background: rgba(240, 180, 40, 0.08); border: 1px solid rgba(240, 180, 40, 0.35); border-radius: 8px;">` +
-                `<p style="font-weight: 600; margin-bottom: 4px;">⚠ Target processing state unknown</p>` +
-                `<p style="font-size: 12px; opacity: 0.85;">Deployment succeeded, but Model Alchemist could not inspect the target processing state.${targetReadiness.message ? ' ' + escapeHtml(targetReadiness.message) : ''}</p>` +
-                `</div>`;
-        }
+    /** Render the target-readiness section at the top of the Model Refresh panel. */
+    function renderTargetReadinessPanel() {
+        let html = `<div class="target-readiness-section" style="margin-bottom: 16px; padding-bottom: 12px; border-bottom: 1px solid rgba(255,255,255,0.08);">`;
+        html += `<div style="display:flex; align-items:center; justify-content:space-between; gap: 12px;">`;
+        html += `<h3 style="margin:0; font-size: 13px; opacity: 0.85;">Target processing state</h3>`;
+        html += `<button id="btn-check-readiness" class="btn btn-secondary" style="padding: 4px 10px; font-size: 12px;" ${targetReadinessLoading ? 'disabled' : ''}>${targetReadinessLoading ? '⏳ Checking…' : '🔍 Check Target State'}</button>`;
+        html += `</div>`;
 
-        const objects = targetReadiness.objectsRequiringAttention || [];
-        if (objects.length === 0) {
-            return `<div style="margin-top: 16px; padding: 12px 16px; background: rgba(60, 180, 100, 0.08); border: 1px solid rgba(60, 180, 100, 0.3); border-radius: 8px;">` +
-                `<p style="font-weight: 600; margin: 0;">✓ Target processing state checked: no objects require refresh or recalculation.</p>` +
-                `</div>`;
+        if (targetReadinessLoading && !targetReadinessSnapshot) {
+            html += `<p style="font-size: 12px; opacity: 0.7; margin-top: 8px;">Checking target model state…</p>`;
+        } else if (!targetReadinessSnapshot) {
+            html += `<p style="font-size: 12px; opacity: 0.7; margin-top: 8px;">Click "Check Target State" to inspect the current processing state of the target model's objects.</p>`;
+        } else if (targetReadinessSnapshot.noTarget) {
+            html += `<p style="font-size: 12px; opacity: 0.7; margin-top: 8px;">${escapeHtml(targetReadinessSnapshot.message)}</p>`;
+        } else {
+            html += renderTargetReadiness(targetReadinessSnapshot, { actionable: true });
         }
+        html += `</div>`;
+        targetReadinessPanel.innerHTML = html;
+    }
 
-        const actionLabels = { refresh: 'Refresh data', recalculate: 'Recalculate', repair: 'Repair dependency', inspect: 'Inspect expression' };
-        let html = `<div style="margin-top: 16px; padding: 12px 16px; background: rgba(240, 90, 40, 0.08); border: 1px solid rgba(240, 90, 40, 0.3); border-radius: 8px;">`;
-        html += `<p style="font-weight: 600; margin-bottom: 8px;">⚠ Target processing state: ${objects.length} object(s) require attention</p>`;
-        html += `<table class="refresh-objects-table" style="margin-bottom: 4px;">`;
-        html += `<thead><tr><th>Object</th><th>Type</th><th>State</th><th>Required action</th></tr></thead><tbody>`;
-        for (const obj of objects) {
-            const label = actionLabels[obj.action] || obj.action;
-            html += `<tr><td><code>${escapeHtml(obj.table)} / ${escapeHtml(obj.name || '')}</code></td>` +
-                `<td>${escapeHtml(obj.objectType || '')}</td>` +
-                `<td>${escapeHtml(obj.state || '')}</td>` +
-                `<td>${escapeHtml(label)}${obj.errorMessage ? `<br><span style="font-size: 11px; opacity: 0.75;">${escapeHtml(obj.errorMessage)}</span>` : ''}</td></tr>`;
-        }
-        html += `</tbody></table></div>`;
-        return html;
+    /** Trigger a refresh/recalculate for one object found by the on-demand readiness check. */
+    async function handleReadinessRefresh(table, action, state, btnEl) {
+        const refreshType = READINESS_ACTION_TO_REFRESH_TYPE[action];
+        if (!refreshType || activeRefreshId) return; // one refresh at a time, same rule as Recalculate
+        if (btnEl) { btnEl.disabled = true; btnEl.textContent = '⏳'; }
+        await triggerFabricRefresh({
+            refreshType,
+            tables: [{ table, refreshType, reasons: [`observed state: ${state}`] }],
+            isFullModel: false
+        });
+        selectedReadinessIndices = new Set();
+        renderRefreshPanel();
+    }
+
+    /** Trigger a refresh/recalculate for every selected object, or every refreshable object when nothing is selected. */
+    async function handleReadinessRefreshBulk() {
+        if (activeRefreshId) return;
+        const objects = (targetReadinessSnapshot && targetReadinessSnapshot.objectsRequiringAttention) || [];
+        const refreshableIndices = objects
+            .map((obj, i) => (READINESS_ACTION_TO_REFRESH_TYPE[obj.action] ? i : -1))
+            .filter(i => i !== -1);
+        const indices = selectedReadinessIndices.size > 0
+            ? refreshableIndices.filter(i => selectedReadinessIndices.has(i))
+            : refreshableIndices;
+        const refreshInfo = Pure.buildBulkRefreshInfo(indices.map(i => objects[i]));
+        if (!refreshInfo) return;
+
+        const btn = document.getElementById('btn-readiness-refresh-bulk');
+        if (btn) { btn.disabled = true; btn.textContent = '⏳ Refreshing…'; }
+        await triggerFabricRefresh(refreshInfo);
+        selectedReadinessIndices = new Set();
+        renderRefreshPanel();
     }
 
     // ===== Fabric Refresh (centralized) =====
@@ -1620,6 +1669,11 @@
     function openRefreshPanel() {
         refreshModal.classList.remove('hidden');
         renderRefreshPanel();
+        if (targetReadinessSnapshot || targetReadinessLoading) {
+            renderTargetReadinessPanel();
+        } else {
+            loadTargetReadiness();
+        }
     }
 
     async function handleManualCalculate() {

@@ -9,7 +9,7 @@
   <img src="https://img.shields.io/badge/Microsoft%20Fabric-REST%20API-7ddf7d" alt="Works with Microsoft Fabric over the REST API">
 </p>
 
-# Model Alchemist
+# Model Alchemist v5.1
 
 **See exactly what changed between two Power BI semantic models, then deploy only the parts you picked.**
 
@@ -63,6 +63,8 @@ Eleven change groups, each diffed at property level. Object identity is matched 
 ## Deploying safely
 
 The target is someone's production model. Six gates stand between clicking Deploy and a changed model, and a local deploy that fails half-way puts every file back.
+
+For a Fabric target, open the refresh modal and click **Check Target State** to inspect its current processing state at any time. Objects that need attention can be refreshed or recalculated individually, as a selection, or all together. The same readiness check runs after a successful Fabric deployment and remains separate from refresh recommendations inferred from the deployed changes.
 
 ![The Model Alchemist deployment safety model. Before any write: dependency validation blocks on hard errors, cascade and cardinality warnings appear in the preview, a Fabric drift check blocks if the live model changed since the comparison, the whole .SemanticModel folder is backed up, and a dry-run preview lists every file operation without writing. Then the write applies only the ticked changes, transactionally for a local target and via updateDefinition for a Fabric target, followed by an Enhanced Refresh scoped to the affected tables.](assets/diagram-deploy-safety.png)
 

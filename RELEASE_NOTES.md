@@ -1,5 +1,26 @@
 # Model Alchemist — Release Notes
 
+## v5.1.0
+
+### New Features
+
+- **On-demand target readiness checks** — Inspect the current processing state of a Fabric target from the refresh modal without running a deployment first.
+- **Actionable readiness results** — Refresh or recalculate individual objects, select several objects for a bulk action, or process every object that needs attention.
+
+### Improvements
+
+- **Post-deployment readiness** — Successful Fabric deployments now report the target model's processing state independently from refresh recommendations derived from the deployed diff.
+- **Unified refresh planning** — Deployment refresh hints and live readiness results are merged per table, with the strongest required processing action retained.
+- **Readiness diagnostics** — Optional `MA_READINESS_DEBUG` logging identifies unsupported Arrow compression types without affecting normal operation.
+
+### Architecture
+
+- `server.js` — Adds `GET /api/fabric/readiness`, exports readiness helpers for isolated tests, and starts the listener only when executed directly.
+- `public/js/pure.js` — Centralizes readiness rendering, selection, and refresh-plan merging as testable pure functions.
+- `test/frontend.test.js` and `test/server.test.js` — Cover readiness rendering, bulk actions, API wiring, error handling, and state isolation.
+
+---
+
 ## v5.0.0
 
 Correctness release. It closes 59 verified defects (11 critical, 23 high, 25 medium)
