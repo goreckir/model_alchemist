@@ -377,3 +377,22 @@ test('buildBulkRefreshInfo: objects with no auto-refresh action (repair/inspect)
     assert.strictEqual(Pure.buildBulkRefreshInfo([readinessObj({ action: 'repair' }), readinessObj({ action: 'inspect' })]), null);
     assert.strictEqual(Pure.buildBulkRefreshInfo([]), null);
 });
+
+// ── Deploy preview: validator errors read as code + message, never raw JSON ───
+test('describeDeployIssue reads the deployer error shape { operation, error: "[CODE] text" }', () => {
+    const issue = Pure.describeDeployIssue({
+        operation: { action: 'validate', identityKey: 'measure:sales.margin %' },
+        error: "[MISSING_FUNCTION] measure Sales.Margin % calls function 'MarginRatio', which is not in the target."
+    }, 'ERROR');
+    assert.deepStrictEqual(issue, {
+        code: 'MISSING_FUNCTION',
+        message: "measure Sales.Margin % calls function 'MarginRatio', which is not in the target."
+    });
+});
+
+test('describeDeployIssue keeps the validator shape { code, message } and falls back sensibly', () => {
+    assert.deepStrictEqual(Pure.describeDeployIssue({ code: 'COMPAT_LEVEL_AUTO_BUMP', message: 'raised' }, 'WARNING'),
+        { code: 'COMPAT_LEVEL_AUTO_BUMP', message: 'raised' });
+    assert.deepStrictEqual(Pure.describeDeployIssue({ error: 'disk full' }, 'ERROR'), { code: 'ERROR', message: 'disk full' });
+    assert.deepStrictEqual(Pure.describeDeployIssue('plain text', 'ERROR'), { code: 'ERROR', message: 'plain text' });
+});

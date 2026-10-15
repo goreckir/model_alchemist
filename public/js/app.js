@@ -1138,20 +1138,20 @@
 
             // Warnings from validator — show prominently ABOVE the action list
             if (Array.isArray(preview.warnings) && preview.warnings.length > 0) {
-                previewHtml += preview.warnings.map(w =>
+                previewHtml += preview.warnings.map(raw => Pure.describeDeployIssue(raw, 'WARNING')).map(w =>
                     `<div style="background: rgba(255,180,0,0.08); border-left: 3px solid #f0b400; border-radius: 4px; padding: 8px 10px; margin-bottom: 8px; font-size: 12px;">
-                        <span style="font-weight: 700; color: #f0b400;">⚠ ${escapeHtml(w.code || 'WARNING')}</span><br>
-                        <span style="color: var(--color-text);">${escapeHtml(w.message || JSON.stringify(w))}</span>
+                        <span style="font-weight: 700; color: #f0b400;">⚠ ${escapeHtml(w.code)}</span><br>
+                        <span style="color: var(--color-text);">${escapeHtml(w.message)}</span>
                     </div>`
                 ).join('');
             }
 
             // Errors from validator
             if (Array.isArray(preview.errors) && preview.errors.length > 0) {
-                previewHtml += preview.errors.map(e =>
+                previewHtml += preview.errors.map(raw => Pure.describeDeployIssue(raw, 'ERROR')).map(e =>
                     `<div style="background: rgba(229,83,75,0.08); border-left: 3px solid var(--color-removed-text); border-radius: 4px; padding: 8px 10px; margin-bottom: 8px; font-size: 12px;">
-                        <span style="font-weight: 700; color: var(--color-removed-text);">✗ ${escapeHtml(e.code || 'ERROR')}</span><br>
-                        <span style="color: var(--color-text);">${escapeHtml(e.message || JSON.stringify(e))}</span>
+                        <span style="font-weight: 700; color: var(--color-removed-text);">✗ ${escapeHtml(e.code)}</span><br>
+                        <span style="color: var(--color-text);">${escapeHtml(e.message)}</span>
                     </div>`
                 ).join('');
             }
