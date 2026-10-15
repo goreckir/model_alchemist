@@ -719,11 +719,23 @@ app.post('/api/resolve-model', (req, res) => {
 
 // ===== Fabric API Endpoints =====
 
+/**
+ * The account as the browser may see it. With MA_PRESENTATION=1 (or true) the
+ * signed-in identity is replaced by a neutral label, so the app can be shown on
+ * a shared screen or recorded without exposing the user, their organisation or
+ * tenant. Read per call, not at startup, so tests can toggle it.
+ */
+function accountForClient(account, env = process.env) {
+    if (!account) return null;
+    if (/^(1|true)$/i.test(env.MA_PRESENTATION || '')) return { name: 'Fabric account', presentation: true };
+    return account;
+}
+
 // API: Start interactive login (opens system browser to Microsoft login page)
 // No credentials pass through this application — authentication happens in the browser.
 app.post('/api/fabric/login', async (req, res) => {
     if (fabricAuth.isAuthenticated()) {
-        const account = fabricAuth.getAccountInfo();
+        const account = accountForClient(fabricAuth.getAccountInfo());
         return res.json({ status: 'connected', account });
     }
 
@@ -735,7 +747,7 @@ app.post('/api/fabric/login', async (req, res) => {
         // This opens a system browser window for Microsoft login
         // and waits for the user to complete authentication
         const token = await fabricAuth.loginInteractive();
-        const account = fabricAuth.getAccountInfo();
+        const account = accountForClient(fabricAuth.getAccountInfo());
         res.json({ status: 'connected', account });
     } catch (err) {
         console.error('Fabric login error:', err);
@@ -753,7 +765,7 @@ app.get('/api/fabric/status', async (req, res) => {
     // refresh now reports disconnected instead of "connected" forever.
     const token = await fabricAuth.getAccessToken();
     if (token) {
-        const account = fabricAuth.getAccountInfo();
+        const account = accountForClient(fabricAuth.getAccountInfo());
         return res.json({ status: 'connected', account });
     }
     const reason = fabricAuth.getLastAuthError();
@@ -1194,6 +1206,7 @@ function startServer(portArg, maxAttempts = 20) {
     const server = app.listen(port, () => {
         const url = `http://localhost:${port}`;
         console.log(`Model Alchemist v${APP_VERSION} running at ${url}`);
+        if (accountForClient({})?.presentation) console.log('Presentation Mode: the signed-in account is hidden in the UI.');
         const { exec } = require('child_process');
         exec(`start "" "${url}"`);
     });
@@ -1213,4 +1226,4 @@ if (require.main === module) {
     startServer(PORT);
 }
 
-module.exports = { app, deployToFabric, inspectTargetReadiness, detectTablesNeedingRefresh };
+module.exports = { app, deployToFabric, inspectTargetReadiness, detectTablesNeedingRefresh, accountForClient };

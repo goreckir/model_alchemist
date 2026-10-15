@@ -8,6 +8,7 @@
 
 ### New Features
 
+- **Presentation Mode**: `MA_PRESENTATION=1` replaces the signed-in identity with a neutral *Fabric account* label. The server never sends the username, display name or tenant ID to the browser, so the app can be shared on screen or recorded safely.
 - **Demo Kit** — `demo/` ships Apothecary, a synthetic PBIP model whose data is generated in Power Query, so it refreshes anywhere without credentials. It comes as a ready-made Dev/Prod pair that covers all eleven change groups. `node demo/scenarios.js` derives Prod and smaller single-purpose scenarios from Dev. `test/demo-kit.test.js` keeps the pair in sync and deploys it end to end.
 
 ---

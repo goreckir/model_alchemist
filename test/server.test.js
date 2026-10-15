@@ -248,3 +248,53 @@ test('detectTablesNeedingRefresh: a newly added table requires a full refresh', 
 test('detectTablesNeedingRefresh: no diffs at all means no refresh is needed', () => {
     assert.strictEqual(detectTablesNeedingRefresh([], null), null);
 });
+
+// ── Presentation Mode: the signed-in identity never reaches the browser ────────
+const { accountForClient } = require('../server');
+
+test('Presentation Mode off: the account is passed through unchanged', () => {
+    const account = { username: 'someone@contoso.example', name: 'Some One', tenantId: 'tenant-guid' };
+    assert.deepStrictEqual(accountForClient(account, {}), account);
+});
+
+test('Presentation Mode on: username, name and tenant are replaced by a neutral label', () => {
+    for (const value of ['1', 'true', 'TRUE']) {
+        const shown = accountForClient(
+            { username: 'someone@contoso.example', name: 'Some One', tenantId: 'tenant-guid' },
+            { MA_PRESENTATION: value }
+        );
+        assert.deepStrictEqual(shown, { name: 'Fabric account', presentation: true }, `MA_PRESENTATION=${value}`);
+    }
+});
+
+test('Presentation Mode: no account stays no account', () => {
+    assert.strictEqual(accountForClient(null, { MA_PRESENTATION: '1' }), null);
+});
+
+test('Presentation Mode: /api/fabric/status does not leak the identity', async () => {
+    const { app } = require('../server');
+    const originals = { getAccessToken: fabricAuth.getAccessToken, getAccountInfo: fabricAuth.getAccountInfo };
+    Object.assign(fabricAuth, {
+        getAccessToken: async () => 'fake-token',
+        getAccountInfo: () => ({ username: 'someone@contoso.example', name: 'Some One', tenantId: 'tenant-guid' })
+    });
+    const previous = process.env.MA_PRESENTATION;
+    process.env.MA_PRESENTATION = '1';
+    const server = app.listen(0);
+    try {
+        const { port } = server.address();
+        const body = await new Promise((resolve, reject) => {
+            http.get(`http://localhost:${port}/api/fabric/status`, res => {
+                let data = '';
+                res.on('data', chunk => { data += chunk; });
+                res.on('end', () => resolve(data));
+            }).on('error', reject);
+        });
+        assert.doesNotMatch(body, /someone|Some One|tenant-guid/);
+        assert.deepStrictEqual(JSON.parse(body), { status: 'connected', account: { name: 'Fabric account', presentation: true } });
+    } finally {
+        server.close();
+        if (previous === undefined) delete process.env.MA_PRESENTATION; else process.env.MA_PRESENTATION = previous;
+        Object.assign(fabricAuth, originals);
+    }
+});

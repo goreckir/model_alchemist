@@ -116,6 +116,14 @@ On Windows you can install Node with `winget install OpenJS.NodeJS.LTS`, then re
 
 The default OAuth client is the public Power BI Desktop client (`ea0616ba-638b-4df5-95b9-636659ae5121`), so no app registration is required.
 
+**Presentation Mode.** Start the app with `MA_PRESENTATION=1` to show *Fabric account* in place of your sign-in name, for screen sharing or recording. The server stops sending your username, display name and tenant ID to the browser. Workspace, model and folder names are still shown, so pick neutral ones before you present.
+
+```bash
+MA_PRESENTATION=1 npm start
+```
+
+On Windows Command Prompt use `set MA_PRESENTATION=1 && npm start`.
+
 ---
 
 ## Running from Power BI Desktop
