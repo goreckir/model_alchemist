@@ -1,0 +1,18 @@
+/// Sales and profitability without the budget.
+perspective 'Sales Overview'
+
+	perspectiveTable Sales
+		includeAll
+
+	perspectiveTable Product
+		includeAll
+
+	perspectiveTable Store
+		includeAll
+
+	perspectiveTable Date
+		includeAll
+
+	perspectiveTable 'Time Intelligence'
+		includeAll
+

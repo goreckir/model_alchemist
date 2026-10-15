@@ -1,0 +1,22 @@
+cultureInfo de-DE
+	translations
+		model Apothecary
+			table Product
+				caption: Produkt
+			table Store
+				caption: Filiale
+			table Date
+				caption: Datum
+			table Sales
+				caption: Verkauf
+				measure 'Sales Amount'
+					caption: Umsatz
+				measure Margin
+					caption: Marge
+				measure 'Margin %'
+					caption: Marge %
+			table Budget
+				caption: Budget
+				measure 'Budget Attainment %'
+					caption: Budgeterfüllung %
+

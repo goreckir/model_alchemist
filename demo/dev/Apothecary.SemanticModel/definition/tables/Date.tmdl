@@ -1,0 +1,119 @@
+/// Calendar from 2024-01-01 to 2026-12-31, one row per day. Marked as the model date table.
+table Date
+	lineageTag: 56e1a1d2-9831-400c-ae94-777870c894b2
+	dataCategory: Time
+
+	/// Calendar day.
+	column Date
+		dataType: dateTime
+		isUnique
+		isKey
+		formatString: yyyy-mm-dd
+		lineageTag: 8cd5c3f8-28e3-466c-bf26-717e5866a498
+		summarizeBy: none
+		sourceColumn: Date
+
+		annotation UnderlyingDateTimeDataType = Date
+
+	/// Calendar year.
+	column Year
+		dataType: int64
+		lineageTag: 648e522c-2033-45ce-a7f9-40b19a815915
+		summarizeBy: none
+		sourceColumn: Year
+
+	/// Calendar quarter, Q1 to Q4.
+	column Quarter
+		dataType: string
+		lineageTag: 16013aeb-b605-43b3-98dc-cd4cc35b67ae
+		sourceColumn: Quarter
+
+	column 'Month Number'
+		dataType: int64
+		isHidden
+		lineageTag: dc56f4c5-2c4e-48b5-9aaf-53d4cab3c9fe
+		summarizeBy: none
+		sourceColumn: Month Number
+
+	/// Short month name, sorted Jan to Dec.
+	column Month
+		dataType: string
+		lineageTag: ecbbcd5a-cceb-41e3-bdfd-50a3235b8d46
+		sourceColumn: Month
+		sortByColumn: 'Month Number'
+
+	column 'Year Month Number'
+		dataType: int64
+		isHidden
+		lineageTag: 73971f96-3150-4f83-ad6d-350c9cfb16f7
+		summarizeBy: none
+		sourceColumn: Year Month Number
+
+	/// Month and year, e.g. Mar 2025; sorted chronologically.
+	column 'Year Month'
+		dataType: string
+		lineageTag: 666ace82-aeb2-44ca-ad46-8df664567347
+		sourceColumn: Year Month
+		sortByColumn: 'Year Month Number'
+
+	column 'Day of Week Number'
+		dataType: int64
+		isHidden
+		lineageTag: cd525b4b-c603-4fd5-bf12-113a6e46fef3
+		summarizeBy: none
+		sourceColumn: Day of Week Number
+
+	/// Short weekday name, Monday first.
+	column 'Day of Week'
+		dataType: string
+		lineageTag: a0d61306-f892-4523-899d-ded7f1df8ad0
+		sourceColumn: Day of Week
+		sortByColumn: 'Day of Week Number'
+
+	/// Yes on Apothecary guild holidays (see the Holiday Calendar query).
+	column 'Is Holiday'
+		dataType: string
+		lineageTag: 4e44e384-d087-43a5-b402-8850819bb82b
+		sourceColumn: Is Holiday
+
+	/// Year > Quarter > Month > Date drill-down.
+	hierarchy Calendar
+		lineageTag: 90cca711-9355-4aa3-b2bd-6833c370d566
+
+		level Year
+			lineageTag: fcab1135-6297-4a19-9492-6641588cc040
+			column: Year
+
+		level Quarter
+			lineageTag: 140d52d4-cc33-4f54-a31f-6c94a1d2c728
+			column: Quarter
+
+		level Month
+			lineageTag: 69757ccd-3561-4498-bde1-1966ff6446ba
+			column: Month
+
+		level Date
+			lineageTag: ef1ac5a6-cd52-439b-a976-855e02afbe6f
+			column: Date
+
+	partition Date = m
+		mode: import
+		source =
+				let
+				    StartDate = #date(2024, 1, 1),
+				    EndDate = #date(2026, 12, 31),
+				    Holidays = List.Buffer(#"Holiday Calendar"),
+				    Dates = List.Dates(StartDate, Duration.Days(EndDate - StartDate) + 1, #duration(1, 0, 0, 0)),
+				    Base = Table.FromList(Dates, Splitter.SplitByNothing(), type table [Date = date]),
+				    Year = Table.AddColumn(Base, "Year", each Date.Year([Date]), Int64.Type),
+				    Quarter = Table.AddColumn(Year, "Quarter", each "Q" & Text.From(Date.QuarterOfYear([Date])), type text),
+				    MonthNumber = Table.AddColumn(Quarter, "Month Number", each Date.Month([Date]), Int64.Type),
+				    Month = Table.AddColumn(MonthNumber, "Month", each Date.ToText([Date], "MMM", "en-US"), type text),
+				    YearMonthNumber = Table.AddColumn(Month, "Year Month Number", each Date.Year([Date]) * 100 + Date.Month([Date]), Int64.Type),
+				    YearMonth = Table.AddColumn(YearMonthNumber, "Year Month", each Date.ToText([Date], "MMM yyyy", "en-US"), type text),
+				    DayOfWeekNumber = Table.AddColumn(YearMonth, "Day of Week Number", each Date.DayOfWeek([Date], Day.Monday) + 1, Int64.Type),
+				    DayOfWeek = Table.AddColumn(DayOfWeekNumber, "Day of Week", each Date.ToText([Date], "ddd", "en-US"), type text),
+				    IsHoliday = Table.AddColumn(DayOfWeek, "Is Holiday", each if List.Contains(Holidays, [Date]) then "Yes" else "No", type text)
+				in
+				    IsHoliday
+

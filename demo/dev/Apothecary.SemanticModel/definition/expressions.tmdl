@@ -1,0 +1,35 @@
+/// Number of Sales rows to generate. Lower it for a faster refresh.
+expression RowCount = 500000 meta [IsParameterQuery=true, Type="Number", IsParameterQueryRequired=true]
+	lineageTag: 0171b39d-0856-4874-b861-df881680d80e
+
+	annotation PBI_ResultType = Number
+
+/// Multiplier applied to every list price (1.00 = catalogue price).
+expression 'Price Index' = 1.05 meta [IsParameterQuery=true, Type="Number", IsParameterQueryRequired=true]
+	lineageTag: c9f8dc73-c15e-4789-ba39-9e16e1a94042
+
+	annotation PBI_ResultType = Number
+
+/// Deterministic pseudo-random number in [0,1) for row i and stream s. Same inputs always give the same value, so every refresh produces identical data.
+expression fnRandom =
+		(i as number, s as number) as number =>
+		    let
+		        x = Number.Sin(i * 12.9898 + s * 78.233) * 43758.5453
+		    in
+		        x - Number.RoundDown(x)
+	lineageTag: 215f36a6-535b-4c34-96ba-3f7192327a53
+
+/// Apothecary guild holidays: stores close, so these days get few sales.
+expression 'Holiday Calendar' =
+		let
+		    Years = {2024..2026},
+		    Days = List.Combine(
+		        List.Transform(
+		            Years,
+		            (y) => {#date(y, 1, 1), #date(y, 6, 21), #date(y, 10, 31), #date(y, 12, 21), #date(y, 12, 25)}
+		        )
+		    )
+		in
+		    Days
+	lineageTag: d8331729-d9c3-46dd-af82-e2a47ab73ae1
+

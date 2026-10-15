@@ -1,0 +1,20 @@
+relationship Sales_Date_Date_Date
+	fromColumn: Sales.Date
+	toColumn: Date.Date
+
+relationship 'Sales_Product Key_Product_Product Key'
+	fromColumn: Sales.'Product Key'
+	toColumn: Product.'Product Key'
+
+relationship 'Sales_Store Key_Store_Store Key'
+	fromColumn: Sales.'Store Key'
+	toColumn: Store.'Store Key'
+
+relationship Budget_Date_Date_Date
+	fromColumn: Budget.Date
+	toColumn: Date.Date
+
+relationship 'Budget_Store Key_Store_Store Key'
+	fromColumn: Budget.'Store Key'
+	toColumn: Store.'Store Key'
+

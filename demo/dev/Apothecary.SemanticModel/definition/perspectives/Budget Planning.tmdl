@@ -1,0 +1,15 @@
+/// Sales against budget by store and month.
+perspective 'Budget Planning'
+
+	perspectiveTable Budget
+		includeAll
+
+	perspectiveTable Store
+		includeAll
+
+	perspectiveTable Date
+		includeAll
+
+	perspectiveTable Sales
+		includeAll
+

@@ -1,0 +1,126 @@
+/// Sales lines: one row per product sold in a store on a day. Row count is set by the RowCount parameter.
+table Sales
+	lineageTag: a706731e-9da3-4016-84f1-c6923b1f2d8c
+
+	/// Revenue after discounts, at the Price Index in force at refresh.
+	measure 'Sales Amount' = SUM ( Sales[Net Amount] )
+		formatString: \$#,0;(\$#,0);\$#,0
+		displayFolder: Sales
+		lineageTag: f18ddea2-2c1e-49c6-8cd1-b8bb26a0c87e
+
+	/// Cost to brew or source the units sold.
+	measure 'Total Cost' = SUM ( Sales[Cost Amount] )
+		formatString: \$#,0;(\$#,0);\$#,0
+		displayFolder: Sales
+		lineageTag: 8d11f07c-168b-466b-83fe-0acd4ebf65bc
+
+	/// Units sold, counting each bottle or ingredient portion once.
+	measure 'Quantity Sold' = SUM ( Sales[Quantity] )
+		formatString: #,0
+		displayFolder: Sales
+		lineageTag: 60dbf999-8d74-482e-bc65-2ff7ceda5a1a
+
+	/// Number of sale lines; a proxy for footfall.
+	measure 'Sales Lines' = COUNTROWS ( Sales )
+		formatString: #,0
+		displayFolder: Sales
+		lineageTag: 77ed385d-f312-40f0-8e07-7d553208ee41
+
+	/// Revenue per unit after discounts. Falls when the 10% guild discount is used more often.
+	measure 'Average Selling Price' = DIVIDE ( [Sales Amount], [Quantity Sold] )
+		formatString: \$#,0.00;(\$#,0.00);\$#,0.00
+		displayFolder: Sales
+		lineageTag: d7534074-2047-4b07-9299-7d06d43a05ce
+
+	/// Revenue left after cost.
+	measure Margin = [Sales Amount] - [Total Cost]
+		formatString: \$#,0;(\$#,0);\$#,0
+		displayFolder: Profitability
+		lineageTag: 8d300660-b1f1-4921-a946-4630e7f8ca89
+
+	/// Margin as a share of revenue. Uses the MarginRatio function.
+	measure 'Margin %' = MarginRatio ( [Sales Amount], [Total Cost] )
+		formatString: 0.0%;-0.0%;0.0%
+		displayFolder: Profitability
+		lineageTag: b49c6928-8d96-46ef-b153-65a23e2cf993
+
+	column Date
+		dataType: dateTime
+		isHidden
+		formatString: yyyy-mm-dd
+		lineageTag: e60f61de-99a2-47fb-9895-2bda0d43b772
+		summarizeBy: none
+		sourceColumn: Date
+
+		annotation UnderlyingDateTimeDataType = Date
+
+	column 'Product Key'
+		dataType: int64
+		isHidden
+		lineageTag: 29fca847-0563-4dc8-9fed-694d86c37f98
+		summarizeBy: none
+		sourceColumn: Product Key
+
+	column 'Store Key'
+		dataType: int64
+		isHidden
+		lineageTag: 7b11e6a3-5922-444e-b316-76e469db1bb2
+		summarizeBy: none
+		sourceColumn: Store Key
+
+	column Quantity
+		dataType: int64
+		isHidden
+		lineageTag: c1b11fd1-4892-4263-be45-50e309d3483b
+		summarizeBy: sum
+		sourceColumn: Quantity
+
+	column 'Net Amount'
+		dataType: decimal
+		isHidden
+		lineageTag: 3c58eece-3c38-4d2f-87ff-3010a379dbfa
+		summarizeBy: sum
+		sourceColumn: Net Amount
+
+	column 'Cost Amount'
+		dataType: decimal
+		isHidden
+		lineageTag: 94de2e37-3a9f-4847-95a8-60907df46b36
+		summarizeBy: sum
+		sourceColumn: Cost Amount
+
+	partition Sales = m
+		mode: import
+		source =
+				let
+				    Catalogue = Table.Buffer(Table.Sort(Table.SelectColumns(Product, {"Product Key", "Unit Price", "Unit Cost"}), {"Product Key", Order.Ascending})),
+				    Prices = List.Buffer(Catalogue[Unit Price]),
+				    Costs = List.Buffer(Catalogue[Unit Cost]),
+				    ProductCount = List.Count(Prices),
+				    StoreCount = 24,
+				    StartDate = #date(2024, 1, 1),
+				    // Demand per month: +60% growth over three years, December peak and June trough (same curve as Budget)
+				    MonthWeights = List.Transform({0 .. 35}, (m) => (1 + 0.6 * (m + 0.5) / 36) * (1 + 0.15 * Number.Cos(2 * Number.PI * (Number.Mod(m, 12) - 11) / 12))),
+				    Total = List.Sum(MonthWeights),
+				    Cumulative = List.Buffer(List.Transform({0 .. 35}, (m) => List.Sum(List.FirstN(MonthWeights, m + 1)) / Total)),
+				    Rows = List.Transform(
+				        {0 .. RowCount - 1},
+				        (i) =>
+				            let
+				                m = List.Min({35, List.Count(List.Select(Cumulative, (c) => c < fnRandom(i, 1)))}),
+				                monthStart = Date.AddMonths(StartDate, m),
+				                d = Number.RoundDown(fnRandom(i, 6) * Date.DaysInMonth(monthStart)),
+				                p = Number.RoundDown(Number.Power(fnRandom(i, 2), 1.4) * ProductCount),
+				                s = Number.RoundDown(Number.Power(fnRandom(i, 3), 1.3) * StoreCount),
+				                q = 1 + Number.RoundDown(Number.Power(fnRandom(i, 4), 2) * 6),
+				                discount = if fnRandom(i, 5) < 0.2 then 0.1 else 0
+				            in
+				                {Date.AddDays(monthStart, d), p + 1, s + 1, q, Number.Round(q * Prices{p} * (1 - discount), 2), Number.Round(q * Costs{p}, 2)}
+				    ),
+				    Result = Table.FromRows(
+				        Rows,
+				        type table [Date = date, #"Product Key" = Int64.Type, #"Store Key" = Int64.Type, Quantity = Int64.Type, #"Net Amount" = Currency.Type, #"Cost Amount" = Currency.Type]
+				    )
+				in
+				    Result
+

@@ -1,0 +1,6 @@
+/// Share of revenue left after cost: (revenue - cost) / revenue. Returns BLANK when revenue is zero or blank.
+function MarginRatio =
+		(revenue : Scalar Numeric, cost : Scalar Numeric) =>
+		    DIVIDE(revenue - cost, revenue)
+	lineageTag: 095916ea-8c88-455b-93e5-e66fe425ad64
+

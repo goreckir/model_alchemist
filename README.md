@@ -56,6 +56,8 @@ Three steps. Nothing is written until the third one, and you choose what it writ
 
 Eleven change groups, each diffed at property level. Object identity is matched the way the Analysis Services engine does it, not the way the file happens to be written: names are compared case-insensitively, and the per-environment GUIDs that Power BI Desktop appends to partition names are normalised. A model compared against itself reports no differences.
 
+> **Known limitation: model-level annotations are not compared.** Annotations written at the top level of `model.tmdl` are currently ignored by both comparison and deployment. Power BI Desktop saves model annotations this way: the Auto date/time setting (`__PBI_TimeIntelligenceEnabled`) and custom annotations added by other tools, such as version stamps or Best Practice Analyzer settings. A difference in them is not reported, and the target keeps its own values. Check those settings by hand. Annotations on tables, columns, measures and other objects are compared as usual.
+
 ![The eleven change groups Model Alchemist compares, each listed with the TMDL properties it reads. Tables and Relationships, Measures, Calculation Groups, Hierarchies, Roles and Row-Level Security, Perspectives, Translations, Data Sources and Parameters, Named Expressions, Functions, and Model Properties. A twelfth panel lists what is deliberately never compared: lineageTag, sourceLineageTag and PBI_ annotations, which are per-environment identifiers and Power BI runtime state preserved in the target on every write.](assets/diagram-coverage.png)
 
 ---

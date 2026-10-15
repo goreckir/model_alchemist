@@ -1,5 +1,17 @@
 # Model Alchemist — Release Notes
 
+## Unreleased
+
+### Known Issues
+
+- **Model-level annotations are not compared or deployed.** `parser/model-loader.js` keeps only the `model` and `ref` objects from `model.tmdl`, so annotations written at the top level of the file are dropped. Power BI Desktop writes them there, for example `__PBI_TimeIntelligenceEnabled` and custom tool annotations. A difference in them is not reported, and the target keeps its own values. Documented in the README under "What it compares".
+
+### New Features
+
+- **Demo Kit** — `demo/` ships Apothecary, a synthetic PBIP model whose data is generated in Power Query, so it refreshes anywhere without credentials. It comes as a ready-made Dev/Prod pair that covers all eleven change groups. `node demo/scenarios.js` derives Prod and smaller single-purpose scenarios from Dev. `test/demo-kit.test.js` keeps the pair in sync and deploys it end to end.
+
+---
+
 ## v5.1.0
 
 ### New Features
