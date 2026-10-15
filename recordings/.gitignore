@@ -1,0 +1,3 @@
+node_modules/
+# Personal deny-list for the OCR privacy gate (names, company, tenant)
+privacy.local.json
