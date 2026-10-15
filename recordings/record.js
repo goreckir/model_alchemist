@@ -145,6 +145,8 @@ async function recordScene(browser, scene, { raw }) {
         return s;
     }) : SCENES;
 
+    // Scenes read out/scenarios/*, which demo/scenarios.js derives from the Demo Kit.
+    require('child_process').execFileSync(process.execPath, [path.join(ROOT, 'demo', 'scenarios.js')], { stdio: 'ignore' });
     const server = await startApp();
     const browser = await chromium.launch();
     const results = [];

@@ -35,13 +35,21 @@ async function openComparison(d, staged, caption) {
 }
 
 const group = (p, name) => p.locator('#group-list .group-item', { has: p.locator('.group-name', { hasText: new RegExp(`^${name}$`) }) });
+/** Expand a grouped set of changes (e.g. a table that requires refresh). */
+const groupHeader = (p, label) => p.locator('.diff-group-header', { has: p.locator('.diff-group-label', { hasText: label }) }).first();
 const row = (p, name) => p.locator('.diff-object', { has: p.locator(`.diff-object-name[title="${name}"]`) }).first();
 
-async function deploySelected(d) {
+async function openDeployPreview(d, holdMs = 1600) {
     const p = d.page;
     await d.click(p.locator('#btn-deploy'), { pauseAfter: 0 });
     await p.waitForSelector('#deploy-modal:not(.hidden)');
-    await d.wait(1600);
+    await p.waitForFunction(() => !/loading|planning/i.test(document.getElementById('deploy-preview').textContent || ''));
+    await d.wait(holdMs);
+}
+
+async function deploySelected(d) {
+    const p = d.page;
+    await openDeployPreview(d);
     await d.click(p.locator('#btn-confirm-deploy'), { pauseAfter: 0 });
     await p.waitForSelector('#result-modal:not(.hidden)', { timeout: 20000 });
     await d.wait(1600);
@@ -77,6 +85,89 @@ module.exports = [
 
             await d.caption('Everything else in the target stays exactly as it was');
             await d.click(group(p, 'All'), { pauseAfter: 1800 });
+
+            await d.caption('Model Alchemist · free and open source');
+            await d.wait(2200);
+            await d.caption('');
+            await d.wait(400);
+        }
+    },
+    {
+        name: 'object-diff',
+        headline: 'See the exact line<br>that changed.',
+        models: scenario('object-diff'),
+        async run(d, staged) {
+            const p = d.page;
+            await openComparison(d, staged, 'Same model, two branches');
+
+            await d.caption('Power Query: only the changed line is highlighted');
+            await d.click(groupHeader(p, 'Sales'), { pauseAfter: 500 });
+            await d.click(row(p, 'Sales.Sales').locator('.diff-object-header-left'), { pauseAfter: 2600 });
+
+            await d.caption('DAX: down to the token that changed');
+            await d.click(row(p, 'Sales.Average Selling Price').locator('.diff-object-header-left'), { pauseAfter: 2600 });
+
+            await d.caption('Everything identical is left out: no noise, no false alarms');
+            await d.wait(2200);
+
+            await d.caption('Model Alchemist · free and open source');
+            await d.wait(2200);
+            await d.caption('');
+            await d.wait(400);
+        }
+    },
+    {
+        name: 'selective-deploy',
+        headline: 'Deploy one measure.<br>Safely.',
+        models: defaultScenario,
+        async run(d, staged) {
+            const p = d.page;
+            await openComparison(d, staged, 'Dev has a new measure. Ship only that.');
+
+            await d.click(group(p, 'Measures'));
+            await d.caption('Tick the one measure you want');
+            await d.click(row(p, 'Sales.Margin %').locator('.diff-checkbox'), { pauseAfter: 700 });
+
+            await d.caption('It calls a function production does not have yet');
+            await openDeployPreview(d, 2800);
+            await d.click(p.locator('#btn-cancel-deploy'), { pauseAfter: 500 });
+
+            await d.caption('Add the function, and the plan is clean');
+            await d.click(group(p, 'Functions'));
+            await d.click(row(p, 'MarginRatio').locator('.diff-checkbox'), { pauseAfter: 700 });
+            await deploySelected(d);
+
+            await d.caption('Two objects deployed. Nothing else in production moved.');
+            await d.click(group(p, 'All'), { pauseAfter: 2000 });
+
+            await d.caption('Model Alchemist · free and open source');
+            await d.wait(2200);
+            await d.caption('');
+            await d.wait(400);
+        }
+    },
+    {
+        name: 'rls-preserved',
+        headline: 'Change the rule.<br>Keep the people.',
+        models: scenario('rls-preserved'),
+        async run(d, staged) {
+            const p = d.page;
+            await openComparison(d, staged, 'Production roles have real members');
+
+            await d.click(group(p, 'Roles & Row-Level Security'));
+            await d.caption('Dev widened the Regional Manager filter');
+            await d.click(row(p, 'Regional Manager → Store').locator('.diff-object-header-left'), { pauseAfter: 2200 });
+
+            await d.caption('The members exist only in production');
+            await d.hover(row(p, 'Regional Manager → manager.north@apothecary.example'), 700);
+            await d.wait(1400);
+
+            await d.caption('Deploy only the filter');
+            await d.click(row(p, 'Regional Manager → Store').locator('.diff-checkbox'), { pauseAfter: 600 });
+            await deploySelected(d);
+
+            await d.caption('Filter updated. Every member is still there.');
+            await d.wait(2400);
 
             await d.caption('Model Alchemist · free and open source');
             await d.wait(2200);
