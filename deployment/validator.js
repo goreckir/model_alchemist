@@ -10,11 +10,15 @@
  *  - Removing a table that is referenced by relationships not also being removed.
  *  - Removing a column referenced by any relationship not also being removed.
  *  - Adding a measure: best-effort scan of DAX for table/column refs (warning only).
+ *  - Adding/modifying DAX that calls a user-defined function, or M that reads a
+ *    named expression, which the target will not have (MISSING_FUNCTION /
+ *    MISSING_EXPRESSION errors).
  */
 
 const { extractAll } = require('../comparison/extractor');
 const { rootKey, childKey } = require('../comparison/keys');
 const { parseColumnRef, unquote } = require('../comparison/refs');
+const { findDaxFunctionCalls, findMReferences } = require('../comparison/expression-refs');
 
 // Minimum compatibility level required for specific TMDL features.
 const COMPAT_LEVEL_REQUIREMENTS = {
@@ -379,7 +383,73 @@ function validateDependencies(selectedDiffs, devModel, prodModel, allDiffs = [])
         }
     }
 
+    // 8. Added/modified objects that call a DAX user-defined function or read a
+    // Power Query named expression the target will not have. Both deployed
+    // cleanly before: the target then failed to evaluate (DAX) or to refresh (M).
+    // Only names the source defines are candidates, so built-ins never match.
+    {
+        const devNames = type => Object.values(devObjects)
+            .filter(o => o.objectType === type)
+            .map(o => o.objectName);
+        const functionNames = devNames('function');
+        const expressionNames = devNames('expression');
+        const missingAfter = (type, names) => names.filter(n => !afterKeys.has(rootKey(type, n)));
+
+        for (const d of selectedDiffs) {
+            if (d.type === 1) continue;
+            const obj = devObjects[d.identityKey];
+            if (!obj) continue;
+            const { dax, m } = expressionsOf(obj);
+            const label = `${d.objectType} ${d.displayName}`;
+
+            const fns = missingAfter('function', [...new Set(dax.flatMap(e => findDaxFunctionCalls(e, functionNames)))]);
+            if (fns.length > 0) {
+                errors.push({
+                    code: 'MISSING_FUNCTION',
+                    identityKey: d.identityKey,
+                    message: `${label} calls function ${fns.map(n => `'${n}'`).join(', ')}, which is not in the target and is not selected to be added.`
+                });
+            }
+
+            const exprs = missingAfter('expression', [...new Set(m.flatMap(e => findMReferences(e, expressionNames)))]
+                .filter(n => !(d.objectType === 'expression' && sameName(n, d.objectName))));
+            if (exprs.length > 0) {
+                errors.push({
+                    code: 'MISSING_EXPRESSION',
+                    identityKey: d.identityKey,
+                    message: `${label} references named expression ${exprs.map(n => `'${n}'`).join(', ')}, which is not in the target and is not selected to be added.`
+                });
+            }
+        }
+    }
+
     return { warnings, errors, cascadeRels };
+}
+
+/**
+ * The DAX and M expressions an extracted object carries.
+ * Partitions are DAX when calculated and M when `= m`; named expressions are M;
+ * every other object's `*expression` properties (measure and KPI expressions,
+ * calculated columns, calculation items, RLS filters, functions) are DAX.
+ */
+function expressionsOf(obj) {
+    const props = obj.properties || {};
+    if (obj.objectType === 'partition') {
+        const type = String(props.type || '').toLowerCase();
+        if (type === 'calculated') return { dax: [props.expression || ''], m: [] };
+        if (type === 'm') return { dax: [], m: [props.expression || ''] };
+        return { dax: [], m: [] };
+    }
+    if (obj.objectType === 'expression') {
+        return String(props.kind || 'm').toLowerCase() === 'm'
+            ? { dax: [], m: [props.expression || ''] }
+            : { dax: [], m: [] };
+    }
+    if (obj.objectType === 'dataSource') return { dax: [], m: [] };
+    const dax = Object.entries(props)
+        .filter(([key, value]) => /expression$/i.test(key) && typeof value === 'string' && value)
+        .map(([, value]) => value);
+    return { dax, m: [] };
 }
 
 /**
