@@ -112,12 +112,15 @@ const DATE = 'tables/Date.tmdl';
 const MODEL_TMDL = 'model.tmdl';
 const PL = 'cultures/pl-PL.tmdl';
 
-/** Fictional members only (.example is a reserved domain). They exist in Prod and must survive a deploy. */
+/**
+ * Fictional members only (.example is a reserved domain). They exist in Prod and must survive a deploy.
+ * Quoted: TOM reads an unquoted name with a dot as an object path, and Power BI cannot open the model.
+ */
 const prodRoleMembers = replace('roles/Regional Manager.tmdl',
     '\ttablePermission Store = Store[Region] IN { "Northern Reach", "Eastern Isles" }\n',
     '\ttablePermission Store = Store[Region] = "Northern Reach"\n' +
-    '\n\tmember manager.north@apothecary.example\n\t\tmemberType: user\n' +
-    '\n\tmember auditor@apothecary.example\n\t\tmemberType: user\n');
+    "\n\tmember 'manager.north@apothecary.example'\n\t\tmemberType: user\n" +
+    "\n\tmember 'auditor@apothecary.example'\n\t\tmemberType: user\n");
 
 /**
  * Prod is the older model. Each line below is one difference the Default
@@ -239,4 +242,4 @@ function main() {
 
 if (require.main === module) main();
 
-module.exports = { readModel, buildProd, apply, SCENARIOS, DEV_MODEL, PROD_MODEL };
+module.exports = { readModel, writeModel, buildProd, apply, PROD_PATCHES, SCENARIOS, DEV_MODEL, PROD_MODEL };

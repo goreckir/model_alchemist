@@ -4,10 +4,10 @@ role 'Regional Manager'
 
 	tablePermission Store = Store[Region] = "Northern Reach"
 
-	member manager.north@apothecary.example
+	member 'manager.north@apothecary.example'
 		memberType: user
 
-	member auditor@apothecary.example
+	member 'auditor@apothecary.example'
 		memberType: user
 
 	annotation PBI_Id = 223eb59607aa4af99defcd435aac1b76
