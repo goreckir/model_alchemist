@@ -344,4 +344,43 @@ module.exports = [
             await d.wait(400);
         }
     }
+    ,
+    {
+        name: 'cherry-pick',
+        headline: 'Cherry-pick for<br>semantic models.',
+        models: defaultScenario,
+        async run(d, staged) {
+            const p = d.page;
+            await openComparison(d, staged, 'Dev holds five pieces of work. Two are ready.');
+            await d.hover(group(p, 'Tables & Relationships'), 500);
+            await d.hover(group(p, 'Functions'), 700);
+            await d.wait(600);
+
+            await d.caption('Pick the margin measure and the function it calls');
+            await d.click(group(p, 'Measures'));
+            await d.click(row(p, 'Sales.Margin %').locator('.diff-checkbox'), { pauseAfter: 500 });
+            await d.click(group(p, 'Functions'));
+            await d.click(row(p, 'MarginRatio').locator('.diff-checkbox'), { pauseAfter: 700 });
+
+            await d.caption('Pick the holiday flag: column, query and partition ship as one unit');
+            await d.click(group(p, 'All'), { pauseAfter: 400 });
+            await d.click(groupHeader(p, 'Date'), { pauseAfter: 400 });
+            await d.click(groupCheckbox(p, 'Date'), { pauseAfter: 1600 });
+
+            await d.caption('Budget, pricing and security stay in Dev');
+            await d.hover(groupHeader(p, 'Budget'), 600);
+            await d.wait(1600);
+
+            await d.caption('Deploy exactly what you picked');
+            await deploySelected(d);
+
+            await d.caption('Two features shipped. Everything else waits for its turn.');
+            await d.click(group(p, 'All'), { pauseAfter: 2200 });
+
+            await d.caption('Model Alchemist · free and open source');
+            await d.wait(2200);
+            await d.caption('');
+            await d.wait(400);
+        }
+    }
 ];

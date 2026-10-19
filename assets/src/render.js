@@ -25,7 +25,9 @@ const TARGETS = [
     { file: 'diagram-safety.html',  out: 'diagram-deploy-safety.png',   width: 1400, height: 1130, scale: 2 },
     { file: 'diagram-sources.html', out: 'diagram-source-target.png',   width: 1400, height: 700, scale: 2 },
     // Opening card: first frames of every recording and the lead image for posts.
-    { file: 'title-card.html',      out: 'title-card.png',              width: 1600, height: 1000, scale: 2 }
+    { file: 'title-card.html',      out: 'title-card.png',              width: 1600, height: 1000, scale: 2 },
+    // Campaign opener ("Cherry-pick for semantic models"): lead image of post 01.
+    { file: 'cherry-pick-card.html', out: 'cherry-pick-card.png',       width: 1600, height: 1000, scale: 2 }
 ];
 
 // Optional arguments name the outputs to render (e.g. `diagram-coverage.png`),
