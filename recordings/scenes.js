@@ -56,6 +56,59 @@ async function deploySelected(d) {
     await d.click(p.locator('#btn-result-ok'));
 }
 
+
+/** Local Source, Fabric Target: type the path, switch Target to Fabric, verify access, compare. */
+async function openFabricComparison(d, staged, ctx, caption) {
+    const p = d.page;
+    await d.caption(caption);
+    await d.wait(500);
+    await d.type(p.locator('#dev-path'), staged.source);
+    await p.keyboard.press('Tab');
+    await d.click(p.locator('.source-tabs[data-target="prod"] .source-tab[data-source="fabric"]'), { pauseAfter: 300 });
+    await p.waitForSelector('#fabric-selects-prod:not(.hidden)', { timeout: 10000 });
+    await d.type(p.locator('#prod-conn-string'), ctx.fabric.connectionString(ctx.fabric.PROD_WS), { delay: 10 });
+    await d.click(p.locator('#btn-resolve-prod'), { pauseAfter: 500 });
+    await d.cut(() => p.waitForFunction(() => /✓/.test(document.getElementById('fabric-status-prod').textContent || ''), null, { timeout: 30000 }));
+    await d.wait(700);
+    await d.click(p.locator('#btn-compare'), { pauseAfter: 900 });
+    // Loading the model from Fabric takes seconds: show the spinner briefly, then cut.
+    await d.cut(() => p.waitForSelector('#results-panel:not(.hidden)', { timeout: 120000 }));
+    await d.wait(600);
+}
+
+/** Tick the checkbox of a grouped set of changes (e.g. the Price Index parameter group). */
+const groupCheckbox = (p, label) => groupHeader(p, label).locator('.diff-group-checkbox');
+
+/**
+ * Follow a running refresh in the Model Refresh panel and cut the wait until
+ * every tracked refresh (including the automatic post-refresh recalculate) is done.
+ */
+async function waitInRefreshPanel(d) {
+    const p = d.page;
+    if (await p.locator('#refresh-modal.hidden').count()) {
+        await d.click(p.locator('#btn-model-refresh'), { pauseAfter: 0 });
+        await p.waitForSelector('#refresh-modal:not(.hidden)');
+    }
+    await d.wait(2200);
+    await d.cut(async () => {
+        await p.waitForTimeout(8000); // let the post-refresh recalculate get queued
+        await p.waitForFunction(() => {
+            const text = document.getElementById('refresh-panel-content').innerText || '';
+            return /Completed/.test(text) && !/In Progress|Starting/i.test(text);
+        }, null, { timeout: 15 * 60 * 1000, polling: 2000 });
+    });
+    await d.wait(2000);
+}
+
+/** Deploy and leave the result dialog open (Fabric scenes continue in it). */
+async function deploySelectedKeepResult(d) {
+    const p = d.page;
+    await openDeployPreview(d);
+    await d.click(p.locator('#btn-confirm-deploy'), { pauseAfter: 1100 });
+    await d.cut(() => p.waitForSelector('#result-modal:not(.hidden)', { timeout: 120000 }));
+    await d.wait(1200);
+}
+
 module.exports = [
     {
         name: 'launch',
@@ -167,6 +220,122 @@ module.exports = [
             await deploySelected(d);
 
             await d.caption('Filter updated. Every member is still there.');
+            await d.wait(2400);
+
+            await d.caption('Model Alchemist · free and open source');
+            await d.wait(2200);
+            await d.caption('');
+            await d.wait(400);
+        }
+    }
+    ,
+    {
+        name: 'scoped-refresh',
+        fabric: true,
+        headline: 'Refresh only<br>what changed.',
+        models: defaultScenario,
+        async run(d, staged, ctx) {
+            const p = d.page;
+            await openFabricComparison(d, staged, ctx, 'Dev on disk, production in Fabric');
+
+            await d.caption('Dev raised every price by 5%');
+            await d.click(groupHeader(p, 'Price Index'), { pauseAfter: 400 });
+            await d.click(row(p, 'Price Index').locator('.diff-object-header-left'), { pauseAfter: 1800 });
+            await d.click(groupCheckbox(p, 'Price Index'), { pauseAfter: 600 });
+
+            await d.caption('Deploy just the parameter');
+            await deploySelectedKeepResult(d);
+
+            await d.caption('Only the two tables that read the price need a refresh');
+            await d.hover(p.locator('#refresh-offer table'), 600);
+            await d.wait(2200);
+
+            await d.caption('One click: a scoped refresh, status live from Fabric');
+            await d.click(p.locator('#btn-trigger-refresh'), { pauseAfter: 1400 });
+            await d.click(p.locator('#btn-result-ok'), { pauseAfter: 300 });
+            await waitInRefreshPanel(d);
+
+            await d.caption('Data reloaded for two tables only. The rest was just recalculated.');
+            await d.wait(2400);
+            await d.caption('Model Alchemist · free and open source');
+            await d.wait(2200);
+            await d.caption('');
+            await d.wait(400);
+        }
+    },
+    {
+        name: 'readiness',
+        fabric: true,
+        headline: 'Know what still<br>needs a refresh.',
+        models: defaultScenario,
+        async run(d, staged, ctx) {
+            const p = d.page;
+            await openFabricComparison(d, staged, ctx, 'Dev adds a holiday flag to the calendar');
+
+            await d.caption('The calendar and the query it reads ship as one unit');
+            await d.click(groupHeader(p, 'Date'), { pauseAfter: 400 });
+            await d.click(groupCheckbox(p, 'Date'), { pauseAfter: 1800 });
+            await d.caption('Deploy now, refresh later');
+            await deploySelectedKeepResult(d);
+            await d.click(p.locator('#btn-skip-refresh'), { pauseAfter: 400 });
+            await d.click(p.locator('#btn-result-ok'), { pauseAfter: 500 });
+
+            await d.caption('Later: is production actually ready?');
+            await d.click(p.locator('#btn-model-refresh'), { pauseAfter: 0 });
+            await p.waitForSelector('#refresh-modal:not(.hidden)');
+            await p.waitForFunction(() => /Date/.test(document.getElementById('target-readiness-panel').innerText || ''), null, { timeout: 60000 });
+            await d.wait(800);
+
+            await d.caption('Alchemist reads the processing state of every object');
+            await d.hover(p.locator('#target-readiness-panel'), 700);
+            await d.wait(2200);
+
+            await d.caption('Fix it from here');
+            await d.click(p.locator('.btn-readiness-refresh').first(), { pauseAfter: 600 });
+            await waitInRefreshPanel(d);
+
+            await d.caption('Check again: production is ready');
+            await d.click(p.locator('#btn-check-readiness'), { pauseAfter: 0 });
+            await p.waitForFunction(() => /no objects require/i.test(document.getElementById('target-readiness-panel').innerText || ''), null, { timeout: 60000 });
+            await d.wait(2400);
+            await d.caption('Model Alchemist · free and open source');
+            await d.wait(2200);
+            await d.caption('');
+            await d.wait(400);
+        }
+    },
+    {
+        name: 'fabric-drift',
+        fabric: true,
+        headline: "Never overwrite<br>a colleague's publish.",
+        models: defaultScenario,
+        async run(d, staged, ctx) {
+            const p = d.page;
+            await openFabricComparison(d, staged, ctx, 'You compare Dev with production');
+
+            await d.click(group(p, 'Measures'));
+            await d.click(row(p, 'Sales.Margin %').locator('.diff-checkbox'), { pauseAfter: 400 });
+            await d.click(group(p, 'Functions'));
+            await d.click(row(p, 'MarginRatio').locator('.diff-checkbox'), { pauseAfter: 600 });
+
+            await d.caption('Meanwhile, a colleague publishes to production');
+            await d.wait(2000);
+            await d.cut(() => ctx.fabric.publishBehindYourBack(ctx.port, staged.source, ['Product.Product Hierarchy']));
+
+            await d.caption('You deploy…');
+            await d.click(p.locator('#btn-deploy'), { pauseAfter: 0 });
+            await p.waitForSelector('#deploy-modal:not(.hidden)');
+            await d.wait(1200);
+            await d.click(p.locator('#btn-confirm-deploy'), { pauseAfter: 1100 });
+            await d.cut(() => p.waitForSelector('#result-modal:not(.hidden)', { timeout: 120000 }));
+
+            await d.caption('Production changed since you compared. Alchemist refuses.');
+            await d.wait(3200);
+            await d.click(p.locator('#btn-result-ok'), { pauseAfter: 400 });
+
+            await d.caption('Re-compare: their change is already in, yours is still waiting');
+            await d.click(p.locator('#btn-refresh'), { pauseAfter: 900 });
+            await d.cut(() => p.waitForSelector('#results-panel:not(.hidden)', { timeout: 120000 }));
             await d.wait(2400);
 
             await d.caption('Model Alchemist · free and open source');

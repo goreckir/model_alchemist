@@ -17,6 +17,7 @@ const { chromium } = require('playwright');
 const { startScreencast, installOverlay, director } = require('./lib/capture');
 const { renderMaster, renderGif, renderLinkedIn } = require('./lib/render');
 const privacy = require('./lib/privacy');
+const fabric = require('./lib/fabric');
 const SCENES = require('./scenes');
 
 const ROOT = path.join(__dirname, '..');
@@ -92,6 +93,12 @@ async function recordScene(browser, scene, { raw }) {
     fs.mkdirSync(outDir, { recursive: true });
 
     const staged = stageModels(scene.models());
+    if (scene.fabric) {
+        // Off camera: put Fabric Prod back to the Default Scenario Target, with fresh data.
+        console.log('  resetting Fabric Prod (off camera)…');
+        const r = await fabric.resetProd(PORT, path.join(ROOT, 'demo', 'prod', 'Apothecary.SemanticModel'));
+        console.log(`  reset: ${r.reset} difference(s) deployed, model refreshed`);
+    }
     const context = await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: SCALE });
     const page = await context.newPage();
     const problems = [];
@@ -106,7 +113,14 @@ async function recordScene(browser, scene, { raw }) {
     await page.mouse.move(VIEWPORT.width / 2, VIEWPORT.height / 2);
     const cast = await startScreencast(page, path.join(outDir, 'frames'),
         { width: VIEWPORT.width * SCALE, height: VIEWPORT.height * SCALE });
-    await scene.run(d, staged);
+    d.cast = cast;
+    try {
+        await scene.run(d, staged, { port: PORT, fabric });
+    } catch (err) {
+        // Kept for diagnosis only; out/ is git-ignored. Review it before sharing.
+        await page.screenshot({ path: path.join(outDir, 'error.png') }).catch(() => {});
+        throw err;
+    }
     const frames = await cast.stop();
     await context.close();
 
@@ -148,6 +162,7 @@ async function recordScene(browser, scene, { raw }) {
     // Scenes read out/scenarios/*, which demo/scenarios.js derives from the Demo Kit.
     require('child_process').execFileSync(process.execPath, [path.join(ROOT, 'demo', 'scenarios.js')], { stdio: 'ignore' });
     const server = await startApp();
+    if (selected.some(s => s.fabric)) await fabric.signIn(PORT);
     const browser = await chromium.launch();
     const results = [];
     try {

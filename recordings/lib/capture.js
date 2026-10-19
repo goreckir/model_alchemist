@@ -15,18 +15,24 @@ async function startScreencast(page, framesDir, { width, height }) {
     fs.mkdirSync(framesDir, { recursive: true });
     const client = await page.context().newCDPSession(page);
     const frames = [];
+    // Cuts: while paused, frames are dropped and the paused time is removed from
+    // the timeline, so a long wait (a Fabric refresh) becomes a jump cut.
+    let paused = false, pausedAt = 0, offset = 0;
     client.on('Page.screencastFrame', async ({ data, metadata, sessionId }) => {
+        await client.send('Page.screencastFrameAck', { sessionId }).catch(() => {});
+        if (paused) return;
         const file = path.join(framesDir, `${String(frames.length).padStart(6, '0')}.jpg`);
         fs.writeFileSync(file, Buffer.from(data, 'base64'));
-        frames.push({ file, t: metadata.timestamp });
-        await client.send('Page.screencastFrameAck', { sessionId }).catch(() => {});
+        frames.push({ file, t: metadata.timestamp - offset });
     });
     await client.send('Page.startScreencast', { format: 'jpeg', quality: 92, maxWidth: width, maxHeight: height, everyNthFrame: 1 });
     return {
+        pause() { if (!paused) { paused = true; pausedAt = Date.now() / 1000; } },
+        resume() { if (paused) { offset += Date.now() / 1000 - pausedAt; paused = false; } },
         async stop() {
             await client.send('Page.stopScreencast');
             // The last frame needs a duration too: hold it until "now".
-            frames.push({ file: null, t: Date.now() / 1000 });
+            frames.push({ file: null, t: Date.now() / 1000 - offset });
             fs.writeFileSync(path.join(framesDir, 'frames.json'), JSON.stringify(frames));
             return frames;
         }
@@ -100,7 +106,13 @@ function director(page) {
 
     return {
         page,
+        cast: null, // set by record.js once the screencast runs
         wait: ms => page.waitForTimeout(ms),
+        /** Run `fn` off the timeline: the wait it covers is cut from the video. */
+        async cut(fn) {
+            this.cast.pause();
+            try { return await fn(); } finally { await page.waitForTimeout(300); this.cast.resume(); }
+        },
         async caption(text, holdMs = 0) {
             await page.evaluate(t => {
                 const el = document.getElementById('ma-rec-caption');
