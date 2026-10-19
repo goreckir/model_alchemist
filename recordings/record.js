@@ -6,6 +6,7 @@
  *   node record.js                 every scene
  *   node record.js launch          one scene
  *   node record.js launch --raw    capture only, skip rendering and the privacy gate
+ *   node record.js --retitle       re-cut existing takes (opening card, GIF, LinkedIn) without recording
  *
  * Safety: the app runs in Presentation Mode, models are copied to a neutral path
  * (MA_DEMO_ROOT, default C:\ModelAlchemistDemo), every take passes an OCR privacy
@@ -15,7 +16,7 @@ const fs = require('fs');
 const path = require('path');
 const { chromium } = require('playwright');
 const { startScreencast, installOverlay, director } = require('./lib/capture');
-const { renderMaster, renderGif, renderLinkedIn } = require('./lib/render');
+const { renderMaster, addIntro, renderGif, renderLinkedIn } = require('./lib/render');
 const privacy = require('./lib/privacy');
 const fabric = require('./lib/fabric');
 const SCENES = require('./scenes');
@@ -26,6 +27,8 @@ const DEMO_ROOT = process.env.MA_DEMO_ROOT || 'C:\\ModelAlchemistDemo';
 const VIEWPORT = { width: 1600, height: 1000 };
 const SCALE = 1.5; // capture at 2400×1500, render down for crisp text
 const PORT = 3777;
+// Opening card cross-faded in front of every take; rendered by assets/src/render.js.
+const TITLE_CARD = path.join(ROOT, 'assets', 'title-card.png');
 
 // ── Models at a neutral path ─────────────────────────────────────────────────
 
@@ -138,13 +141,20 @@ async function recordScene(browser, scene, { raw }) {
     }
     if (!gate.localTermCount) console.warn('  note: recordings/privacy.local.json missing or empty; only generic patterns were checked');
 
-    const gif = renderGif(master, outDir, scene.name);
-    const framePng = path.join(outDir, 'linkedin-frame.png');
-    await renderLinkedInFrame(browser, scene, framePng);
-    const linkedin = renderLinkedIn(master, framePng, outDir, scene.name);
     fs.rmSync(path.join(outDir, 'frames'), { recursive: true, force: true });
     fs.rmSync(path.join(outDir, 'frames.txt'), { force: true });
+    return finishScene(browser, scene, outDir);
+}
 
+/** From a gated master: titled copy, GIF and LinkedIn cut. Also used by --retitle. */
+async function finishScene(browser, scene, outDir) {
+    const master = path.join(outDir, 'master.mp4');
+    if (!fs.existsSync(master)) throw new Error(`No master for ${scene.name}; record it first.`);
+    const titled = addIntro(master, TITLE_CARD, outDir, VIEWPORT);
+    const gif = renderGif(titled, outDir, scene.name);
+    const framePng = path.join(outDir, 'linkedin-frame.png');
+    await renderLinkedInFrame(browser, scene, framePng);
+    const linkedin = renderLinkedIn(titled, framePng, outDir, scene.name);
     console.log(`  gif ${(gif.size / 1048576).toFixed(2)} MB${gif.oversize ? ' (OVER BUDGET)' : ''} · ${path.relative(ROOT, linkedin)}`);
     return { scene: scene.name, gif, linkedin, master };
 }
@@ -152,12 +162,25 @@ async function recordScene(browser, scene, { raw }) {
 (async () => {
     const args = process.argv.slice(2);
     const raw = args.includes('--raw');
+    // Re-cut existing takes (new opening card, new GIF/LinkedIn settings) without re-recording.
+    const retitle = args.includes('--retitle');
     const names = args.filter(a => !a.startsWith('--'));
     const selected = names.length ? names.map(n => {
         const s = SCENES.find(x => x.name === n);
         if (!s) throw new Error(`Unknown scene "${n}". Known: ${SCENES.map(x => x.name).join(', ')}`);
         return s;
     }) : SCENES;
+
+    if (retitle) {
+        const browser = await chromium.launch();
+        try {
+            for (const scene of selected) {
+                console.log(`Re-cutting ${scene.name}…`);
+                await finishScene(browser, scene, path.join(OUT, scene.name));
+            }
+        } finally { await browser.close(); }
+        return;
+    }
 
     // Scenes read out/scenarios/*, which demo/scenarios.js derives from the Demo Kit.
     require('child_process').execFileSync(process.execPath, [path.join(ROOT, 'demo', 'scenarios.js')], { stdio: 'ignore' });

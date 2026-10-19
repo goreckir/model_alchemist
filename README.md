@@ -17,7 +17,7 @@ Model Alchemist is an open-source diff and deployment tool for Power BI semantic
 
 It exists because "publish" is all-or-nothing. When one measure needs to move from a development model to production, republishing carries every other unreviewed change with it, overwrites row-level security membership, and gives you no record of what actually shipped.
 
-![Model Alchemist in 30 seconds. Two versions of the same Power BI model are compared, 27 differences appear sorted into eleven change groups, a changed format string is highlighted, one measure and the function it calls are ticked, the deploy preview lists exactly those two objects, and after the deploy the target shows 25 remaining differences.](assets/recordings/launch.gif)
+![Model Alchemist in 30 seconds. An opening card contrasts republishing the model, 27 differences landing at once, with Model Alchemist deploying 2 objects and leaving 25 untouched. Then two versions of the same Power BI model are compared, 27 differences appear sorted into eleven change groups, a changed format string is highlighted, one measure and the function it calls are ticked, the deploy preview lists exactly those two objects, and after the deploy the target shows 25 remaining differences.](assets/recordings/launch.gif)
 
 **[Try it in 2 minutes](#try-it-in-2-minutes) on the bundled Demo Kit. No model of your own needed.**
 

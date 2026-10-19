@@ -1,6 +1,7 @@
 /**
  * Render a captured take into the three deliverables:
- *   master.mp4         1600×1000, 30 fps, the archival source
+ *   master.mp4         1600×1000, 30 fps, the raw take (privacy-gated)
+ *   titled.mp4         the take with the opening card cross-faded in front
  *   <name>.gif         1200 px wide for README / Reddit (ffmpeg palette)
  *   <name>-linkedin.mp4  1080×1350 portrait: title band, video, footer band
  */
@@ -51,6 +52,23 @@ function renderGif(master, outDir, name, { width = 1200, maxBytes = 5 * 1024 * 1
     return { ...last, oversize: true };
 }
 
+/**
+ * Prepend the opening card (assets/title-card.png) to a master: the card holds,
+ * then cross-fades into the take. The master itself stays the raw, privacy-gated
+ * take; GIF and LinkedIn cuts are made from the titled copy.
+ */
+function addIntro(master, cardPng, outDir, { width = 1600, height = 1000, hold = 2.5, fade = 0.5 } = {}) {
+    const out = path.join(outDir, 'titled.mp4');
+    run(tools.ffmpeg(), ['-y', '-loglevel', 'error',
+        '-loop', '1', '-t', String(hold + fade), '-i', cardPng, '-i', master,
+        '-filter_complex',
+        `[0:v]scale=${width}:${height}:flags=lanczos,fps=30,format=yuv420p,setsar=1[c];` +
+        `[1:v]fps=30,format=yuv420p,setsar=1[m];` +
+        `[c][m]xfade=transition=fade:duration=${fade}:offset=${hold},format=yuv420p`,
+        '-c:v', 'libx264', '-preset', 'slow', '-crf', '17', '-movflags', '+faststart', out]);
+    return out;
+}
+
 /** Portrait LinkedIn cut: pre-rendered 1080×1350 frame PNG with the video scaled into its middle. */
 function renderLinkedIn(master, framePng, outDir, name, { videoTop = 338 } = {}) {
     const out = path.join(outDir, `${name}-linkedin.mp4`);
@@ -60,4 +78,4 @@ function renderLinkedIn(master, framePng, outDir, name, { videoTop = 338 } = {})
     return out;
 }
 
-module.exports = { renderMaster, renderGif, renderLinkedIn };
+module.exports = { renderMaster, addIntro, renderGif, renderLinkedIn };
