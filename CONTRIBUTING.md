@@ -89,12 +89,14 @@ This needs Playwright's Chromium, which is a development-only tool and deliberat
 npm install --no-save playwright
 npx playwright install chromium
 
-node assets/src/render.js        # logo, banner, 4 diagrams
-node assets/src/screenshots.js   # 2 product screenshots
+node assets/src/render.js                       # logo, banner, 4 diagrams
+node assets/src/render.js diagram-coverage.png  # only the named output(s)
 ```
 
-Both scripts accept `PLAYWRIGHT_PATH` if Playwright is installed somewhere else.
+`render.js` accepts `PLAYWRIGHT_PATH` if Playwright is installed somewhere else.
+
+Product recordings (the GIFs in `assets/recordings/` and their MP4 cuts) are not made here. They are scripted against the Demo Kit by `recordings/record.js`, which has its own `package.json`, runs the app in Presentation Mode and passes every take through an OCR privacy gate. See the header of `recordings/record.js`.
 
 `assets/src/logo.svg` is the single source for the product mark. `render.js` emits it twice: `assets/logo.png` at 512px for docs, slides and anywhere the mark is needed on its own, and `public/favicon.png` at 128px, which the app serves as its browser-tab icon.
 
-Editing an image means editing its source (`assets/src/*.html`, `assets/src/logo.svg`, `assets/src/theme.css`) and re-running the script. Do not touch the PNGs directly. `screenshots.js` neutralises the backup-path field before capturing, so no local filesystem path from the machine that ran it ends up in a published image.
+Editing an image means editing its source (`assets/src/*.html`, `assets/src/logo.svg`, `assets/src/theme.css`) and re-running the script. Do not touch the PNGs directly.
