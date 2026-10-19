@@ -371,14 +371,14 @@ module.exports = [
             await d.click(groupHeader(p, 'Date'), { pauseAfter: 400 });
             await d.click(groupCheckbox(p, 'Date'), { pauseAfter: 1600 });
 
-            await d.caption('Budget, pricing and security stay in Dev');
+            await d.caption('Budget, price change and regional security stay in Dev');
             await d.hover(groupHeader(p, 'Budget'), 600);
             await d.wait(1600);
 
             await d.caption('Deploy exactly what you picked');
             await deploySelected(d);
 
-            await d.caption('Two features shipped. Everything else waits for its turn.');
+            await d.caption('5 objects deployed. 22 differences stay in Dev until they are ready.');
             await d.click(group(p, 'All'), { pauseAfter: 2200 });
 
             await d.caption('Model Alchemist · free and open source');
