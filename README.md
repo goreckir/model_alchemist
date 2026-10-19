@@ -17,6 +17,10 @@ Model Alchemist is an open-source diff and deployment tool for Power BI semantic
 
 It exists because "publish" is all-or-nothing. When one measure needs to move from a development model to production, republishing carries every other unreviewed change with it, overwrites row-level security membership, and gives you no record of what actually shipped.
 
+![Model Alchemist in 30 seconds. Two versions of the same Power BI model are compared, 27 differences appear sorted into eleven change groups, a changed format string is highlighted, one measure and the function it calls are ticked, the deploy preview lists exactly those two objects, and after the deploy the target shows 25 remaining differences.](assets/recordings/launch.gif)
+
+**[Try it in 2 minutes](#try-it-in-2-minutes) on the bundled Demo Kit. No model of your own needed.**
+
 ---
 
 ## What you get
@@ -34,13 +38,13 @@ It exists because "publish" is all-or-nothing. When one measure needs to move fr
 
 ## See it working
 
-Two models of the same report: a feature branch on the left, main on the right. Eight differences, grouped, with the changed fragment highlighted inside the M query and the RLS filter.
+Two branches of the same model, two differences. Only the changed line is highlighted, in Power Query and in DAX, and identical objects are left out.
 
-![The Model Alchemist comparison view. A sidebar lists 11 change groups with counts. The main panel shows a Sales group badged "requires refresh" containing a modified column and a modified partition, with the changed fragments highlighted in green and red inside the Power Query source. Below it, a modified relationship group, a model culture change, an RLS filter change, a removed measure and an added measure.](assets/screenshot-compare.png)
+![Model Alchemist highlighting changes. A Sales group marked requires refresh is expanded: in its Power Query partition one line differs, the discount rate 0.1 versus 0.15, highlighted in green and red. Below it the Average Selling Price measure is expanded and only the changed measure reference is highlighted.](assets/recordings/object-diff.gif)
 
-Before anything is written, the preview lists every planned file operation and every warning the validator raised, including anything a block-level write would ship beyond the properties you reviewed.
+Before anything is written, the preview lists every planned file operation and every problem the validator found. Here one measure is ticked on its own, but it calls a function production does not have yet, so the preview reports `MISSING_FUNCTION`. With the function ticked too, the plan is clean and exactly those two objects are deployed.
 
-![The Model Alchemist deploy preview. A modal shows 8 changes to deploy, split into 1 to add, 1 to remove and 6 to modify, the target path, a backup checkbox with a backup folder, two warnings, and a colour-coded list of planned file operations naming the TMDL file each one touches.](assets/screenshot-deploy-preview.png)
+![Model Alchemist blocking an incomplete deploy. One measure, Margin %, is ticked and the deploy preview shows a MISSING_FUNCTION error because it calls MarginRatio, which the target does not have. The preview is cancelled, MarginRatio is ticked as well, the clean preview lists both objects, and the deploy succeeds with the remaining differences untouched.](assets/recordings/selective-deploy.gif)
 
 ---
 
@@ -90,6 +94,27 @@ npm start
 The app opens at **http://localhost:3001**. Paste or browse to a `.SemanticModel` folder on each side, press **Compare Models**, then expand any row to see the changed fragment highlighted in place.
 
 If port 3001 is taken the server steps to the next free port and prints the URL it bound.
+
+### Try it in 2 minutes
+
+The repo ships **Apothecary**, a synthetic Power BI model of a fictional potion shop, in two versions:
+
+- `demo/dev`: the newer model (Source);
+- `demo/prod`: the older one (Target).
+
+They differ in every one of the eleven change groups. Every table is generated in Power Query, so both open and refresh in Power BI Desktop with no data source or credentials.
+
+1. Copy the Target so your deploys do not touch the repo:
+   ```bash
+   cp -r demo/prod/Apothecary.SemanticModel ../apothecary-prod
+   ```
+   In PowerShell: `Copy-Item -Recurse demo\prod\Apothecary.SemanticModel ..\apothecary-prod`.
+2. `npm start`, then use these paths:
+   - Source: `demo/dev/Apothecary.SemanticModel`
+   - Target: the copied `../apothecary-prod`
+3. Press **Compare Models**. Expand a group, tick a few objects and open **Deploy Selected** to see the plan.
+
+To try it against Fabric, open `demo/dev/Apothecary.pbip` and `demo/prod/Apothecary.pbip` in Power BI Desktop, refresh them, publish each to its own workspace, and use them as Fabric Source and Target. `node demo/scenarios.js` regenerates `demo/prod` and builds smaller single-purpose pairs in `out/scenarios/`.
 
 ### Requirements
 

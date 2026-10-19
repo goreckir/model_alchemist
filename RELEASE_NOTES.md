@@ -1,6 +1,8 @@
 # Model Alchemist — Release Notes
 
-## Unreleased
+## v5.2.0
+
+Campaign release. It adds a synthetic Demo Kit to try the tool without a model of your own, Presentation Mode for sharing the screen, and dependency checks that stop a selective deploy from leaving the target model invalid.
 
 ### Known Issues
 
