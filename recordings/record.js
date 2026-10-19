@@ -70,19 +70,23 @@ function startApp() {
 
 // ── LinkedIn frame (title band above the video, footer below) ────────────────
 
+// Square 1080×1080: all text in the band above the video, the 1080×675 video at the
+// bottom edge, so there is no empty footer band in the feed.
+const LINKEDIN = { size: 1080, videoTop: 1080 - 675 };
+
 async function renderLinkedInFrame(browser, scene, file) {
-    const page = await browser.newPage({ viewport: { width: 1080, height: 1350 } });
-    await page.setContent(`<!doctype html><html><body style="margin:0;width:1080px;height:1350px;
-        background:linear-gradient(180deg,#1b1029 0%,#120b1d 100%);font-family:'Segoe UI',system-ui,sans-serif;color:#fff;
-        display:flex;flex-direction:column;justify-content:space-between;">
-      <div style="height:338px;box-sizing:border-box;padding:64px 64px 0;">
-        <div style="font-size:24px;letter-spacing:.14em;text-transform:uppercase;color:#B78CFF;font-weight:600;">Model Alchemist</div>
-        <div style="margin-top:20px;font-size:52px;line-height:1.12;font-weight:700;">${scene.headline}</div>
-      </div>
-      <div style="height:337px;box-sizing:border-box;padding:0 64px 64px;display:flex;align-items:flex-end;
-        justify-content:space-between;font-size:26px;color:#d9ccf0;">
-        <span>${scene.footer || 'Diff and selective deploy for Power BI semantic models'}</span>
-        <span style="color:#B78CFF;font-weight:600;">Open source · MIT</span>
+    const { size, videoTop } = LINKEDIN;
+    const page = await browser.newPage({ viewport: { width: size, height: size } });
+    await page.setContent(`<!doctype html><html><body style="margin:0;width:${size}px;height:${size}px;
+        background:linear-gradient(180deg,#1b1029 0%,#120b1d 100%);font-family:'Segoe UI',system-ui,sans-serif;color:#fff;">
+      <div style="height:${videoTop}px;box-sizing:border-box;padding:52px 64px 34px;display:flex;flex-direction:column;">
+        <div style="display:flex;justify-content:space-between;align-items:baseline;font-size:22px;letter-spacing:.14em;
+          text-transform:uppercase;font-weight:600;">
+          <span style="color:#B78CFF;">Model Alchemist</span>
+          <span style="color:#9a8fc0;letter-spacing:.08em;">Open source · MIT</span>
+        </div>
+        <div style="margin-top:22px;font-size:54px;line-height:1.1;font-weight:700;">${scene.headline}</div>
+        <div style="margin-top:auto;font-size:24px;color:#d9ccf0;">${scene.footer || 'Diff and selective deploy for Power BI semantic models'}</div>
       </div></body></html>`);
     await page.screenshot({ path: file });
     await page.close();
@@ -154,7 +158,7 @@ async function finishScene(browser, scene, outDir) {
     const gif = renderGif(titled, outDir, scene.name);
     const framePng = path.join(outDir, 'linkedin-frame.png');
     await renderLinkedInFrame(browser, scene, framePng);
-    const linkedin = renderLinkedIn(titled, framePng, outDir, scene.name);
+    const linkedin = renderLinkedIn(titled, framePng, outDir, scene.name, { videoTop: LINKEDIN.videoTop });
     console.log(`  gif ${(gif.size / 1048576).toFixed(2)} MB${gif.oversize ? ' (OVER BUDGET)' : ''} · ${path.relative(ROOT, linkedin)}`);
     return { scene: scene.name, gif, linkedin, master };
 }
