@@ -155,7 +155,9 @@ async function recordScene(browser, scene, { raw }) {
 async function finishScene(browser, scene, outDir) {
     const master = path.join(outDir, 'master.mp4');
     if (!fs.existsSync(master)) throw new Error(`No master for ${scene.name}; record it first.`);
-    const titled = addIntro(master, TITLE_CARD, outDir, { ...VIEWPORT, outro: scene.outro || null });
+    // A scene may bring its own topic card (assets/<card>.png); otherwise the campaign card.
+    const card = scene.card ? path.join(ROOT, 'assets', scene.card) : TITLE_CARD;
+    const titled = addIntro(master, card, outDir, { ...VIEWPORT, outro: scene.outro || null });
     const gif = renderGif(titled, outDir, scene.name);
     let linkedin;
     if (scene.linkedinBand === false) {

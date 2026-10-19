@@ -61,16 +61,21 @@ function durationOf(file) {
 /**
  * Put the opening card (assets/title-card.png or cherry-pick-card.png) in front
  * of a master: the card holds, then cross-fades into the take. With `outro`, the
- * take's static tail is trimmed by `outro.trim` seconds and the card returns at
+ * take's static tail is trimmed by `outro.trim` seconds (optionally holding the last
+ * kept frame for `outro.freeze` seconds) and the card returns at
  * the end for `outro.hold` seconds. The master itself stays the raw,
  * privacy-gated take; GIF and LinkedIn cuts are made from the titled copy.
  */
 function addIntro(master, cardPng, outDir, { width = 1600, height = 1000, hold = 2.5, fade = 0.5, outro = null } = {}) {
     const out = path.join(outDir, 'titled.mp4');
     const card = `scale=${width}:${height}:flags=lanczos,fps=30,format=yuv420p,setsar=1`;
-    const take = durationOf(master) - (outro ? outro.trim : 0);
+    // outro.freeze holds the last kept frame (e.g. a result that lands late) before the card.
+    const freeze = outro && outro.freeze ? outro.freeze : 0;
+    const kept = durationOf(master) - (outro ? outro.trim : 0);
+    const take = kept + freeze;
     const inputs = ['-loop', '1', '-t', String(hold + fade), '-i', cardPng, '-i', master];
-    let graph = `[0:v]${card}[c];[1:v]trim=0:${take.toFixed(3)},setpts=PTS-STARTPTS,fps=30,format=yuv420p,setsar=1[m];` +
+    const hold_ = freeze ? `,tpad=stop_mode=clone:stop_duration=${freeze}` : '';
+    let graph = `[0:v]${card}[c];[1:v]trim=0:${kept.toFixed(3)},setpts=PTS-STARTPTS${hold_},fps=30,format=yuv420p,setsar=1[m];` +
         `[c][m]xfade=transition=fade:duration=${fade}:offset=${hold}`;
     if (outro) {
         inputs.push('-loop', '1', '-t', String(outro.hold + fade), '-i', cardPng);

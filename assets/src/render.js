@@ -27,7 +27,9 @@ const TARGETS = [
     // Opening card: first frames of every recording and the lead image for posts.
     { file: 'title-card.html',      out: 'title-card.png',              width: 1600, height: 1000, scale: 2 },
     // Campaign opener ("Cherry-pick for semantic models"): lead image of post 01.
-    { file: 'cherry-pick-card.html', out: 'cherry-pick-card.png',       width: 1600, height: 1000, scale: 2 }
+    { file: 'cherry-pick-card.html', out: 'cherry-pick-card.png',       width: 1600, height: 1000, scale: 2 },
+    // Topic cards: open and close single recordings (scene.card in recordings/scenes.js).
+    { file: 'fabric-drift-card.html', out: 'fabric-drift-card.png',     width: 1600, height: 1000, scale: 2 }
 ];
 
 // Optional arguments name the outputs to render (e.g. `diagram-coverage.png`),

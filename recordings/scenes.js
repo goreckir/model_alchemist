@@ -307,7 +307,12 @@ module.exports = [
     {
         name: 'fabric-drift',
         fabric: true,
-        headline: "Never overwrite<br>a colleague's publish.",
+        headline: 'No silent overwrites<br>in production.',
+        card: 'fabric-drift-card.png',
+        linkedinBand: false,
+        // Trim only the end caption; the re-compare result (24 differences) lands late,
+        // so hold its frame a little longer before the card returns.
+        outro: { trim: 2.9, freeze: 1.5, hold: 3 },
         models: defaultScenario,
         async run(d, staged, ctx) {
             const p = d.page;
