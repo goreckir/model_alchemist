@@ -17,7 +17,7 @@ Model Alchemist is an open-source diff and deployment tool for Power BI semantic
 
 It exists because "publish" is all-or-nothing. When one measure needs to move from a development model to production, republishing carries every other unreviewed change with it, overwrites row-level security membership, and gives you no record of what actually shipped.
 
-![Model Alchemist in 30 seconds. An opening card reads "Cherry-pick for semantic models": of five pieces of work in a Dev model with 27 differences, the two ready ones are picked, 5 objects are deployed and 22 differences stay in Dev. Then two versions of the same Power BI model are compared, 27 differences appear sorted into eleven change groups, a changed format string is highlighted, one measure and the function it calls are ticked, the deploy preview lists exactly those two objects, and after the deploy the target shows 25 remaining differences.](assets/recordings/launch.gif)
+![Model Alchemist in 30 seconds. An opening card contrasts republishing the model, 27 differences landing at once, with Model Alchemist deploying 2 objects and leaving 25 untouched. Then two versions of the same Power BI model are compared, 27 differences appear sorted into eleven change groups, a changed format string is highlighted, one measure and the function it calls are ticked, the deploy preview lists exactly those two objects, and after the deploy the target shows 25 remaining differences.](assets/recordings/launch.gif)
 
 **[Try it in 2 minutes](#try-it-in-2-minutes) on the bundled Demo Kit. No model of your own needed.**
 
@@ -40,11 +40,11 @@ It exists because "publish" is all-or-nothing. When one measure needs to move fr
 
 Two branches of the same model, two differences. Only the changed line is highlighted, in Power Query and in DAX, and identical objects are left out.
 
-![Model Alchemist highlighting changes. A Sales group marked requires refresh is expanded: in its Power Query partition one line differs, the discount rate 0.1 versus 0.15, highlighted in green and red. Below it the Average Selling Price measure is expanded and only the changed measure reference is highlighted.](assets/recordings/object-diff.gif)
+![Model Alchemist highlighting changes. An opening card reads "See the exact line that changed." Then a Sales group marked requires refresh is expanded: in its Power Query partition one line differs, the discount rate 0.1 versus 0.15, highlighted in green and red. Below it the Average Selling Price measure is expanded and only the changed measure reference is highlighted.](assets/recordings/object-diff.gif)
 
 Before anything is written, the preview lists every planned file operation and every problem the validator found. Here one measure is ticked on its own, but it calls a function production does not have yet, so the preview reports `MISSING_FUNCTION`. With the function ticked too, the plan is clean and exactly those two objects are deployed.
 
-![Model Alchemist blocking an incomplete deploy. One measure, Margin %, is ticked and the deploy preview shows a MISSING_FUNCTION error because it calls MarginRatio, which the target does not have. The preview is cancelled, MarginRatio is ticked as well, the clean preview lists both objects, and the deploy succeeds with the remaining differences untouched.](assets/recordings/selective-deploy.gif)
+![Model Alchemist blocking an incomplete deploy. An opening card reads "One measure. Never a broken model." Then one measure, Margin %, is ticked and the deploy preview shows a MISSING_FUNCTION error because it calls MarginRatio, which the target does not have. The preview is cancelled, MarginRatio is ticked as well, the clean preview lists both objects, and the deploy succeeds with the remaining differences untouched.](assets/recordings/selective-deploy.gif)
 
 ---
 

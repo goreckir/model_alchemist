@@ -112,6 +112,10 @@ async function deploySelectedKeepResult(d) {
 module.exports = [
     {
         name: 'launch',
+        card: 'title-card.png',
+        linkedinBand: false,
+        // Trim the static end caption and close on the card.
+        outro: { trim: 2.9, hold: 3 },
         headline: 'Ship one measure,<br>not the whole model.',
         models: defaultScenario,
         async run(d, staged) {
@@ -147,6 +151,10 @@ module.exports = [
     },
     {
         name: 'object-diff',
+        card: 'object-diff-card.png',
+        linkedinBand: false,
+        // Trim the static end caption and close on the card.
+        outro: { trim: 2.9, hold: 3 },
         headline: 'See the exact line<br>that changed.',
         models: scenario('object-diff'),
         async run(d, staged) {
@@ -171,6 +179,10 @@ module.exports = [
     },
     {
         name: 'selective-deploy',
+        card: 'selective-deploy-card.png',
+        linkedinBand: false,
+        // Trim the static end caption and close on the card.
+        outro: { trim: 2.9, hold: 3 },
         headline: 'Deploy one measure.<br>Safely.',
         models: defaultScenario,
         async run(d, staged) {
@@ -201,6 +213,10 @@ module.exports = [
     },
     {
         name: 'rls-preserved',
+        card: 'rls-preserved-card.png',
+        linkedinBand: false,
+        // Trim the static end caption and close on the card.
+        outro: { trim: 2.9, hold: 3 },
         headline: 'Change the rule.<br>Keep the people.',
         models: scenario('rls-preserved'),
         async run(d, staged) {
@@ -231,6 +247,10 @@ module.exports = [
     ,
     {
         name: 'scoped-refresh',
+        card: 'scoped-refresh-card.png',
+        linkedinBand: false,
+        // Trim the static end caption and close on the card.
+        outro: { trim: 2.9, hold: 3 },
         fabric: true,
         headline: 'Refresh only<br>what changed.',
         models: defaultScenario,
@@ -265,6 +285,10 @@ module.exports = [
     },
     {
         name: 'readiness',
+        card: 'readiness-card.png',
+        linkedinBand: false,
+        // Trim the static end caption and close on the card.
+        outro: { trim: 2.9, hold: 3 },
         fabric: true,
         headline: 'Know what still<br>needs a refresh.',
         models: defaultScenario,
