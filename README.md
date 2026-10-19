@@ -29,7 +29,7 @@ It exists because "publish" is all-or-nothing. When one measure needs to move fr
 |---|---|---|
 | **Know what changed** before anyone signs off | An object-level diff across 11 change groups, with the exact changed fragment highlighted inside DAX and Power Query | [See it working](#see-it-working) |
 | **Ship one fix**, not the whole model | Tick the objects to promote. Everything else in the target is left byte-for-byte as it was | [How it works](#how-it-works) |
-| **Not break production** | Six checks run before a single byte is written, and a failed write is rolled back | [Deploying safely](#deploying-safely) |
+| **Not break production** | Five checks run before a single byte is written, and a failed local write is rolled back | [Deploying safely](#deploying-safely) |
 | **Compare a branch, or two Fabric workspaces** | Source and target are chosen independently: local, Fabric, or a mix | [Source and target](#source-and-target) |
 | **Prove what shipped** | Per-object deploy log, plus CSV / Markdown / HTML export of any comparison | [Quickstart](#quickstart) |
 | **Refresh only what needs it** | After a Fabric deploy, an Enhanced Refresh scoped to the affected tables with per-table status | [Deploying safely](#deploying-safely) |
@@ -72,7 +72,20 @@ The target is someone's production model. Six gates stand between clicking Deplo
 
 For a Fabric target, open the refresh modal and click **Check Target State** to inspect its current processing state at any time. Objects that need attention can be refreshed or recalculated individually, as a selection, or all together. The same readiness check runs after a successful Fabric deployment and remains separate from refresh recommendations inferred from the deployed changes.
 
-![The Model Alchemist deployment safety model. Before any write: dependency validation blocks on hard errors, cascade and cardinality warnings appear in the preview, a Fabric drift check blocks if the live model changed since the comparison, the whole .SemanticModel folder is backed up, and a dry-run preview lists every file operation without writing. Then the write applies only the ticked changes, transactionally for a local target and via updateDefinition for a Fabric target, followed by an Enhanced Refresh scoped to the affected tables.](assets/diagram-deploy-safety.png)
+Before any write:
+
+1. **Dependency validation** (hard error, deploy blocked). A missing parent table or relationship endpoint, a calculation item without its calculation group, a duplicate relationship, a perspective or role pointing at something that will not exist, a measure calling a function or named expression the target lacks, a removed function or expression the target still uses, or a compatibility level that is too low.
+2. **Cascade and cardinality warnings** (shown in the preview). Relationships orphaned by a removed column or table are listed for automatic removal. A cardinality change states which key column must be unique before the engine will accept it.
+3. **Fabric drift check** (`PROD_CHANGED_SINCE_COMPARE`, deploy blocked). The live definition is re-fetched and compared with the snapshot your comparison was taken from. If someone else published in between, the changed files are named.
+4. **Backup.** The whole `.SemanticModel` folder is copied next to the model, not just `definition/`, so `definition.pbism`, the diagram layout and every sibling artifact come back too.
+5. **Preview.** A dry run lists every planned file operation, in order, with the file it touches. Anything a block-level write ships beyond the properties you reviewed is named explicitly.
+
+Then the write:
+
+6. **Apply.** Only the changes you ticked are written. Everything else in the target stays byte-for-byte as it was, including its `lineageTag`, `sourceLineageTag` and `PBI_*` annotations.
+   - **Local target:** transactional. Every file an operation can touch is snapshotted first, and on the first failure the run stops and all of them are restored.
+   - **Fabric target:** changes are applied on top of the definition just fetched and uploaded with `updateDefinition`. A slow upload is reported as unknown, never as failed.
+   - **Refresh, scoped** (Fabric): Enhanced Refresh of only the tables the deployed changes affect, each with the cheapest refresh that works (`dataOnly`, `calculate` or `automatic`), with per-table status.
 
 ---
 

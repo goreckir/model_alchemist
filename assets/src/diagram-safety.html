@@ -1,7 +1,7 @@
 <!doctype html><meta charset="utf-8">
 <link rel="stylesheet" href="theme.css">
 <style>
-  body { width: 1400px; height: 830px; overflow: hidden; }
+  body { width: 1400px; height: 1130px; overflow: hidden; }
   .lane { display: grid; grid-template-columns: 190px 1fr; gap: 22px; margin-top: 26px; }
   .laneName {
       font-family: var(--mono); font-size: 12.5px; letter-spacing: .1em; text-transform: uppercase;
@@ -42,7 +42,7 @@
     <div class="stack">
       <div class="gate c-block">
         <div class="n">1</div>
-        <div><h4>Dependency validation</h4><p>Missing parent table or relationship endpoint, a calculationItem without its calculation group, a duplicate relationship, a perspective or role pointing at something that will not exist, compatibility level too low.</p></div>
+        <div><h4>Dependency validation</h4><p>Missing parent table or relationship endpoint, a calculationItem without its calculation group, a duplicate relationship, a perspective or role pointing at something that will not exist, a measure calling a function or named expression the target lacks, a removed function or expression the target still uses, compatibility level too low.</p></div>
         <div class="outcome stop">hard error<br>→ deploy blocked</div>
       </div>
       <div class="gate c-guard">

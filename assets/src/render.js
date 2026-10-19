@@ -22,13 +22,19 @@ const TARGETS = [
     { file: "banner.html",          out: "banner.png",                  width: 1280, height: 360, scale: 2 },
     { file: 'diagram-flow.html',    out: 'diagram-how-it-works.png',    width: 1400, height: 760, scale: 2 },
     { file: 'diagram-coverage.html',out: 'diagram-coverage.png',        width: 1400, height: 1040, scale: 2 },
-    { file: 'diagram-safety.html',  out: 'diagram-deploy-safety.png',   width: 1400, height: 830, scale: 2 },
+    { file: 'diagram-safety.html',  out: 'diagram-deploy-safety.png',   width: 1400, height: 1130, scale: 2 },
     { file: 'diagram-sources.html', out: 'diagram-source-target.png',   width: 1400, height: 700, scale: 2 }
 ];
 
+// Optional arguments name the outputs to render (e.g. `diagram-coverage.png`),
+// so one edited source does not re-encode every other PNG.
+const only = process.argv.slice(2);
+const selected = only.length ? TARGETS.filter(t => only.includes(path.basename(t.out))) : TARGETS;
+
 (async () => {
+    if (!selected.length) throw new Error(`No target matches ${only.join(', ')}`);
     const browser = await chromium.launch();
-    for (const target of TARGETS) {
+    for (const target of selected) {
         const page = await browser.newPage({
             viewport: { width: target.width, height: target.height },
             deviceScaleFactor: target.scale || 2
