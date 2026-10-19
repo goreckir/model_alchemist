@@ -276,8 +276,22 @@
         return html;
     }
 
+    /**
+     * One deploy-preview issue as { code, message }. Validator warnings arrive as
+     * { code, message }; deployer errors as { operation, error: '[CODE] text' }.
+     * The preview used to print the latter as raw JSON under a generic label.
+     */
+    function describeDeployIssue(issue, fallbackCode) {
+        if (typeof issue === 'string') return { code: fallbackCode, message: issue };
+        if (issue && issue.code) return { code: issue.code, message: issue.message || '' };
+        const text = String((issue && (issue.error || issue.message)) || JSON.stringify(issue));
+        const m = text.match(/^\[([A-Z0-9_]+)\]\s*([\s\S]*)$/);
+        return m ? { code: m[1], message: m[2] } : { code: fallbackCode, message: text };
+    }
+
     return {
         filterDiffs,
+        describeDeployIssue,
         buildGroupIndex,
         partitionByGroup,
         hiddenMemberCount,

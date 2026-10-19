@@ -1,0 +1,11 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/gitIntegration/platformProperties/2.0.0/schema.json",
+  "metadata": {
+    "type": "Report",
+    "displayName": "Apothecary"
+  },
+  "config": {
+    "version": "2.0",
+    "logicalId": "c19949b7-d9a4-4075-8a7c-f49f5f22273d"
+  }
+}

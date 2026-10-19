@@ -1,0 +1,11 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/gitIntegration/platformProperties/2.0.0/schema.json",
+  "metadata": {
+    "type": "SemanticModel",
+    "displayName": "Apothecary"
+  },
+  "config": {
+    "version": "2.0",
+    "logicalId": "763db72e-77d3-40c1-a207-cc88735e2a4a"
+  }
+}

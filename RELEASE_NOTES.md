@@ -1,5 +1,27 @@
 # Model Alchemist — Release Notes
 
+## Unreleased
+
+### Known Issues
+
+- **Model-level annotations are not compared or deployed.** `parser/model-loader.js` keeps only the `model` and `ref` objects from `model.tmdl`, so annotations written at the top level of the file are dropped. Power BI Desktop writes them there, for example `__PBI_TimeIntelligenceEnabled` and custom tool annotations. A difference in them is not reported, and the target keeps its own values. Documented in the README under "What it compares".
+
+### New Features
+
+- **Presentation Mode**: `MA_PRESENTATION=1` replaces the signed-in identity with a neutral *Fabric account* label. The server never sends the username, display name or tenant ID to the browser, so the app can be shared on screen or recorded safely.
+- **Demo Kit** — `demo/` ships Apothecary, a synthetic PBIP model whose data is generated in Power Query, so it refreshes anywhere without credentials. It comes as a ready-made Dev/Prod pair that covers all eleven change groups. `node demo/scenarios.js` derives Prod and smaller single-purpose scenarios from Dev. `test/demo-kit.test.js` keeps the pair in sync and deploys it end to end.
+
+### Bug Fixes
+
+- **A deploy no longer leaves a measure calling a function the target does not have.** A measure, calculated column, calculated table, calculation item, RLS filter or function that calls a DAX user-defined function absent from the target, and not selected, now fails validation with `MISSING_FUNCTION`. Before, the deploy succeeded and the target model stopped evaluating. Example: Demo Kit `Sales.Margin %` selected without `MarginRatio`.
+- **A deploy no longer leaves a partition reading a query the target does not have.** A partition or named expression whose Power Query references a named expression or parameter (`#"Name"` or a bare name) absent from the target, and not selected, now fails validation with `MISSING_EXPRESSION`. Before, the deploy succeeded and the next refresh failed. Example: Demo Kit `Date` partition and `Is Holiday` column selected without `Holiday Calendar`.
+- **A deploy no longer removes a function or named expression the target still uses.** Removing a DAX user-defined function now fails validation with `DANGLING_FUNCTION_REF` when an object that stays in the target still calls it, and removing a named expression or parameter fails with `DANGLING_EXPRESSION_REF` when a kept partition or named expression still references it. An object stays unless it, its table or its role is removed too; when its source version is selected, that version is checked instead. Before, the deploy succeeded and left a model that no longer evaluated or refreshed. Example: Demo Kit `MarginRatio` removed while the target keeps `Sales.Margin %`, or `Holiday Calendar` removed while it keeps the `Date` partition.
+- All four checks skip names inside string literals and comments, DAX column references, and M field access, let steps and lambda parameters. Built-in DAX and M functions are never reported, because only functions and expressions the models define are candidates. Like `MISSING_PARENT_TABLE`, the errors block a real deploy and are listed in the deploy preview.
+- **The deploy preview shows validation errors as code and message.** Deployer errors (`{ operation, error: "[CODE] text" }`) used to appear as raw JSON under a generic *ERROR* label. They now read, for example, *✗ MISSING_FUNCTION: measure Sales.Margin % calls function 'MarginRatio'…* (`describeDeployIssue` in `public/js/pure.js`).
+- **Parameter refresh groups count tables that read another table's query.** The Demo Kit `Price Index` group said *affecting 1 table* (Product), although the Sales partition reads the Product query. It now lists both, and both get a refresh hint after the parameter is deployed.
+
+---
+
 ## v5.1.0
 
 ### New Features

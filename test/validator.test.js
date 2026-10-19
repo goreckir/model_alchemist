@@ -260,3 +260,397 @@ test('#29 adding a relationship on a pair the target already uses is blocked', (
     const result = validateDependencies(selected, devModel, prodModel, comparison.diffs);
     assert.ok(codes(result.errors).includes('DUPLICATE_RELATIONSHIP'));
 });
+
+// ── Missing DAX user-defined function ─────────────────────────────────────────
+// A measure (or any other DAX object) that calls a function the target does not
+// have was deployed without a word, and the target model no longer evaluated.
+const FN_MARGIN = 'function MarginRatio = (revenue, cost) => DIVIDE(revenue - cost, revenue)\n';
+const salesTable = (...extra) => [
+    'table Sales',
+    '',
+    '\tmeasure Revenue = 1',
+    '',
+    '\tmeasure Cost = 1',
+    '',
+    ...extra,
+    '\tcolumn Amount',
+    '\t\tdataType: double',
+    ''
+].join('\n');
+
+function udfModels(devExtra, prodExtra = [], devFiles = {}, prodFiles = {}) {
+    const dev = {
+        'database.tmdl': H.databaseTmdl(1702),
+        'model.tmdl': H.modelTmdl(['table Sales']),
+        'tables/Sales.tmdl': salesTable(...devExtra),
+        'functions.tmdl': FN_MARGIN,
+        ...devFiles
+    };
+    const prod = {
+        'database.tmdl': H.databaseTmdl(1702),
+        'model.tmdl': H.modelTmdl(['table Sales']),
+        'tables/Sales.tmdl': salesTable(...prodExtra),
+        ...prodFiles
+    };
+    return setup(dev, prod);
+}
+
+test('a measure calling a function missing from the target is blocked', () => {
+    const { devModel, prodModel, comparison } = udfModels(['\tmeasure Margin = MarginRatio ( [Revenue], [Cost] )', '']);
+    const selected = pick(comparison, d => d.objectType === 'measure' && d.displayName === 'Sales.Margin');
+    assert.strictEqual(selected.length, 1);
+
+    const result = validateDependencies(selected, devModel, prodModel, comparison.diffs);
+    const err = result.errors.find(e => e.code === 'MISSING_FUNCTION');
+    assert.ok(err, `expected MISSING_FUNCTION, got ${JSON.stringify(result.errors)}`);
+    assert.strictEqual(err.identityKey, selected[0].identityKey);
+    assert.match(err.message, /MarginRatio/);
+});
+
+test('selecting the function together with the measure passes', () => {
+    const { devModel, prodModel, comparison } = udfModels(['\tmeasure Margin = MarginRatio ( [Revenue], [Cost] )', '']);
+    const selected = pick(comparison, d =>
+        (d.objectType === 'measure' && d.displayName === 'Sales.Margin') || d.objectType === 'function');
+    assert.strictEqual(selected.length, 2);
+    const result = validateDependencies(selected, devModel, prodModel, comparison.diffs);
+    assert.ok(!codes(result.errors).includes('MISSING_FUNCTION'), JSON.stringify(result.errors));
+});
+
+test('a modified measure calling a function the target already has passes', () => {
+    const { devModel, prodModel, comparison } = udfModels(
+        ['\tmeasure Margin = MarginRatio ( [Revenue], [Cost] ) * 100', ''],
+        ['\tmeasure Margin = MarginRatio ( [Revenue], [Cost] )', ''],
+        {}, { 'functions.tmdl': FN_MARGIN }
+    );
+    const selected = pick(comparison, d => d.objectType === 'measure');
+    assert.strictEqual(selected.length, 1);
+    const result = validateDependencies(selected, devModel, prodModel, comparison.diffs);
+    assert.ok(!codes(result.errors).includes('MISSING_FUNCTION'), JSON.stringify(result.errors));
+});
+
+test('function names inside strings, comments and column refs are not calls', () => {
+    const { devModel, prodModel, comparison } = udfModels([
+        '\tmeasure Label = "MarginRatio(" & [MarginRatio (old)] // MarginRatio ( x )',
+        '',
+        "\tmeasure Other = COUNTROWS ( 'MarginRatio (t)' ) /* MarginRatio ( 1, 2 ) */ -- MarginRatio(3)",
+        ''
+    ]);
+    const selected = pick(comparison, d => d.objectType === 'measure');
+    assert.strictEqual(selected.length, 2);
+    const result = validateDependencies(selected, devModel, prodModel, comparison.diffs);
+    assert.ok(!codes(result.errors).includes('MISSING_FUNCTION'), JSON.stringify(result.errors));
+});
+
+test('built-in DAX functions are never reported as missing', () => {
+    const { devModel, prodModel, comparison } = udfModels([
+        '\tmeasure Safe = DIVIDE ( SUM ( Sales[Amount] ), CALCULATE ( COUNTROWS ( Sales ) ) )',
+        ''
+    ]);
+    const selected = pick(comparison, d => d.objectType === 'measure');
+    const result = validateDependencies(selected, devModel, prodModel, comparison.diffs);
+    assert.deepStrictEqual(result.errors, []);
+});
+
+test('calculated columns, RLS filters and functions calling a missing function are blocked', () => {
+    const { devModel, prodModel, comparison } = udfModels(
+        ['\tcolumn Ratio = MarginRatio ( 2, 1 )', '\t\tdataType: double', ''],
+        [],
+        {
+            'model.tmdl': H.modelTmdl(['table Sales', 'role Viewer']),
+            'functions.tmdl': FN_MARGIN + '\nfunction MarginPct = (r, c) => MarginRatio(r, c) * 100\n',
+            'roles/Viewer.tmdl': 'role Viewer\n\tmodelPermission: read\n\n\ttablePermission Sales = marginratio(1, 2) > 0\n'
+        },
+        {
+            'model.tmdl': H.modelTmdl(['table Sales', 'role Viewer']),
+            'roles/Viewer.tmdl': 'role Viewer\n\tmodelPermission: read\n'
+        }
+    );
+    const selected = pick(comparison, d =>
+        (d.objectType === 'column' && d.displayName === 'Sales.Ratio') ||
+        d.objectType === 'tablePermission' ||
+        (d.objectType === 'function' && d.displayName === 'MarginPct'));
+    assert.strictEqual(selected.length, 3, selected.map(d => d.identityKey).join(', '));
+
+    const result = validateDependencies(selected, devModel, prodModel, comparison.diffs);
+    const flagged = result.errors.filter(e => e.code === 'MISSING_FUNCTION').map(e => e.identityKey).sort();
+    assert.deepStrictEqual(flagged, selected.map(d => d.identityKey).sort());
+});
+
+test('a calculation item calling a missing function is blocked', () => {
+    const cg = item => `table CG\n\n\tcalculationGroup\n\n\t\tcalculationItem Current = ${item}\n`;
+    const { devModel, prodModel, comparison } = udfModels([], [],
+        { 'model.tmdl': H.modelTmdl(['table Sales', 'table CG']), 'tables/CG.tmdl': cg('MarginRatio(SELECTEDMEASURE(), 1)') },
+        { 'model.tmdl': H.modelTmdl(['table Sales', 'table CG']), 'tables/CG.tmdl': cg('SELECTEDMEASURE()') });
+    const selected = pick(comparison, d => d.objectType === 'calculationItem');
+    assert.strictEqual(selected.length, 1);
+    const result = validateDependencies(selected, devModel, prodModel, comparison.diffs);
+    assert.ok(codes(result.errors).includes('MISSING_FUNCTION'), JSON.stringify(result.errors));
+});
+
+test('a calculated table calling a missing function is blocked', () => {
+    const calc = source => `table Calc\n\n\tcolumn Value\n\t\tdataType: double\n\n\tpartition Calc = calculated\n\t\tmode: import\n\t\tsource = ${source}\n`;
+    const { devModel, prodModel, comparison } = udfModels([], [],
+        { 'model.tmdl': H.modelTmdl(['table Sales', 'table Calc']), 'tables/Calc.tmdl': calc('{ MarginRatio(2, 1) }') },
+        { 'model.tmdl': H.modelTmdl(['table Sales', 'table Calc']), 'tables/Calc.tmdl': calc('{ 1 }') });
+    const selected = pick(comparison, d => d.objectType === 'partition');
+    assert.strictEqual(selected.length, 1);
+    const result = validateDependencies(selected, devModel, prodModel, comparison.diffs);
+    assert.ok(codes(result.errors).includes('MISSING_FUNCTION'), JSON.stringify(result.errors));
+});
+
+// ── Missing named expression / parameter in Power Query ──────────────────────
+// A partition (or named expression) whose M references a query the target does
+// not have deployed cleanly, and the next refresh failed.
+const partitionTable = source => [
+    'table Dates',
+    '',
+    '\tcolumn Date',
+    '\t\tdataType: dateTime',
+    '\t\tsourceColumn: Date',
+    '',
+    '\tpartition Dates = m',
+    '\t\tmode: import',
+    '\t\tsource =',
+    ...source.map(line => `\t\t\t\t${line}`),
+    ''
+].join('\n');
+
+const HOLIDAYS = [
+    "expression 'Holiday Calendar' = {#date(2025, 1, 1)}",
+    '',
+    'expression fnDays = (n as number) => n',
+    '',
+    'expression RowCount = 10 meta [IsParameterQuery=true, Type="Number", IsParameterQueryRequired=true]',
+    ''
+].join('\n');
+
+function mModels(devSource, prodSource, devExpressions = HOLIDAYS, prodExpressions = null) {
+    const dev = {
+        'database.tmdl': H.databaseTmdl(),
+        'model.tmdl': H.modelTmdl(['table Dates']),
+        'tables/Dates.tmdl': partitionTable(devSource),
+        'expressions.tmdl': devExpressions
+    };
+    const prod = {
+        'database.tmdl': H.databaseTmdl(),
+        'model.tmdl': H.modelTmdl(['table Dates']),
+        'tables/Dates.tmdl': partitionTable(prodSource)
+    };
+    if (prodExpressions) prod['expressions.tmdl'] = prodExpressions;
+    return setup(dev, prod);
+}
+
+const BASE_M = ['let', '    Base = #table({"Date"}, {})', 'in', '    Base'];
+const HOLIDAY_M = ['let', '    Holidays = List.Buffer(#"Holiday Calendar"),', '    Base = #table({"Date"}, {})', 'in', '    Base'];
+
+test('a partition referencing a missing named expression is blocked', () => {
+    const { devModel, prodModel, comparison } = mModels(HOLIDAY_M, BASE_M);
+    const selected = pick(comparison, d => d.objectType === 'partition');
+    assert.strictEqual(selected.length, 1);
+
+    const result = validateDependencies(selected, devModel, prodModel, comparison.diffs);
+    const err = result.errors.find(e => e.code === 'MISSING_EXPRESSION');
+    assert.ok(err, `expected MISSING_EXPRESSION, got ${JSON.stringify(result.errors)}`);
+    assert.strictEqual(err.identityKey, selected[0].identityKey);
+    assert.match(err.message, /Holiday Calendar/);
+});
+
+test('selecting the named expression together with the partition passes', () => {
+    const { devModel, prodModel, comparison } = mModels(HOLIDAY_M, BASE_M);
+    const selected = pick(comparison, d =>
+        d.objectType === 'partition' || (d.objectType === 'expression' && d.displayName === 'Holiday Calendar'));
+    assert.strictEqual(selected.length, 2);
+    const result = validateDependencies(selected, devModel, prodModel, comparison.diffs);
+    assert.ok(!codes(result.errors).includes('MISSING_EXPRESSION'), JSON.stringify(result.errors));
+});
+
+test('bare identifiers referencing a missing function query or parameter are blocked', () => {
+    const { devModel, prodModel, comparison } = mModels(
+        ['let', '    Days = List.Transform({1..RowCount}, each fnDays(_)),', '    Base = #table({"Date"}, {})', 'in', '    Base'],
+        BASE_M
+    );
+    const selected = pick(comparison, d => d.objectType === 'partition');
+    const result = validateDependencies(selected, devModel, prodModel, comparison.diffs);
+    const err = result.errors.filter(e => e.code === 'MISSING_EXPRESSION');
+    assert.strictEqual(err.length, 1, JSON.stringify(result.errors));
+    assert.match(err[0].message, /fnDays/);
+    assert.match(err[0].message, /RowCount/);
+});
+
+test('names in strings, comments, field access and local steps are not references', () => {
+    const { devModel, prodModel, comparison } = mModels(
+        [
+            'let',
+            '    // uses #"Holiday Calendar" and fnDays later',
+            '    Label = "fnDays(#""Holiday Calendar"")",',
+            '    /* RowCount */',
+            '    RowCount = 3,',
+            '    Base = #table({"Date", "fnDays"}, {}),',
+            '    Pick = Table.SelectRows(Base, each [fnDays] <> RowCount),',
+            '    Typed = Table.TransformColumnTypes(Pick, type table [#"Holiday Calendar" = text]),',
+            '    Lambda = (fnDays) => fnDays + 1',
+            'in',
+            '    Typed'
+        ],
+        BASE_M
+    );
+    const selected = pick(comparison, d => d.objectType === 'partition');
+    const result = validateDependencies(selected, devModel, prodModel, comparison.diffs);
+    assert.ok(!codes(result.errors).includes('MISSING_EXPRESSION'), JSON.stringify(result.errors));
+});
+
+test('a named expression referencing a missing named expression is blocked', () => {
+    const exprs = HOLIDAYS + '\nexpression Holidays2 = List.Buffer(#"Holiday Calendar")\n';
+    const { devModel, prodModel, comparison } = mModels(BASE_M, BASE_M, exprs);
+    const selected = pick(comparison, d => d.objectType === 'expression' && d.displayName === 'Holidays2');
+    assert.strictEqual(selected.length, 1);
+    const result = validateDependencies(selected, devModel, prodModel, comparison.diffs);
+    assert.ok(codes(result.errors).includes('MISSING_EXPRESSION'), JSON.stringify(result.errors));
+});
+
+test('a referenced expression the target already has passes', () => {
+    const { devModel, prodModel, comparison } = mModels(HOLIDAY_M, BASE_M, HOLIDAYS, HOLIDAYS);
+    const selected = pick(comparison, d => d.objectType === 'partition');
+    assert.strictEqual(selected.length, 1);
+    const result = validateDependencies(selected, devModel, prodModel, comparison.diffs);
+    assert.deepStrictEqual(result.errors, []);
+});
+
+// ── Removing a function or named expression the target still uses ────────────
+// Removing MarginRatio (or Holiday Calendar) while the target keeps a measure
+// that calls it (or a partition that reads it) left an invalid model behind.
+const withoutUndefined = files => Object.fromEntries(Object.entries(files).filter(([, v]) => v !== undefined));
+
+function removedUdfModels(devExtra, prodExtra, devFiles = {}, prodFiles = {}) {
+    const dev = {
+        'database.tmdl': H.databaseTmdl(1702),
+        'model.tmdl': H.modelTmdl(['table Sales']),
+        'tables/Sales.tmdl': salesTable(...devExtra),
+        ...devFiles
+    };
+    const prod = {
+        'database.tmdl': H.databaseTmdl(1702),
+        'model.tmdl': H.modelTmdl(['table Sales']),
+        'tables/Sales.tmdl': salesTable(...prodExtra),
+        'functions.tmdl': FN_MARGIN,
+        ...prodFiles
+    };
+    return setup(withoutUndefined(dev), withoutUndefined(prod));
+}
+
+const MARGIN_UDF = ['\tmeasure Margin = MarginRatio ( [Revenue], [Cost] )', ''];
+const MARGIN_PLAIN = ['\tmeasure Margin = DIVIDE ( [Revenue] - [Cost], [Revenue] )', ''];
+const isFunctionRemove = d => d.objectType === 'function' && d.type === 1;
+
+test('removing a function a kept target measure still calls is blocked', () => {
+    const { devModel, prodModel, comparison } = removedUdfModels(MARGIN_PLAIN, MARGIN_UDF);
+    const selected = pick(comparison, isFunctionRemove);
+    assert.strictEqual(selected.length, 1);
+
+    const result = validateDependencies(selected, devModel, prodModel, comparison.diffs);
+    const err = result.errors.find(e => e.code === 'DANGLING_FUNCTION_REF');
+    assert.ok(err, `expected DANGLING_FUNCTION_REF, got ${JSON.stringify(result.errors)}`);
+    assert.strictEqual(err.identityKey, selected[0].identityKey);
+    assert.match(err.message, /MarginRatio/);
+    assert.match(err.message, /Sales\.Margin/);
+});
+
+test('removing a function together with the source version of its caller passes', () => {
+    const { devModel, prodModel, comparison } = removedUdfModels(MARGIN_PLAIN, MARGIN_UDF);
+    const selected = pick(comparison, d => isFunctionRemove(d) || d.objectType === 'measure');
+    assert.strictEqual(selected.length, 2);
+    const result = validateDependencies(selected, devModel, prodModel, comparison.diffs);
+    assert.ok(!codes(result.errors).includes('DANGLING_FUNCTION_REF'), JSON.stringify(result.errors));
+});
+
+test('removing a function together with its caller passes', () => {
+    const { devModel, prodModel, comparison } = removedUdfModels([], MARGIN_UDF);
+    const selected = pick(comparison, d => isFunctionRemove(d) || d.objectType === 'measure');
+    assert.strictEqual(selected.length, 2);
+    const result = validateDependencies(selected, devModel, prodModel, comparison.diffs);
+    assert.deepStrictEqual(result.errors, []);
+});
+
+test('a selected source version that still calls the removed function is blocked', () => {
+    const { devModel, prodModel, comparison } = removedUdfModels(
+        ['\tmeasure Margin = MarginRatio ( [Revenue], [Cost] ) * 100', ''], MARGIN_UDF);
+    const selected = pick(comparison, d => isFunctionRemove(d) || d.objectType === 'measure');
+    assert.strictEqual(selected.length, 2);
+    const result = validateDependencies(selected, devModel, prodModel, comparison.diffs);
+    const err = result.errors.find(e => e.code === 'DANGLING_FUNCTION_REF');
+    assert.ok(err, JSON.stringify(result.errors));
+    assert.match(err.message, /Sales\.Margin/);
+});
+
+test('removing a function together with the table that calls it passes', () => {
+    const other = 'table Other\n\n\tcolumn Id\n\t\tdataType: int64\n';
+    const { devModel, prodModel, comparison } = removedUdfModels([], MARGIN_UDF,
+        { 'model.tmdl': H.modelTmdl(['table Other']), 'tables/Sales.tmdl': undefined, 'tables/Other.tmdl': other },
+        { 'model.tmdl': H.modelTmdl(['table Sales', 'table Other']), 'tables/Other.tmdl': other });
+    const selected = pick(comparison, d => isFunctionRemove(d) || (d.objectType === 'table' && d.type === 1));
+    assert.strictEqual(selected.length, 2, selected.map(d => d.identityKey).join(', '));
+    const result = validateDependencies(selected, devModel, prodModel, comparison.diffs);
+    assert.ok(!codes(result.errors).includes('DANGLING_FUNCTION_REF'), JSON.stringify(result.errors));
+});
+
+test('kept RLS filters and functions calling a removed function are reported', () => {
+    const { devModel, prodModel, comparison } = removedUdfModels([], [],
+        {
+            'model.tmdl': H.modelTmdl(['table Sales', 'role Viewer']),
+            'functions.tmdl': 'function MarginPct = (r, c) => 1\n',
+            'roles/Viewer.tmdl': 'role Viewer\n\tmodelPermission: read\n\n\ttablePermission Sales = TRUE()\n'
+        },
+        {
+            'model.tmdl': H.modelTmdl(['table Sales', 'role Viewer']),
+            'functions.tmdl': FN_MARGIN + '\nfunction MarginPct = (r, c) => MarginRatio(r, c) * 100\n',
+            'roles/Viewer.tmdl': 'role Viewer\n\tmodelPermission: read\n\n\ttablePermission Sales = marginratio(1, 2) > 0\n'
+        });
+    const selected = pick(comparison, d => isFunctionRemove(d) && d.displayName === 'MarginRatio');
+    assert.strictEqual(selected.length, 1);
+    const result = validateDependencies(selected, devModel, prodModel, comparison.diffs);
+    const err = result.errors.find(e => e.code === 'DANGLING_FUNCTION_REF');
+    assert.ok(err, JSON.stringify(result.errors));
+    assert.match(err.message, /MarginPct/);
+    assert.match(err.message, /Viewer/);
+});
+
+const isExpressionRemove = d => d.objectType === 'expression' && d.type === 1;
+const NO_HOLIDAYS = HOLIDAYS.replace(/expression 'Holiday Calendar'[^\n]*\n\n/, '');
+
+test('removing a named expression a kept target partition still reads is blocked', () => {
+    const { devModel, prodModel, comparison } = mModels(BASE_M, HOLIDAY_M, NO_HOLIDAYS, HOLIDAYS);
+    const selected = pick(comparison, isExpressionRemove);
+    assert.strictEqual(selected.length, 1);
+
+    const result = validateDependencies(selected, devModel, prodModel, comparison.diffs);
+    const err = result.errors.find(e => e.code === 'DANGLING_EXPRESSION_REF');
+    assert.ok(err, `expected DANGLING_EXPRESSION_REF, got ${JSON.stringify(result.errors)}`);
+    assert.strictEqual(err.identityKey, selected[0].identityKey);
+    assert.match(err.message, /Holiday Calendar/);
+    assert.match(err.message, /Dates/);
+});
+
+test('removing a named expression together with the source version of its reader passes', () => {
+    const { devModel, prodModel, comparison } = mModels(BASE_M, HOLIDAY_M, NO_HOLIDAYS, HOLIDAYS);
+    const selected = pick(comparison, d => isExpressionRemove(d) || d.objectType === 'partition');
+    assert.strictEqual(selected.length, 2);
+    const result = validateDependencies(selected, devModel, prodModel, comparison.diffs);
+    assert.ok(!codes(result.errors).includes('DANGLING_EXPRESSION_REF'), JSON.stringify(result.errors));
+});
+
+test('removing a named expression read by another kept named expression is blocked', () => {
+    const prodExprs = HOLIDAYS + '\nexpression Holidays2 = List.Buffer(#"Holiday Calendar")\n';
+    const { devModel, prodModel, comparison } = mModels(BASE_M, BASE_M, NO_HOLIDAYS, prodExprs);
+
+    const only = pick(comparison, d => isExpressionRemove(d) && d.displayName === 'Holiday Calendar');
+    assert.strictEqual(only.length, 1);
+    const blocked = validateDependencies(only, devModel, prodModel, comparison.diffs);
+    const err = blocked.errors.find(e => e.code === 'DANGLING_EXPRESSION_REF');
+    assert.ok(err, JSON.stringify(blocked.errors));
+    assert.match(err.message, /Holidays2/);
+
+    const both = pick(comparison, isExpressionRemove);
+    assert.strictEqual(both.length, 2);
+    const passed = validateDependencies(both, devModel, prodModel, comparison.diffs);
+    assert.ok(!codes(passed.errors).includes('DANGLING_EXPRESSION_REF'), JSON.stringify(passed.errors));
+});

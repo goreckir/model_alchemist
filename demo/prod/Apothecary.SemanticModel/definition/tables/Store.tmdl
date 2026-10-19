@@ -1,0 +1,58 @@
+/// Apothecary shops. One row per store; stores are grouped into four regions.
+table Store
+	lineageTag: 3fd8407f-73c3-4c2b-9496-ceb06981de71
+
+	column 'Store Key'
+		dataType: int64
+		isHidden
+		isKey
+		lineageTag: 3d0f9213-32c1-4d37-a6ce-c4484acc1a11
+		summarizeBy: none
+		sourceColumn: Store Key
+
+	/// Shop name.
+	column Store
+		dataType: string
+		lineageTag: 564c3ffd-5889-4367-a6f2-35d543c58a70
+		sourceColumn: Store
+
+	/// Fictional town the shop is in.
+	column Town
+		dataType: string
+		lineageTag: 34d0555d-f9ee-4191-bce9-004e47ee78f2
+		sourceColumn: Town
+
+	/// Sales region; also the unit of row-level security for regional managers.
+	column Region
+		dataType: string
+		lineageTag: 817e6405-2cbd-43d1-ac20-e3020be81346
+		sourceColumn: Region
+
+	/// Region > Store drill-down.
+	hierarchy Geography
+		lineageTag: 627984bf-d5b4-449e-a440-966ea1f197de
+
+		level Region
+			lineageTag: a4695c08-8bc3-4a89-9a53-44e82b726c88
+			column: Region
+
+		level Store
+			lineageTag: d400eeda-f7bf-4311-927f-a4180e7fbf3d
+			column: Store
+
+	partition Store = m
+		mode: import
+		source =
+				let
+				    Regions = {
+				        {"Northern Reach", {"Frosthaven", "Pinecrest", "Wolfmere", "Icegate", "Highmoor", "Stonebrook"}},
+				        {"Southern Marches", {"Sunreach", "Saltmarsh", "Goldfield", "Redcliff", "Dunmere", "Amberlee"}},
+				        {"Eastern Isles", {"Pearlbay", "Coralton", "Mistport", "Seaglass", "Tidewell", "Gullrock"}},
+				        {"Western Wilds", {"Thornwood", "Elderglen", "Foxhollow", "Briarwick", "Oakshade", "Fernvale"}}
+				    },
+				    Flat = List.Combine(List.Transform(Regions, (r) => List.Transform(r{1}, (t) => {r{0}, t}))),
+				    Rows = List.Transform(List.Positions(Flat), (i) => {i + 1, Flat{i}{1} & " Apothecary", Flat{i}{1}, Flat{i}{0}}),
+				    Result = Table.FromRows(Rows, type table [#"Store Key" = Int64.Type, Store = text, Town = text, Region = text])
+				in
+				    Result
+

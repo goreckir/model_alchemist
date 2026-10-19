@@ -10,11 +10,18 @@
  *  - Removing a table that is referenced by relationships not also being removed.
  *  - Removing a column referenced by any relationship not also being removed.
  *  - Adding a measure: best-effort scan of DAX for table/column refs (warning only).
+ *  - Adding/modifying DAX that calls a user-defined function, or M that reads a
+ *    named expression, which the target will not have (MISSING_FUNCTION /
+ *    MISSING_EXPRESSION errors).
+ *  - Removing a function or named expression that an object staying in the
+ *    target still calls or reads (DANGLING_FUNCTION_REF /
+ *    DANGLING_EXPRESSION_REF errors).
  */
 
 const { extractAll } = require('../comparison/extractor');
 const { rootKey, childKey } = require('../comparison/keys');
 const { parseColumnRef, unquote } = require('../comparison/refs');
+const { findDaxFunctionCalls, findMReferences } = require('../comparison/expression-refs');
 
 // Minimum compatibility level required for specific TMDL features.
 const COMPAT_LEVEL_REQUIREMENTS = {
@@ -379,7 +386,132 @@ function validateDependencies(selectedDiffs, devModel, prodModel, allDiffs = [])
         }
     }
 
+    // 8. Added/modified objects that call a DAX user-defined function or read a
+    // Power Query named expression the target will not have. Both deployed
+    // cleanly before: the target then failed to evaluate (DAX) or to refresh (M).
+    // Only names the source defines are candidates, so built-ins never match.
+    {
+        const devNames = type => Object.values(devObjects)
+            .filter(o => o.objectType === type)
+            .map(o => o.objectName);
+        const functionNames = devNames('function');
+        const expressionNames = devNames('expression');
+        const missingAfter = (type, names) => names.filter(n => !afterKeys.has(rootKey(type, n)));
+
+        for (const d of selectedDiffs) {
+            if (d.type === 1) continue;
+            const obj = devObjects[d.identityKey];
+            if (!obj) continue;
+            const { dax, m } = expressionsOf(obj);
+            const label = `${d.objectType} ${d.displayName}`;
+
+            const fns = missingAfter('function', [...new Set(dax.flatMap(e => findDaxFunctionCalls(e, functionNames)))]);
+            if (fns.length > 0) {
+                errors.push({
+                    code: 'MISSING_FUNCTION',
+                    identityKey: d.identityKey,
+                    message: `${label} calls function ${fns.map(n => `'${n}'`).join(', ')}, which is not in the target and is not selected to be added.`
+                });
+            }
+
+            const exprs = missingAfter('expression', [...new Set(m.flatMap(e => findMReferences(e, expressionNames)))]
+                .filter(n => !(d.objectType === 'expression' && sameName(n, d.objectName))));
+            if (exprs.length > 0) {
+                errors.push({
+                    code: 'MISSING_EXPRESSION',
+                    identityKey: d.identityKey,
+                    message: `${label} references named expression ${exprs.map(n => `'${n}'`).join(', ')}, which is not in the target and is not selected to be added.`
+                });
+            }
+        }
+    }
+
+    // 9. Removing a function or named expression that an object staying in the
+    // target still calls or reads. The reverse of step 8: the deploy succeeded
+    // and left a model that no longer evaluated (DAX) or refreshed (M).
+    // An object stays unless it, its table or its role is removed; when a
+    // selected source version replaces it, that version is the one scanned.
+    {
+        const removedNames = type => selectedDiffs
+            .filter(d => d.type === 1 && d.objectType === type && prodObjects[d.identityKey])
+            .map(d => prodObjects[d.identityKey]);
+        const removedFunctions = removedNames('function');
+        const removedExpressions = removedNames('expression');
+
+        if (removedFunctions.length > 0 || removedExpressions.length > 0) {
+            const selectedByKey = new Map(selectedDiffs.map(d => [d.identityKey, d]));
+            const dangling = new Map(); // removed identityKey -> holder labels
+            const note = (removed, label) => {
+                if (!dangling.has(removed.identityKey)) dangling.set(removed.identityKey, new Set());
+                dangling.get(removed.identityKey).add(label);
+            };
+
+            for (const prodObj of Object.values(prodObjects)) {
+                if (removedKeys.has(prodObj.identityKey)) continue;
+                if (prodObj.parentTable && removedKeys.has(rootKey('table', prodObj.parentTable))) continue;
+                if (prodObj.parentRole && removedKeys.has(rootKey('role', prodObj.parentRole))) continue;
+
+                const replacing = selectedByKey.get(prodObj.identityKey);
+                const obj = replacing && replacing.type === 2 && devObjects[prodObj.identityKey]
+                    ? devObjects[prodObj.identityKey]
+                    : prodObj;
+                const { dax, m } = expressionsOf(obj);
+                const label = prodObj.objectType === 'tablePermission'
+                    ? `role '${prodObj.parentRole}' (tablePermission ${prodObj.objectName})`
+                    : `${prodObj.objectType} '${prodObj.displayName}'`;
+
+                const called = new Set(dax.flatMap(e => findDaxFunctionCalls(e, removedFunctions.map(f => f.objectName))));
+                for (const fn of removedFunctions) {
+                    if (called.has(fn.objectName)) note(fn, label);
+                }
+                const read = new Set(m.flatMap(e => findMReferences(e, removedExpressions.map(x => x.objectName))));
+                for (const expr of removedExpressions) {
+                    if (read.has(expr.objectName)) note(expr, label);
+                }
+            }
+
+            for (const removed of [...removedFunctions, ...removedExpressions]) {
+                const holders = dangling.get(removed.identityKey);
+                if (!holders) continue;
+                const isFunction = removed.objectType === 'function';
+                errors.push({
+                    code: isFunction ? 'DANGLING_FUNCTION_REF' : 'DANGLING_EXPRESSION_REF',
+                    identityKey: removed.identityKey,
+                    message: `Removing ${isFunction ? 'function' : 'named expression'} '${removed.objectName}' would leave ` +
+                        `${isFunction ? 'calls to it' : 'references to it'} in: ${[...holders].join(', ')}. ` +
+                        `The written model would be invalid. Select those objects for deployment too (if their source versions no longer use it), or remove them as well.`
+                });
+            }
+        }
+    }
+
     return { warnings, errors, cascadeRels };
+}
+
+/**
+ * The DAX and M expressions an extracted object carries.
+ * Partitions are DAX when calculated and M when `= m`; named expressions are M;
+ * every other object's `*expression` properties (measure and KPI expressions,
+ * calculated columns, calculation items, RLS filters, functions) are DAX.
+ */
+function expressionsOf(obj) {
+    const props = obj.properties || {};
+    if (obj.objectType === 'partition') {
+        const type = String(props.type || '').toLowerCase();
+        if (type === 'calculated') return { dax: [props.expression || ''], m: [] };
+        if (type === 'm') return { dax: [], m: [props.expression || ''] };
+        return { dax: [], m: [] };
+    }
+    if (obj.objectType === 'expression') {
+        return String(props.kind || 'm').toLowerCase() === 'm'
+            ? { dax: [], m: [props.expression || ''] }
+            : { dax: [], m: [] };
+    }
+    if (obj.objectType === 'dataSource') return { dax: [], m: [] };
+    const dax = Object.entries(props)
+        .filter(([key, value]) => /expression$/i.test(key) && typeof value === 'string' && value)
+        .map(([, value]) => value);
+    return { dax, m: [] };
 }
 
 /**

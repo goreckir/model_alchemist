@@ -1,0 +1,79 @@
+/// Monthly sales budget per store. Date is the first day of the budget month.
+table Budget
+	lineageTag: 1230b772-ec93-4d2d-a985-a066a6b9cd9e
+
+	/// Planned revenue. Budget is monthly, so it is meaningful at month level and above.
+	measure Budget = SUM ( Budget[Budget Amount] )
+		formatString: \$#,0;(\$#,0);\$#,0
+		displayFolder: Budget
+		lineageTag: 0d763c9a-1ac0-4270-8183-2922d1d7f51d
+
+	/// Revenue above (positive) or below (negative) budget.
+	measure 'Budget Variance' = [Sales Amount] - [Budget]
+		formatString: \$#,0;(\$#,0);\$#,0
+		displayFolder: Budget
+		lineageTag: abe145a0-a623-4a81-aebd-147401c16cd9
+
+	/// Revenue as a share of budget; 100% means on plan.
+	measure 'Budget Attainment %' = DIVIDE ( [Sales Amount], [Budget] )
+		formatString: 0.0%;-0.0%;0.0%
+		displayFolder: Budget
+		lineageTag: 51844aa7-4b8d-4a1d-9b8e-40194784759d
+
+	column Date
+		dataType: dateTime
+		isHidden
+		formatString: yyyy-mm-dd
+		lineageTag: fc6cc0f9-18d2-46c4-9b68-098e5dbda44a
+		summarizeBy: none
+		sourceColumn: Date
+
+		annotation UnderlyingDateTimeDataType = Date
+
+	column 'Store Key'
+		dataType: int64
+		isHidden
+		lineageTag: 8e97a686-e1b0-477b-96d4-4261e8bd58fc
+		summarizeBy: none
+		sourceColumn: Store Key
+
+	column 'Budget Amount'
+		dataType: decimal
+		isHidden
+		lineageTag: fd35a312-f79a-4fa3-8eb4-d3a3715d0f5f
+		summarizeBy: sum
+		sourceColumn: Budget Amount
+
+	partition Budget = m
+		mode: import
+		source =
+				let
+				    StartDate = #date(2024, 1, 1),
+				    // Same demand curve as Sales, so the plan has the same trend and seasonality
+				    MonthWeights = List.Transform({0 .. 35}, (m) => (1 + 0.6 * (m + 0.5) / 36) * (1 + 0.15 * Number.Cos(2 * Number.PI * (Number.Mod(m, 12) - 11) / 12))),
+				    Total = List.Sum(MonthWeights),
+				    // Planned average value of one sale line; close to actual, so stores land around plan
+				    PlannedLineValue = 126,
+				    // Expected share of sales for store s, matching how Sales assigns stores
+				    StoreShare = (s as number) as number => Number.Power(s / 24, 1 / 1.3) - Number.Power((s - 1) / 24, 1 / 1.3),
+				    // Planning error: whole months and single stores are over- or under-planned
+				    MonthError = (m as number) as number => 0.92 + fnRandom(m, 23) * 0.14,
+				    StoreError = (m as number, s as number) as number => 0.94 + fnRandom(m * 24 + s, 22) * 0.12,
+				    Rows = List.Combine(
+				        List.Transform(
+				            {0 .. 35},
+				            (m) =>
+				                List.Transform(
+				                    {1 .. 24},
+				                    (s) => {
+				                        Date.AddMonths(StartDate, m),
+				                        s,
+				                        Number.Round(RowCount * PlannedLineValue * MonthWeights{m} / Total * StoreShare(s) * MonthError(m) * StoreError(m, s), 0)
+				                    }
+				                )
+				        )
+				    ),
+				    Result = Table.FromRows(Rows, type table [Date = date, #"Store Key" = Int64.Type, #"Budget Amount" = Currency.Type])
+				in
+				    Result
+

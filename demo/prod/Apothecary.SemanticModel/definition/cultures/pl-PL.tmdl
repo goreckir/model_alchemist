@@ -1,0 +1,21 @@
+cultureInfo pl-PL
+	translations
+		model Apothecary
+			table Product
+				caption: Produkt
+				column Category
+					caption: Kategoria
+			table Store
+				caption: Sklep
+				column Region
+					caption: Region
+			table Date
+				caption: Data
+			table Sales
+				caption: Sprzedaż
+				measure 'Sales Amount'
+					caption: Sprzedaż netto
+				measure 'Quantity Sold'
+					caption: Sprzedane sztuki
+				measure Margin
+					caption: Marża

@@ -56,6 +56,8 @@ Three steps. Nothing is written until the third one, and you choose what it writ
 
 Eleven change groups, each diffed at property level. Object identity is matched the way the Analysis Services engine does it, not the way the file happens to be written: names are compared case-insensitively, and the per-environment GUIDs that Power BI Desktop appends to partition names are normalised. A model compared against itself reports no differences.
 
+> **Known limitation: model-level annotations are not compared.** Annotations written at the top level of `model.tmdl` are currently ignored by both comparison and deployment. Power BI Desktop saves model annotations this way: the Auto date/time setting (`__PBI_TimeIntelligenceEnabled`) and custom annotations added by other tools, such as version stamps or Best Practice Analyzer settings. A difference in them is not reported, and the target keeps its own values. Check those settings by hand. Annotations on tables, columns, measures and other objects are compared as usual.
+
 ![The eleven change groups Model Alchemist compares, each listed with the TMDL properties it reads. Tables and Relationships, Measures, Calculation Groups, Hierarchies, Roles and Row-Level Security, Perspectives, Translations, Data Sources and Parameters, Named Expressions, Functions, and Model Properties. A twelfth panel lists what is deliberately never compared: lineageTag, sourceLineageTag and PBI_ annotations, which are per-environment identifiers and Power BI runtime state preserved in the target on every write.](assets/diagram-coverage.png)
 
 ---
@@ -113,6 +115,14 @@ On Windows you can install Node with `winget install OpenJS.NodeJS.LTS`, then re
 4. Click **Verify Access**.
 
 The default OAuth client is the public Power BI Desktop client (`ea0616ba-638b-4df5-95b9-636659ae5121`), so no app registration is required.
+
+**Presentation Mode.** Start the app with `MA_PRESENTATION=1` to show *Fabric account* in place of your sign-in name, for screen sharing or recording. The server stops sending your username, display name and tenant ID to the browser. Workspace, model and folder names are still shown, so pick neutral ones before you present.
+
+```bash
+MA_PRESENTATION=1 npm start
+```
+
+On Windows Command Prompt use `set MA_PRESENTATION=1 && npm start`.
 
 ---
 

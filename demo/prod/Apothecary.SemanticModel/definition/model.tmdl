@@ -1,0 +1,30 @@
+/// Model Alchemist Demo Kit: Apothecary, a fictional potion and ingredient retailer. Fully synthetic; every table is generated in Power Query, so the model refreshes anywhere without credentials.
+model Apothecary
+	culture: en-GB
+	defaultPowerBIDataSourceVersion: powerBI_V3
+	discourageImplicitMeasures
+	sourceQueryCulture: en-US
+	dataAccessOptions
+		legacyRedirects
+		returnErrorValuesAsNull
+
+annotation PBI_ProTooling = ["MCP-PBIModeling","DevMode"]
+
+annotation __PBI_TimeIntelligenceEnabled = 0
+
+annotation DemoKit_Version = 2.0
+
+annotation PBI_QueryOrder = ["Product","Store","Date","Sales","Budget","RowCount","Price Index","fnRandom","Holiday Calendar"]
+
+ref table Product
+ref table Store
+ref table Date
+ref table Sales
+ref table 'Time Intelligence'
+
+ref role 'Regional Manager'
+
+ref perspective 'Sales Overview'
+
+ref cultureInfo pl-PL
+

@@ -1,0 +1,106 @@
+{
+  "version": "1.1.0",
+  "diagrams": [
+    {
+      "ordinal": 0,
+      "scrollPosition": {
+        "x": 0,
+        "y": 0
+      },
+      "nodes": [
+        {
+          "location": {
+            "x": 687.0087301540899,
+            "y": 692
+          },
+          "nodeIndex": "Budget",
+          "nodeLineageTag": "1230b772-ec93-4d2d-a985-a066a6b9cd9e",
+          "size": {
+            "height": 128,
+            "width": 234
+          },
+          "zIndex": 0,
+          "expandedHeight": 224
+        },
+        {
+          "location": {
+            "x": 441.84164846344527,
+            "y": 694.53213089150745
+          },
+          "nodeIndex": "Sales",
+          "nodeLineageTag": "a706731e-9da3-4016-84f1-c6923b1f2d8c",
+          "size": {
+            "height": 152,
+            "width": 234
+          },
+          "zIndex": 0,
+          "expandedHeight": 300
+        },
+        {
+          "location": {
+            "x": 34.460631109895985,
+            "y": 433.45186948344053
+          },
+          "nodeIndex": "Date",
+          "nodeLineageTag": "56e1a1d2-9831-400c-ae94-777870c894b2",
+          "size": {
+            "height": 104,
+            "width": 234
+          },
+          "zIndex": 0,
+          "expandedHeight": 300
+        },
+        {
+          "location": {
+            "x": 36,
+            "y": 306.32337255173024
+          },
+          "nodeIndex": "Product",
+          "nodeLineageTag": "75acce90-584c-4ac1-9fcc-8169f276e29c",
+          "size": {
+            "height": 104,
+            "width": 234
+          },
+          "zIndex": 0,
+          "expandedHeight": 300
+        },
+        {
+          "location": {
+            "x": 34.186341905623067,
+            "y": 174
+          },
+          "nodeIndex": "Store",
+          "nodeLineageTag": "3fd8407f-73c3-4c2b-9496-ceb06981de71",
+          "size": {
+            "height": 104,
+            "width": 234
+          },
+          "zIndex": 0,
+          "expandedHeight": 248
+        },
+        {
+          "location": {
+            "x": 1070.00873015409,
+            "y": 776.26606544575372
+          },
+          "nodeIndex": "Time Intelligence",
+          "nodeLineageTag": "0f297388-ddae-44f8-9f87-2f275db4748b",
+          "size": {
+            "height": 72,
+            "width": 234
+          },
+          "zIndex": 0,
+          "expandedHeight": 128
+        }
+      ],
+      "name": "All tables",
+      "zoomValue": 100,
+      "pinKeyFieldsToTop": false,
+      "showExtraHeaderInfo": false,
+      "hideKeyFieldsWhenCollapsed": false,
+      "tablesLocked": false
+    }
+  ],
+  "selectedDiagram": "All tables",
+  "defaultDiagram": "All tables"
+}

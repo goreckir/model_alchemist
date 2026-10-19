@@ -1,0 +1,95 @@
+/// Potions and ingredients sold by Apothecary. One row per product.
+table Product
+	lineageTag: 75acce90-584c-4ac1-9fcc-8169f276e29c
+
+	column 'Product Key'
+		dataType: int64
+		isHidden
+		isKey
+		lineageTag: fb7ccdca-06e3-454b-bf49-8e1e14e3cfd2
+		summarizeBy: none
+		sourceColumn: Product Key
+
+	/// Product name as printed on the label.
+	column Product
+		dataType: string
+		lineageTag: 88658143-c8d5-4522-978a-e7c44543a67f
+		sourceColumn: Product
+
+	/// Product family: Healing Draughts, Elixirs, Tonics, Salves or Rare Ingredients.
+	column Category
+		dataType: string
+		lineageTag: d000cbaf-8378-4234-a56f-ebe7adb97717
+		sourceColumn: Category
+
+	/// How hard the product is to brew or source: Common, Uncommon, Rare or Legendary. Drives price.
+	column Rarity
+		dataType: string
+		lineageTag: 7db7df73-36ad-4119-950a-e4eba4b6ef42
+		sourceColumn: Rarity
+
+	/// Current list price including the Price Index parameter.
+	column 'Unit Price'
+		dataType: decimal
+		formatString: \$#,0.00;(\$#,0.00);\$#,0.00
+		lineageTag: be467865-6865-449a-bcd9-8b23f8896b4b
+		summarizeBy: none
+		sourceColumn: Unit Price
+
+	/// Cost to brew or source one unit.
+	column 'Unit Cost'
+		dataType: decimal
+		isHidden
+		formatString: \$#,0.00;(\$#,0.00);\$#,0.00
+		lineageTag: ebacf492-1e56-41ae-a6ce-5d81431a1250
+		summarizeBy: none
+		sourceColumn: Unit Cost
+
+	/// Category > Rarity > Product drill-down.
+	hierarchy 'Product Hierarchy'
+		lineageTag: 84bca675-1aae-46b1-9019-9dd148e4d6fc
+
+		level Category
+			lineageTag: dbb09a1f-2206-4ddb-8f2b-707a1608ca82
+			column: Category
+
+		level Product
+			lineageTag: ecfea684-9e45-413f-b209-cbf7c49dbcb2
+			column: Product
+
+	partition Product = m
+		mode: import
+		source =
+				let
+				    Catalogue = {
+				        {"Healing Draughts", {"Minor Healing Draught", "Greater Healing Draught", "Troll Blood Draught", "Phoenix Ash Draught", "Willowbark Draught", "Moonpetal Draught", "Ironheart Draught", "Dawnwater Draught"}},
+				        {"Elixirs", {"Elixir of Clarity", "Elixir of Swiftness", "Elixir of Night Sight", "Elixir of Giant Strength", "Elixir of Calm Seas", "Elixir of Second Wind", "Elixir of Silver Tongue", "Elixir of Long Breath"}},
+				        {"Tonics", {"Morning Dew Tonic", "Ginger Root Tonic", "Starlight Tonic", "Ember Tonic", "Frostmint Tonic", "Hearthfire Tonic", "Mossberry Tonic", "Thunderleaf Tonic"}},
+				        {"Salves", {"Burn Salve", "Frostbite Salve", "Bramble Salve", "Viper Bite Salve", "Glowcap Salve", "Mender's Salve", "Amberleaf Salve", "Owlfeather Salve"}},
+				        {"Rare Ingredients", {"Dragon Scale", "Mandrake Root", "Unicorn Hair", "Basilisk Fang", "Wyvern Egg", "Kraken Ink", "Fairy Dust", "Griffin Feather"}}
+				    },
+				    Flat = List.Combine(List.Transform(Catalogue, (c) => List.Transform(c{1}, (p) => {c{0}, p}))),
+				    Rows = List.Transform(
+				        List.Positions(Flat),
+				        (i) =>
+				            let
+				                k = i + 1,
+				                category = Flat{i}{0},
+				                r = fnRandom(k, 11),
+				                rarity = if r < 0.45 then "Common" else if r < 0.75 then "Uncommon" else if r < 0.93 then "Rare" else "Legendary",
+				                rarityFactor = if rarity = "Common" then 1 else if rarity = "Uncommon" then 1.6 else if rarity = "Rare" then 2.5 else 4,
+				                categoryFactor = if category = "Rare Ingredients" then 2.2 else 1,
+				                price = Number.Round((4 + fnRandom(k, 7) * 36) * rarityFactor * categoryFactor * #"Price Index", 2),
+				                cost = Number.Round(price / #"Price Index" * (0.35 + fnRandom(k, 8) * 0.25), 2)
+				            in
+				                {k, Flat{i}{1}, category, rarity, price, cost}
+				    ),
+				    Result = Table.FromRows(
+				        Rows,
+				        type table [#"Product Key" = Int64.Type, Product = text, Category = text, Rarity = text, #"Unit Price" = Currency.Type, #"Unit Cost" = Currency.Type]
+				    )
+				in
+				    Result
+
+	annotation PBI_ResultType = Table
+

@@ -8,6 +8,7 @@
 const { extractAll, CHANGE_GROUPS } = require('./extractor');
 const { tableFromColRef, colFromRef } = require('./refs');
 const { detectRenames } = require('./rename-detector');
+const { findMReferences } = require('./expression-refs');
 
 function compareModels(devModel, prodModel, devPath, prodPath) {
     const devObjects = extractAll(devModel);
@@ -308,6 +309,26 @@ function computeGroups(diffs, devObjects, renames = []) {
         return tables;
     }
 
+    // A table whose M partition reads another table's query (`Product` in the
+    // Sales partition) is refreshed with stale data unless it is refreshed too.
+    // Expand a set of tables with every table that reads them, transitively.
+    function withQueryDependents(tables) {
+        const result = new Set(tables);
+        const mPartitions = allPartitions.filter(p => String(p.properties.type || '').toLowerCase() === 'm');
+        let grew = true;
+        while (grew) {
+            grew = false;
+            for (const part of mPartitions) {
+                if (result.has(part.parentTable)) continue;
+                if (findMReferences(part.properties.expression || '', [...result]).length > 0) {
+                    result.add(part.parentTable);
+                    grew = true;
+                }
+            }
+        }
+        return result;
+    }
+
     // Process NON-parameter expressions → add to table refresh groups
     for (const exprDiff of nonParamExprDiffs) {
         const exprName = exprDiff.displayName;
@@ -333,7 +354,7 @@ function computeGroups(diffs, devObjects, renames = []) {
         const allDependentNames = findDependentExprNames(paramName);
         allDependentNames.add(paramName);
 
-        const affectedTables = findAffectedTables(allDependentNames);
+        const affectedTables = withQueryDependents(findAffectedTables(allDependentNames));
         const tableCount = affectedTables.size;
 
         if (tableCount > 0) {

@@ -1,0 +1,11 @@
+{
+  "name": "model-alchemist-recordings",
+  "private": true,
+  "description": "Scripted campaign recordings of Demo Kit Scenarios (not part of the app).",
+  "scripts": {
+    "record": "node record.js"
+  },
+  "devDependencies": {
+    "playwright": "1.63.0"
+  }
+}

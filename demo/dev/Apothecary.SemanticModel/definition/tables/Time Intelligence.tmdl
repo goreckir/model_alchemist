@@ -1,0 +1,42 @@
+/// Calculation group: applies a time comparison to any measure.
+table 'Time Intelligence'
+	lineageTag: 0f297388-ddae-44f8-9f87-2f275db4748b
+
+	/// Applies a time comparison to any measure. Pick one item in a slicer or put the column on a visual.
+	calculationGroup
+		precedence: 10
+
+		/// The measure as is.
+		calculationItem Current = SELECTEDMEASURE ()
+
+		/// Year to date.
+		calculationItem YTD = CALCULATE ( SELECTEDMEASURE (), DATESYTD ( 'Date'[Date] ) )
+
+		/// Same period last year.
+		calculationItem PY = CALCULATE ( SELECTEDMEASURE (), SAMEPERIODLASTYEAR ( 'Date'[Date] ) )
+
+		/// Change against the same period last year.
+		calculationItem 'YoY %' =
+				VAR CurrentValue = SELECTEDMEASURE ()
+				VAR PriorValue = CALCULATE ( SELECTEDMEASURE (), SAMEPERIODLASTYEAR ( 'Date'[Date] ) )
+				RETURN
+				    DIVIDE ( CurrentValue - PriorValue, PriorValue )
+
+			formatStringDefinition = "0.0%;-0.0%;0.0%"
+
+	/// Time comparison to apply: Current, YTD, PY or YoY %.
+	column 'Time Intelligence'
+		dataType: string
+		lineageTag: 1317769b-fbfa-4de7-bc3a-d51646622b0a
+		sourceColumn: Name
+		sortByColumn: Ordinal
+
+	column Ordinal
+		dataType: int64
+		isHidden
+		lineageTag: ad7dac16-86f4-4540-b119-7173712ac602
+		summarizeBy: none
+		sourceColumn: Ordinal
+
+	partition 'Partition_Time Intelligence' = calculationGroup
+

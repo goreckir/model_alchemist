@@ -1,0 +1,8 @@
+/// Regional managers see only the stores in their region.
+role 'Regional Manager'
+	modelPermission: read
+
+	tablePermission Store = Store[Region] IN { "Northern Reach", "Eastern Isles" }
+
+	annotation PBI_Id = 223eb59607aa4af99defcd435aac1b76
+
