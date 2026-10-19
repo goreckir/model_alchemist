@@ -27,8 +27,9 @@ const DEMO_ROOT = process.env.MA_DEMO_ROOT || 'C:\\ModelAlchemistDemo';
 const VIEWPORT = { width: 1600, height: 1000 };
 const SCALE = 1.5; // capture at 2400×1500, render down for crisp text
 const PORT = 3777;
-// Opening card cross-faded in front of every take; rendered by assets/src/render.js.
-const TITLE_CARD = path.join(ROOT, 'assets', 'title-card.png');
+// Opening card cross-faded in front of every take ("Cherry-pick for semantic models",
+// the campaign's lead message); rendered by assets/src/render.js.
+const TITLE_CARD = path.join(ROOT, 'assets', 'cherry-pick-card.png');
 
 // ── Models at a neutral path ─────────────────────────────────────────────────
 
