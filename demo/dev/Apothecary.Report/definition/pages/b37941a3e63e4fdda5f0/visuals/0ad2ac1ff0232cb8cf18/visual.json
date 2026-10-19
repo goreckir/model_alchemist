@@ -1,12 +1,12 @@
 {
-  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.9.0/schema.json",
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.13.0/schema.json",
   "name": "0ad2ac1ff0232cb8cf18",
   "position": {
     "x": 1132,
     "y": 257,
-    "width": 756,
-    "height": 440,
     "z": 8000,
+    "height": 440,
+    "width": 756,
     "tabOrder": 8000
   },
   "visual": {
@@ -27,7 +27,8 @@
                 }
               },
               "queryRef": "Store.Region",
-              "nativeQueryRef": "Region"
+              "nativeQueryRef": "Region",
+              "active": true
             }
           ]
         },

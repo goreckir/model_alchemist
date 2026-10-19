@@ -1,12 +1,12 @@
 {
-  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.9.0/schema.json",
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.13.0/schema.json",
   "name": "992746485dee03ddf5ad",
   "position": {
     "x": 1264,
     "y": 32,
-    "width": 300,
-    "height": 80,
     "z": 2000,
+    "height": 80,
+    "width": 300,
     "tabOrder": 2000
   },
   "visual": {
@@ -27,7 +27,8 @@
                 }
               },
               "queryRef": "Date.Year",
-              "nativeQueryRef": "Year"
+              "nativeQueryRef": "Year",
+              "active": true
             }
           ]
         }
@@ -62,6 +63,53 @@
                 "Literal": {
                   "Value": "'Year'"
                 }
+              }
+            }
+          }
+        }
+      ],
+      "general": [
+        {
+          "properties": {
+            "filter": {
+              "filter": {
+                "Version": 2,
+                "From": [
+                  {
+                    "Name": "d",
+                    "Entity": "Date",
+                    "Type": 0
+                  }
+                ],
+                "Where": [
+                  {
+                    "Condition": {
+                      "In": {
+                        "Expressions": [
+                          {
+                            "Column": {
+                              "Expression": {
+                                "SourceRef": {
+                                  "Source": "d"
+                                }
+                              },
+                              "Property": "Year"
+                            }
+                          }
+                        ],
+                        "Values": [
+                          [
+                            {
+                              "Literal": {
+                                "Value": "2026L"
+                              }
+                            }
+                          ]
+                        ]
+                      }
+                    }
+                  }
+                ]
               }
             }
           }
