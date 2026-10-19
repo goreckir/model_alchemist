@@ -42,5 +42,6 @@ const wingetPackage = prefix => fs.existsSync(WINGET)
 
 module.exports = {
     ffmpeg: () => tool('ffmpeg', { env: 'FFMPEG', exe: 'ffmpeg.exe', dirs: wingetPackage('Gyan.FFmpeg') }),
+    ffprobe: () => tool('ffprobe', { env: 'FFPROBE', exe: 'ffprobe.exe', dirs: wingetPackage('Gyan.FFmpeg') }),
     tesseract: () => tool('tesseract', { env: 'TESSERACT', exe: 'tesseract.exe', dirs: ['C:\\Program Files\\Tesseract-OCR'] })
 };

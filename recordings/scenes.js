@@ -350,6 +350,8 @@ module.exports = [
         headline: 'Cherry-pick for<br>semantic models.',
         // LinkedIn: no title band; the cherry-pick opening card is the headline.
         linkedinBand: false,
+        // Trim the static tail (end captions) and close on the opening card again.
+        outro: { trim: 3.6, hold: 3 },
         models: defaultScenario,
         async run(d, staged) {
             const p = d.page;

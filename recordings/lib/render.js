@@ -52,19 +52,33 @@ function renderGif(master, outDir, name, { width = 1200, maxBytes = 5 * 1024 * 1
     return { ...last, oversize: true };
 }
 
+/** Duration of a video in seconds. */
+function durationOf(file) {
+    return parseFloat(execFileSync(tools.ffprobe(), ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', file],
+        { encoding: 'utf8' }).trim());
+}
+
 /**
- * Prepend the opening card (assets/title-card.png) to a master: the card holds,
- * then cross-fades into the take. The master itself stays the raw, privacy-gated
- * take; GIF and LinkedIn cuts are made from the titled copy.
+ * Put the opening card (assets/title-card.png or cherry-pick-card.png) in front
+ * of a master: the card holds, then cross-fades into the take. With `outro`, the
+ * take's static tail is trimmed by `outro.trim` seconds and the card returns at
+ * the end for `outro.hold` seconds. The master itself stays the raw,
+ * privacy-gated take; GIF and LinkedIn cuts are made from the titled copy.
  */
-function addIntro(master, cardPng, outDir, { width = 1600, height = 1000, hold = 2.5, fade = 0.5 } = {}) {
+function addIntro(master, cardPng, outDir, { width = 1600, height = 1000, hold = 2.5, fade = 0.5, outro = null } = {}) {
     const out = path.join(outDir, 'titled.mp4');
-    run(tools.ffmpeg(), ['-y', '-loglevel', 'error',
-        '-loop', '1', '-t', String(hold + fade), '-i', cardPng, '-i', master,
-        '-filter_complex',
-        `[0:v]scale=${width}:${height}:flags=lanczos,fps=30,format=yuv420p,setsar=1[c];` +
-        `[1:v]fps=30,format=yuv420p,setsar=1[m];` +
-        `[c][m]xfade=transition=fade:duration=${fade}:offset=${hold},format=yuv420p`,
+    const card = `scale=${width}:${height}:flags=lanczos,fps=30,format=yuv420p,setsar=1`;
+    const take = durationOf(master) - (outro ? outro.trim : 0);
+    const inputs = ['-loop', '1', '-t', String(hold + fade), '-i', cardPng, '-i', master];
+    let graph = `[0:v]${card}[c];[1:v]trim=0:${take.toFixed(3)},setpts=PTS-STARTPTS,fps=30,format=yuv420p,setsar=1[m];` +
+        `[c][m]xfade=transition=fade:duration=${fade}:offset=${hold}`;
+    if (outro) {
+        inputs.push('-loop', '1', '-t', String(outro.hold + fade), '-i', cardPng);
+        // After the first cross-fade the stream lasts hold + take seconds.
+        graph += `[v1];[2:v]${card}[e];[v1][e]xfade=transition=fade:duration=${fade}:offset=${(hold + take - fade).toFixed(3)}`;
+    }
+    graph += ',format=yuv420p';
+    run(tools.ffmpeg(), ['-y', '-loglevel', 'error', ...inputs, '-filter_complex', graph,
         '-c:v', 'libx264', '-preset', 'slow', '-crf', '17', '-movflags', '+faststart', out]);
     return out;
 }
