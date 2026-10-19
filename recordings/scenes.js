@@ -355,7 +355,7 @@ module.exports = [
         models: defaultScenario,
         async run(d, staged) {
             const p = d.page;
-            await openComparison(d, staged, 'Dev holds five pieces of work. Two are ready.');
+            await openComparison(d, staged, 'Compare Dev with production, object by object');
             await d.hover(group(p, 'Tables & Relationships'), 500);
             await d.hover(group(p, 'Functions'), 700);
             await d.wait(600);
