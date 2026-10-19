@@ -157,9 +157,17 @@ async function finishScene(browser, scene, outDir) {
     if (!fs.existsSync(master)) throw new Error(`No master for ${scene.name}; record it first.`);
     const titled = addIntro(master, TITLE_CARD, outDir, VIEWPORT);
     const gif = renderGif(titled, outDir, scene.name);
-    const framePng = path.join(outDir, 'linkedin-frame.png');
-    await renderLinkedInFrame(browser, scene, framePng);
-    const linkedin = renderLinkedIn(titled, framePng, outDir, scene.name, { videoTop: LINKEDIN.videoTop });
+    let linkedin;
+    if (scene.linkedinBand === false) {
+        // The opening card already carries the headline: post the titled take as is.
+        linkedin = path.join(outDir, `${scene.name}-linkedin.mp4`);
+        fs.copyFileSync(titled, linkedin);
+        fs.rmSync(path.join(outDir, 'linkedin-frame.png'), { force: true });
+    } else {
+        const framePng = path.join(outDir, 'linkedin-frame.png');
+        await renderLinkedInFrame(browser, scene, framePng);
+        linkedin = renderLinkedIn(titled, framePng, outDir, scene.name, { videoTop: LINKEDIN.videoTop });
+    }
     console.log(`  gif ${(gif.size / 1048576).toFixed(2)} MB${gif.oversize ? ' (OVER BUDGET)' : ''} · ${path.relative(ROOT, linkedin)}`);
     return { scene: scene.name, gif, linkedin, master };
 }

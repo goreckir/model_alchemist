@@ -348,6 +348,8 @@ module.exports = [
     {
         name: 'cherry-pick',
         headline: 'Cherry-pick for<br>semantic models.',
+        // LinkedIn: no title band; the cherry-pick opening card is the headline.
+        linkedinBand: false,
         models: defaultScenario,
         async run(d, staged) {
             const p = d.page;
