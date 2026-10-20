@@ -1,4 +1,36 @@
-requirements/
+# Claude Code: personal settings (not shared)
+.claude/settings.local.json
+.claude/settings.json
+.claude/rg-profile
+CLAUDE.md
+
+# Runtime
 node_modules/
+.venv/
+__pycache__/
+*.pyc
+
+# System
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Power BI Project (PBIP): local files and cache
+**/.pbi/localSettings.json
+**/.pbi/cache.abf
+*.pbix
+*.pbit
+*.abf
+
+# Exports and temporary files
+out/
+*.tmp
+
+# Local working folders
+requirements/
+analysis/
 logs/
 backups/
+
+# Personal deny-list for the OCR privacy gate
+recordings/privacy.local.json

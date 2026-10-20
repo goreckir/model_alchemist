@@ -1,0 +1,22 @@
+<!doctype html><meta charset="utf-8">
+<link rel="stylesheet" href="card.css">
+<!-- rls-preserved recording (post 07): the Regional Manager filter is widened in Dev,
+     production has role members that Dev does not; only the filter is deployed. -->
+<div class="wrap grid-bg">
+  <div class="brand"><img src="logo.svg" alt=""><div class="n">Model <em>Alchemist</em></div></div>
+  <h1>Change the rule. <span class="hl">Keep the people.</span></h1>
+  <div class="sub">Deploy a new row-level security filter without touching who is in the role in production.</div>
+  <div class="body diff">
+    <div class="pane">
+      <h2>Role Regional Manager · filter</h2>
+      <div class="code"><span class="lbl">Dev </span> Store[Region] <span class="add">IN { "Northern Reach", "Eastern Isles" }</span>
+<span class="lbl">Prod</span> Store[Region] <span class="del">= "Northern Reach"</span></div>
+    </div>
+    <div class="pane">
+      <h2>Role members in production</h2>
+      <div class="code"><span class="add">✓</span> manager.north@apothecary.example
+<span class="add">✓</span> auditor@apothecary.example   <span class="lbl">kept</span></div>
+    </div>
+  </div>
+  <div class="foot2"><span>Diff and selective deploy for Power BI semantic models</span><span>github.com/goreckir/model_alchemist</span></div>
+</div>

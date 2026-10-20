@@ -1,0 +1,49 @@
+/* Shared layout for the 1600×1000 topic cards that open and close recordings
+   (cherry-pick-card.html and fabric-drift-card.html predate it and inline the same look). */
+@import url("theme.css");
+body { width: 1600px; height: 1000px; overflow: hidden; }
+.wrap {
+    width: 100%; height: 100%; padding: 72px 88px; display: flex; flex-direction: column;
+    background:
+      radial-gradient(900px 520px at 95% 0%, rgba(125,207,239,0.13), transparent 62%),
+      radial-gradient(900px 560px at 0% 100%, rgba(124,111,247,0.22), transparent 62%),
+      var(--bg-deep);
+}
+.brand { display: flex; align-items: center; gap: 18px; }
+.brand img { width: 64px; height: 64px; }
+.brand .n { font-size: 30px; font-weight: 800; letter-spacing: -0.02em; }
+.brand .n em, .hl {
+    font-style: normal; background: linear-gradient(100deg, #a396f9, #7dcfef);
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+}
+h1 { margin-top: 52px; font-size: 76px; font-weight: 800; letter-spacing: -0.035em; line-height: 1.02; }
+.sub { margin-top: 18px; font-size: 28px; color: #c6c6de; max-width: 1360px; line-height: 1.4; }
+.body { margin-top: 56px; }
+.foot2 { margin-top: auto; display: flex; justify-content: space-between; font-family: var(--mono); font-size: 18px; color: #7d7d9c; }
+
+/* Three-step story */
+.steps { display: grid; grid-template-columns: 1fr 64px 1fr 64px 1fr; align-items: stretch; }
+.step {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 22px; padding: 28px 30px;
+    border-top: 6px solid var(--c); display: flex; flex-direction: column; min-height: 340px;
+}
+.step .k { font-family: var(--mono); font-size: 18px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--c); }
+.step .t { margin-top: 18px; font-size: 34px; font-weight: 700; line-height: 1.2; }
+.chip {
+    margin-top: auto; align-self: flex-start; font-family: var(--mono); font-size: 18px; padding: 8px 12px;
+    border-radius: 8px; background: rgba(255,255,255,0.05); border: 1px solid var(--border); color: #cfcfe4;
+}
+.step.bad { background: rgba(223,125,125,0.10); border-color: rgba(223,125,125,0.45); }
+.step.bad .chip { border-color: rgba(223,125,125,0.5); color: #f0b3b3; }
+.step.good { background: rgba(125,223,125,0.07); border-color: rgba(125,223,125,0.4); }
+.step.good .chip { border-color: rgba(125,223,125,0.5); color: #bfeebf; }
+.arrow { display: grid; place-items: center; font-size: 44px; color: #6f6f8c; }
+
+/* Side-by-side code diff */
+.diff { display: grid; grid-template-columns: 1fr; gap: 28px; }
+.pane { background: var(--surface); border: 1px solid var(--border); border-radius: 22px; padding: 30px 36px; }
+.pane h2 { font-family: var(--mono); font-size: 18px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--dim); margin-bottom: 14px; }
+.code { font-family: var(--mono); font-size: 30px; line-height: 1.6; color: #b6b6cf; white-space: pre; }
+.code .add { background: rgba(125,223,125,0.16); color: #bfeebf; border-radius: 4px; padding: 0 3px; }
+.code .del { background: rgba(223,125,125,0.18); color: #f0b3b3; border-radius: 4px; padding: 0 3px; }
+.code .lbl { color: #7d7d9c; }

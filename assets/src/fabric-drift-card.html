@@ -1,0 +1,64 @@
+<!doctype html><meta charset="utf-8">
+<link rel="stylesheet" href="theme.css">
+<!-- Opening and closing card of the fabric-drift recording (post 09). The story matches
+     the take: compare Dev with the production model in Fabric, a colleague publishes a
+     Product hierarchy change, the deploy is refused because tables/Product.tmdl changed. -->
+<style>
+  body { width: 1600px; height: 1000px; overflow: hidden; }
+  .wrap {
+      width: 100%; height: 100%; padding: 72px 88px; display: flex; flex-direction: column;
+      background:
+        radial-gradient(900px 520px at 95% 0%, rgba(125,207,239,0.13), transparent 62%),
+        radial-gradient(900px 560px at 0% 100%, rgba(124,111,247,0.22), transparent 62%),
+        var(--bg-deep);
+  }
+  .brand { display: flex; align-items: center; gap: 18px; }
+  .brand img { width: 64px; height: 64px; }
+  .brand .n { font-size: 30px; font-weight: 800; letter-spacing: -0.02em; }
+  .brand .n em, .hl {
+      font-style: normal; background: linear-gradient(100deg, #a396f9, #7dcfef);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  }
+  h1 { margin-top: 52px; font-size: 76px; font-weight: 800; letter-spacing: -0.035em; line-height: 1.02; }
+  .sub { margin-top: 18px; font-size: 28px; color: #c6c6de; max-width: 1300px; line-height: 1.4; }
+  .steps { margin-top: 64px; display: grid; grid-template-columns: 1fr 64px 1fr 64px 1fr; align-items: stretch; }
+  .step {
+      background: var(--surface); border: 1px solid var(--border); border-radius: 22px; padding: 28px 30px;
+      border-top: 6px solid var(--c); display: flex; flex-direction: column; min-height: 340px;
+  }
+  .step .k { font-family: var(--mono); font-size: 18px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--c); }
+  .step .t { margin-top: 18px; font-size: 36px; font-weight: 700; line-height: 1.2; }
+  .step .chip {
+      margin-top: auto; align-self: flex-start; font-family: var(--mono); font-size: 18px; padding: 8px 12px;
+      border-radius: 8px; background: rgba(255,255,255,0.05); border: 1px solid var(--border); color: #cfcfe4;
+  }
+  .step.block { background: rgba(223,125,125,0.10); border-color: rgba(223,125,125,0.45); }
+  .step.block .chip { border-color: rgba(223,125,125,0.5); color: #f0b3b3; }
+  .arrow { display: grid; place-items: center; font-size: 44px; color: #6f6f8c; }
+  .foot2 { margin-top: auto; display: flex; justify-content: space-between; font-family: var(--mono); font-size: 18px; color: #7d7d9c; }
+</style>
+<div class="wrap grid-bg">
+  <div class="brand"><img src="logo.svg" alt=""><div class="n">Model <em>Alchemist</em></div></div>
+  <h1>No <span class="hl">silent overwrites</span> in production.</h1>
+  <div class="sub">If someone publishes after you compared, Model Alchemist refuses to upload and names what changed.</div>
+  <div class="steps">
+    <div class="step" style="--c: var(--deploy);">
+      <div class="k">1 · You</div>
+      <div class="t">Compare Dev with production in Fabric</div>
+      <div class="chip">Margin % + MarginRatio ticked</div>
+    </div>
+    <div class="arrow">→</div>
+    <div class="step" style="--c: var(--modified);">
+      <div class="k">2 · A colleague</div>
+      <div class="t">Publishes to the same production model</div>
+      <div class="chip">~ tables/Product.tmdl</div>
+    </div>
+    <div class="arrow">→</div>
+    <div class="step block" style="--c: var(--removed);">
+      <div class="k">3 · You deploy</div>
+      <div class="t">Blocked. Their work stays in production.</div>
+      <div class="chip">✗ changed since your comparison</div>
+    </div>
+  </div>
+  <div class="foot2"><span>Diff and selective deploy for Power BI semantic models</span><span>github.com/goreckir/model_alchemist</span></div>
+</div>

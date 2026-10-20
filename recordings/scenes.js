@@ -112,6 +112,10 @@ async function deploySelectedKeepResult(d) {
 module.exports = [
     {
         name: 'launch',
+        card: 'title-card.png',
+        linkedinBand: false,
+        // Trim the static end caption and close on the card.
+        outro: { trim: 2.9, hold: 3 },
         headline: 'Ship one measure,<br>not the whole model.',
         models: defaultScenario,
         async run(d, staged) {
@@ -147,6 +151,10 @@ module.exports = [
     },
     {
         name: 'object-diff',
+        card: 'object-diff-card.png',
+        linkedinBand: false,
+        // Trim the static end caption and close on the card.
+        outro: { trim: 2.9, hold: 3 },
         headline: 'See the exact line<br>that changed.',
         models: scenario('object-diff'),
         async run(d, staged) {
@@ -171,6 +179,10 @@ module.exports = [
     },
     {
         name: 'selective-deploy',
+        card: 'selective-deploy-card.png',
+        linkedinBand: false,
+        // Trim the static end caption and close on the card.
+        outro: { trim: 2.9, hold: 3 },
         headline: 'Deploy one measure.<br>Safely.',
         models: defaultScenario,
         async run(d, staged) {
@@ -201,6 +213,10 @@ module.exports = [
     },
     {
         name: 'rls-preserved',
+        card: 'rls-preserved-card.png',
+        linkedinBand: false,
+        // Trim the static end caption and close on the card.
+        outro: { trim: 2.9, hold: 3 },
         headline: 'Change the rule.<br>Keep the people.',
         models: scenario('rls-preserved'),
         async run(d, staged) {
@@ -231,6 +247,10 @@ module.exports = [
     ,
     {
         name: 'scoped-refresh',
+        card: 'scoped-refresh-card.png',
+        linkedinBand: false,
+        // Trim the static end caption and close on the card.
+        outro: { trim: 2.9, hold: 3 },
         fabric: true,
         headline: 'Refresh only<br>what changed.',
         models: defaultScenario,
@@ -265,6 +285,10 @@ module.exports = [
     },
     {
         name: 'readiness',
+        card: 'readiness-card.png',
+        linkedinBand: false,
+        // Trim the static end caption and close on the card.
+        outro: { trim: 2.9, hold: 3 },
         fabric: true,
         headline: 'Know what still<br>needs a refresh.',
         models: defaultScenario,
@@ -307,7 +331,12 @@ module.exports = [
     {
         name: 'fabric-drift',
         fabric: true,
-        headline: "Never overwrite<br>a colleague's publish.",
+        headline: 'No silent overwrites<br>in production.',
+        card: 'fabric-drift-card.png',
+        linkedinBand: false,
+        // Trim only the end caption; the re-compare result (24 differences) lands late,
+        // so hold its frame a little longer before the card returns.
+        outro: { trim: 2.9, freeze: 1.5, hold: 3 },
         models: defaultScenario,
         async run(d, staged, ctx) {
             const p = d.page;
@@ -337,6 +366,49 @@ module.exports = [
             await d.click(p.locator('#btn-refresh'), { pauseAfter: 900 });
             await d.cut(() => p.waitForSelector('#results-panel:not(.hidden)', { timeout: 120000 }));
             await d.wait(2400);
+
+            await d.caption('Model Alchemist · free and open source');
+            await d.wait(2200);
+            await d.caption('');
+            await d.wait(400);
+        }
+    }
+    ,
+    {
+        name: 'cherry-pick',
+        headline: 'Cherry-pick for<br>semantic models.',
+        // LinkedIn: no title band; the cherry-pick opening card is the headline.
+        linkedinBand: false,
+        // Trim the static tail (end captions) and close on the opening card again.
+        outro: { trim: 3.6, hold: 3 },
+        models: defaultScenario,
+        async run(d, staged) {
+            const p = d.page;
+            await openComparison(d, staged, 'Compare Dev with production, object by object');
+            await d.hover(group(p, 'Tables & Relationships'), 500);
+            await d.hover(group(p, 'Functions'), 700);
+            await d.wait(600);
+
+            await d.caption('Pick the margin measure and the function it calls');
+            await d.click(group(p, 'Measures'));
+            await d.click(row(p, 'Sales.Margin %').locator('.diff-checkbox'), { pauseAfter: 500 });
+            await d.click(group(p, 'Functions'));
+            await d.click(row(p, 'MarginRatio').locator('.diff-checkbox'), { pauseAfter: 700 });
+
+            await d.caption('Pick the holiday flag: column, query and partition ship as one unit');
+            await d.click(group(p, 'All'), { pauseAfter: 400 });
+            await d.click(groupHeader(p, 'Date'), { pauseAfter: 400 });
+            await d.click(groupCheckbox(p, 'Date'), { pauseAfter: 1600 });
+
+            await d.caption('Budget, price change and regional security stay in Dev');
+            await d.hover(groupHeader(p, 'Budget'), 600);
+            await d.wait(1600);
+
+            await d.caption('Deploy exactly what you picked');
+            await deploySelected(d);
+
+            await d.caption('5 objects deployed. 22 differences stay in Dev until they are ready.');
+            await d.click(group(p, 'All'), { pauseAfter: 2200 });
 
             await d.caption('Model Alchemist · free and open source');
             await d.wait(2200);

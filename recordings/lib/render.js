@@ -1,8 +1,9 @@
 /**
  * Render a captured take into the three deliverables:
- *   master.mp4         1600×1000, 30 fps, the archival source
+ *   master.mp4         1600×1000, 30 fps, the raw take (privacy-gated)
+ *   titled.mp4         the take with the opening card cross-faded in front
  *   <name>.gif         1200 px wide for README / Reddit (ffmpeg palette)
- *   <name>-linkedin.mp4  1080×1350 portrait: title band, video, footer band
+ *   <name>-linkedin.mp4  1080×1080 square: title band above, video at the bottom edge
  */
 const fs = require('fs');
 const path = require('path');
@@ -51,7 +52,43 @@ function renderGif(master, outDir, name, { width = 1200, maxBytes = 5 * 1024 * 1
     return { ...last, oversize: true };
 }
 
-/** Portrait LinkedIn cut: pre-rendered 1080×1350 frame PNG with the video scaled into its middle. */
+/** Duration of a video in seconds. */
+function durationOf(file) {
+    return parseFloat(execFileSync(tools.ffprobe(), ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', file],
+        { encoding: 'utf8' }).trim());
+}
+
+/**
+ * Put the opening card (assets/title-card.png or cherry-pick-card.png) in front
+ * of a master: the card holds, then cross-fades into the take. With `outro`, the
+ * take's static tail is trimmed by `outro.trim` seconds (optionally holding the last
+ * kept frame for `outro.freeze` seconds) and the card returns at
+ * the end for `outro.hold` seconds. The master itself stays the raw,
+ * privacy-gated take; GIF and LinkedIn cuts are made from the titled copy.
+ */
+function addIntro(master, cardPng, outDir, { width = 1600, height = 1000, hold = 2.5, fade = 0.5, outro = null } = {}) {
+    const out = path.join(outDir, 'titled.mp4');
+    const card = `scale=${width}:${height}:flags=lanczos,fps=30,format=yuv420p,setsar=1`;
+    // outro.freeze holds the last kept frame (e.g. a result that lands late) before the card.
+    const freeze = outro && outro.freeze ? outro.freeze : 0;
+    const kept = durationOf(master) - (outro ? outro.trim : 0);
+    const take = kept + freeze;
+    const inputs = ['-loop', '1', '-t', String(hold + fade), '-i', cardPng, '-i', master];
+    const hold_ = freeze ? `,tpad=stop_mode=clone:stop_duration=${freeze}` : '';
+    let graph = `[0:v]${card}[c];[1:v]trim=0:${kept.toFixed(3)},setpts=PTS-STARTPTS${hold_},fps=30,format=yuv420p,setsar=1[m];` +
+        `[c][m]xfade=transition=fade:duration=${fade}:offset=${hold}`;
+    if (outro) {
+        inputs.push('-loop', '1', '-t', String(outro.hold + fade), '-i', cardPng);
+        // After the first cross-fade the stream lasts hold + take seconds.
+        graph += `[v1];[2:v]${card}[e];[v1][e]xfade=transition=fade:duration=${fade}:offset=${(hold + take - fade).toFixed(3)}`;
+    }
+    graph += ',format=yuv420p';
+    run(tools.ffmpeg(), ['-y', '-loglevel', 'error', ...inputs, '-filter_complex', graph,
+        '-c:v', 'libx264', '-preset', 'slow', '-crf', '17', '-movflags', '+faststart', out]);
+    return out;
+}
+
+/** LinkedIn cut: the pre-rendered frame PNG (its size is the canvas) with the video overlaid at videoTop. */
 function renderLinkedIn(master, framePng, outDir, name, { videoTop = 338 } = {}) {
     const out = path.join(outDir, `${name}-linkedin.mp4`);
     run(tools.ffmpeg(), ['-y', '-loglevel', 'error', '-loop', '1', '-i', framePng, '-i', master,
@@ -60,4 +97,4 @@ function renderLinkedIn(master, framePng, outDir, name, { videoTop = 338 } = {})
     return out;
 }
 
-module.exports = { renderMaster, renderGif, renderLinkedIn };
+module.exports = { renderMaster, addIntro, renderGif, renderLinkedIn };

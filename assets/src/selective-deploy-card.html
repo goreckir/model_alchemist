@@ -1,0 +1,29 @@
+<!doctype html><meta charset="utf-8">
+<link rel="stylesheet" href="card.css">
+<!-- selective-deploy recording (posts 04 and 14): Margin % alone is blocked by MISSING_FUNCTION;
+     with MarginRatio ticked too, exactly two objects deploy. -->
+<div class="wrap grid-bg">
+  <div class="brand"><img src="logo.svg" alt=""><div class="n">Model <em>Alchemist</em></div></div>
+  <h1>One measure. <span class="hl">Never a broken model.</span></h1>
+  <div class="sub">Pick only what you need. If it depends on something production does not have, the deploy stops and says what is missing.</div>
+  <div class="body steps">
+    <div class="step" style="--c: var(--deploy);">
+      <div class="k">1 · Pick</div>
+      <div class="t">Tick the measure Margin %</div>
+      <div class="chip">+ measure Sales.Margin %</div>
+    </div>
+    <div class="arrow">→</div>
+    <div class="step bad" style="--c: var(--removed);">
+      <div class="k">2 · Blocked</div>
+      <div class="t">It calls a function production does not have</div>
+      <div class="chip">✗ MISSING_FUNCTION MarginRatio</div>
+    </div>
+    <div class="arrow">→</div>
+    <div class="step good" style="--c: var(--added);">
+      <div class="k">3 · Deployed</div>
+      <div class="t">Tick the function too. Two objects ship, nothing else moves.</div>
+      <div class="chip">✓ Margin % + MarginRatio</div>
+    </div>
+  </div>
+  <div class="foot2"><span>Diff and selective deploy for Power BI semantic models</span><span>github.com/goreckir/model_alchemist</span></div>
+</div>

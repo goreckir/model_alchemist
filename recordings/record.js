@@ -6,6 +6,7 @@
  *   node record.js                 every scene
  *   node record.js launch          one scene
  *   node record.js launch --raw    capture only, skip rendering and the privacy gate
+ *   node record.js --retitle       re-cut existing takes (opening card, GIF, LinkedIn) without recording
  *
  * Safety: the app runs in Presentation Mode, models are copied to a neutral path
  * (MA_DEMO_ROOT, default C:\ModelAlchemistDemo), every take passes an OCR privacy
@@ -15,7 +16,7 @@ const fs = require('fs');
 const path = require('path');
 const { chromium } = require('playwright');
 const { startScreencast, installOverlay, director } = require('./lib/capture');
-const { renderMaster, renderGif, renderLinkedIn } = require('./lib/render');
+const { renderMaster, addIntro, renderGif, renderLinkedIn } = require('./lib/render');
 const privacy = require('./lib/privacy');
 const fabric = require('./lib/fabric');
 const SCENES = require('./scenes');
@@ -26,6 +27,9 @@ const DEMO_ROOT = process.env.MA_DEMO_ROOT || 'C:\\ModelAlchemistDemo';
 const VIEWPORT = { width: 1600, height: 1000 };
 const SCALE = 1.5; // capture at 2400×1500, render down for crisp text
 const PORT = 3777;
+// Opening card cross-faded in front of every take ("Cherry-pick for semantic models",
+// the campaign's lead message); rendered by assets/src/render.js.
+const TITLE_CARD = path.join(ROOT, 'assets', 'cherry-pick-card.png');
 
 // ── Models at a neutral path ─────────────────────────────────────────────────
 
@@ -67,19 +71,23 @@ function startApp() {
 
 // ── LinkedIn frame (title band above the video, footer below) ────────────────
 
+// Square 1080×1080: all text in the band above the video, the 1080×675 video at the
+// bottom edge, so there is no empty footer band in the feed.
+const LINKEDIN = { size: 1080, videoTop: 1080 - 675 };
+
 async function renderLinkedInFrame(browser, scene, file) {
-    const page = await browser.newPage({ viewport: { width: 1080, height: 1350 } });
-    await page.setContent(`<!doctype html><html><body style="margin:0;width:1080px;height:1350px;
-        background:linear-gradient(180deg,#1b1029 0%,#120b1d 100%);font-family:'Segoe UI',system-ui,sans-serif;color:#fff;
-        display:flex;flex-direction:column;justify-content:space-between;">
-      <div style="height:338px;box-sizing:border-box;padding:64px 64px 0;">
-        <div style="font-size:24px;letter-spacing:.14em;text-transform:uppercase;color:#B78CFF;font-weight:600;">Model Alchemist</div>
-        <div style="margin-top:20px;font-size:52px;line-height:1.12;font-weight:700;">${scene.headline}</div>
-      </div>
-      <div style="height:337px;box-sizing:border-box;padding:0 64px 64px;display:flex;align-items:flex-end;
-        justify-content:space-between;font-size:26px;color:#d9ccf0;">
-        <span>${scene.footer || 'Diff and selective deploy for Power BI semantic models'}</span>
-        <span style="color:#B78CFF;font-weight:600;">Open source · MIT</span>
+    const { size, videoTop } = LINKEDIN;
+    const page = await browser.newPage({ viewport: { width: size, height: size } });
+    await page.setContent(`<!doctype html><html><body style="margin:0;width:${size}px;height:${size}px;
+        background:linear-gradient(180deg,#1b1029 0%,#120b1d 100%);font-family:'Segoe UI',system-ui,sans-serif;color:#fff;">
+      <div style="height:${videoTop}px;box-sizing:border-box;padding:52px 64px 34px;display:flex;flex-direction:column;">
+        <div style="display:flex;justify-content:space-between;align-items:baseline;font-size:22px;letter-spacing:.14em;
+          text-transform:uppercase;font-weight:600;">
+          <span style="color:#B78CFF;">Model Alchemist</span>
+          <span style="color:#9a8fc0;letter-spacing:.08em;">Open source · MIT</span>
+        </div>
+        <div style="margin-top:22px;font-size:54px;line-height:1.1;font-weight:700;">${scene.headline}</div>
+        <div style="margin-top:auto;font-size:24px;color:#d9ccf0;">${scene.footer || 'Diff and selective deploy for Power BI semantic models'}</div>
       </div></body></html>`);
     await page.screenshot({ path: file });
     await page.close();
@@ -138,13 +146,30 @@ async function recordScene(browser, scene, { raw }) {
     }
     if (!gate.localTermCount) console.warn('  note: recordings/privacy.local.json missing or empty; only generic patterns were checked');
 
-    const gif = renderGif(master, outDir, scene.name);
-    const framePng = path.join(outDir, 'linkedin-frame.png');
-    await renderLinkedInFrame(browser, scene, framePng);
-    const linkedin = renderLinkedIn(master, framePng, outDir, scene.name);
     fs.rmSync(path.join(outDir, 'frames'), { recursive: true, force: true });
     fs.rmSync(path.join(outDir, 'frames.txt'), { force: true });
+    return finishScene(browser, scene, outDir);
+}
 
+/** From a gated master: titled copy, GIF and LinkedIn cut. Also used by --retitle. */
+async function finishScene(browser, scene, outDir) {
+    const master = path.join(outDir, 'master.mp4');
+    if (!fs.existsSync(master)) throw new Error(`No master for ${scene.name}; record it first.`);
+    // A scene may bring its own topic card (assets/<card>.png); otherwise the campaign card.
+    const card = scene.card ? path.join(ROOT, 'assets', scene.card) : TITLE_CARD;
+    const titled = addIntro(master, card, outDir, { ...VIEWPORT, outro: scene.outro || null });
+    const gif = renderGif(titled, outDir, scene.name);
+    let linkedin;
+    if (scene.linkedinBand === false) {
+        // The opening card already carries the headline: post the titled take as is.
+        linkedin = path.join(outDir, `${scene.name}-linkedin.mp4`);
+        fs.copyFileSync(titled, linkedin);
+        fs.rmSync(path.join(outDir, 'linkedin-frame.png'), { force: true });
+    } else {
+        const framePng = path.join(outDir, 'linkedin-frame.png');
+        await renderLinkedInFrame(browser, scene, framePng);
+        linkedin = renderLinkedIn(titled, framePng, outDir, scene.name, { videoTop: LINKEDIN.videoTop });
+    }
     console.log(`  gif ${(gif.size / 1048576).toFixed(2)} MB${gif.oversize ? ' (OVER BUDGET)' : ''} · ${path.relative(ROOT, linkedin)}`);
     return { scene: scene.name, gif, linkedin, master };
 }
@@ -152,12 +177,25 @@ async function recordScene(browser, scene, { raw }) {
 (async () => {
     const args = process.argv.slice(2);
     const raw = args.includes('--raw');
+    // Re-cut existing takes (new opening card, new GIF/LinkedIn settings) without re-recording.
+    const retitle = args.includes('--retitle');
     const names = args.filter(a => !a.startsWith('--'));
     const selected = names.length ? names.map(n => {
         const s = SCENES.find(x => x.name === n);
         if (!s) throw new Error(`Unknown scene "${n}". Known: ${SCENES.map(x => x.name).join(', ')}`);
         return s;
     }) : SCENES;
+
+    if (retitle) {
+        const browser = await chromium.launch();
+        try {
+            for (const scene of selected) {
+                console.log(`Re-cutting ${scene.name}…`);
+                await finishScene(browser, scene, path.join(OUT, scene.name));
+            }
+        } finally { await browser.close(); }
+        return;
+    }
 
     // Scenes read out/scenarios/*, which demo/scenarios.js derives from the Demo Kit.
     require('child_process').execFileSync(process.execPath, [path.join(ROOT, 'demo', 'scenarios.js')], { stdio: 'ignore' });

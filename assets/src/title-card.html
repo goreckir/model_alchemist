@@ -1,0 +1,49 @@
+<!doctype html><meta charset="utf-8">
+<link rel="stylesheet" href="theme.css">
+<!-- Opening card for recordings and campaign posts. The numbers are the Demo Kit's
+     Default Scenario as shown in the launch recording: 27 differences, 2 objects
+     deployed (Margin % and the MarginRatio function it calls), 25 left untouched. -->
+<style>
+  body { width: 1600px; height: 1000px; overflow: hidden; }
+  .wrap {
+      width: 100%; height: 100%; padding: 72px 88px; display: flex; flex-direction: column;
+      background:
+        radial-gradient(900px 520px at 95% 0%, rgba(125,207,239,0.13), transparent 62%),
+        radial-gradient(900px 560px at 0% 100%, rgba(124,111,247,0.22), transparent 62%),
+        var(--bg-deep);
+  }
+  .brand { display: flex; align-items: center; gap: 18px; }
+  .brand img { width: 64px; height: 64px; }
+  .brand .n { font-size: 30px; font-weight: 800; letter-spacing: -0.02em; }
+  .brand .n em {
+      font-style: normal; background: linear-gradient(100deg, #a396f9, #7dcfef);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  }
+  h1 { margin-top: 70px; font-size: 66px; font-weight: 800; letter-spacing: -0.03em; line-height: 1.08; }
+  .cols { margin-top: 56px; display: grid; grid-template-columns: 1fr 1fr; gap: 40px; }
+  .col {
+      background: var(--surface); border: 1px solid var(--border); border-radius: 22px;
+      padding: 38px 42px; border-top: 6px solid var(--c);
+  }
+  .col h2 { font-family: var(--mono); font-size: 22px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--c); }
+  .num { font-size: 120px; font-weight: 800; letter-spacing: -0.04em; margin-top: 14px; line-height: 1; }
+  .col p { font-size: 28px; color: #c6c6de; margin-top: 14px; line-height: 1.4; }
+  .foot2 { margin-top: auto; display: flex; justify-content: space-between; font-family: var(--mono); font-size: 18px; color: #7d7d9c; }
+</style>
+<div class="wrap grid-bg">
+  <div class="brand"><img src="logo.svg" alt=""><div class="n">Model <em>Alchemist</em></div></div>
+  <h1>Same release. Two ways to ship it.</h1>
+  <div class="cols">
+    <div class="col" style="--c: var(--removed);">
+      <h2>Republish the model</h2>
+      <div class="num">27</div>
+      <p>differences land in production at once, reviewed or not.</p>
+    </div>
+    <div class="col" style="--c: var(--added);">
+      <h2>Model Alchemist</h2>
+      <div class="num">2</div>
+      <p>objects deployed: the measure and the function it needs.<br><b>25</b> left exactly as they were.</p>
+    </div>
+  </div>
+  <div class="foot2"><span>Diff and selective deploy for Power BI semantic models</span><span>github.com/goreckir/model_alchemist</span></div>
+</div>

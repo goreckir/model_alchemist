@@ -1,0 +1,21 @@
+<!doctype html><meta charset="utf-8">
+<link rel="stylesheet" href="card.css">
+<!-- object-diff recording (post 03): the two changes of the object-diff Scenario. -->
+<div class="wrap grid-bg">
+  <div class="brand"><img src="logo.svg" alt=""><div class="n">Model <em>Alchemist</em></div></div>
+  <h1>See the <span class="hl">exact line</span> that changed.</h1>
+  <div class="sub">Object by object, with the changed fragment highlighted in Power Query and DAX. Identical objects stay out of your way.</div>
+  <div class="body diff">
+    <div class="pane">
+      <h2>Power Query · partition Sales</h2>
+      <div class="code"><span class="lbl">Dev </span> discount = if … &lt; 0.2 then <span class="add">0.1</span> else 0
+<span class="lbl">Prod</span> discount = if … &lt; 0.2 then <span class="del">0.15</span> else 0</div>
+    </div>
+    <div class="pane">
+      <h2>DAX · measure Average Selling Price</h2>
+      <div class="code"><span class="lbl">Dev </span> DIVIDE ( [Sales Amount], [<span class="add">Quantity Sold</span>] )
+<span class="lbl">Prod</span> DIVIDE ( [Sales Amount], [<span class="del">Sales Lines</span>] )</div>
+    </div>
+  </div>
+  <div class="foot2"><span>Diff and selective deploy for Power BI semantic models</span><span>github.com/goreckir/model_alchemist</span></div>
+</div>
