@@ -35,7 +35,11 @@ All written artifacts are in English: code comments, commit messages, user-facin
 
 ```
 model_alchemist/
-├── server.js                # Express server (API + static files)
+├── server.js                # Express server: maps /api routes onto core/service.js
+├── core/
+│   ├── service.js           # every operation, host-independent ({ status, body })
+│   ├── fabric-deploy.js     # Fabric drift check, upload, refresh detection
+│   └── model-paths.js       # .pbip / .SemanticModel → definition/ folder
 ├── parser/
 │   ├── tmdl-parser.js       # TMDL text → object tree
 │   └── model-loader.js      # definition/ folder → model
