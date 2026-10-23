@@ -66,7 +66,7 @@ model_alchemist/
 ├── public/                  # frontend (single page)
 │   ├── index.html
 │   ├── css/style.css
-│   └── js/{app,pure,diff}.js
+│   └── js/{app,pure,diff,transport}.js  # transport: HTTP in the browser, messages in VS Code
 ├── test/                    # node:test suite
 └── assets/                  # README images + their sources
 ```

@@ -6,6 +6,7 @@ const Pure = require('../public/js/pure.js');
 
 const APP_JS = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app.js'), 'utf-8');
 const PURE_JS = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'pure.js'), 'utf-8');
+const TRANSPORT_JS = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'transport.js'), 'utf-8');
 const INDEX_HTML = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf-8');
 
 const diff = (key, name, type = 2, changeGroup = 'Measures') =>
@@ -177,11 +178,14 @@ test('#69 each refresh gets its own poller', () => {
 
 // ── #75: the client must identify its tab ─────────────────────────────────────
 test('#75 every API call carries the session header', () => {
-    assert.match(APP_JS, /'x-ma-session': SESSION_ID/);
+    // app.js hands its per-tab id to the transport; the transport adds the header
+    // (behaviour covered in transport.test.js).
     assert.match(APP_JS, /sessionStorage\.getItem\('ma_sessionId'\)/);
-    const codeLines = APP_JS.split('\n').filter(l => !/^\s*(\/\/|\*|\/\*)/.test(l));
-    const rawFetches = codeLines.join('\n').match(/(?<![.\w])fetch\(/g) || [];
-    assert.strictEqual(rawFetches.length, 1, 'the only raw fetch is the one inside apiFetch');
+    assert.match(APP_JS, /createTransport\(\{ sessionId: SESSION_ID/);
+    assert.match(TRANSPORT_JS, /'x-ma-session': sessionId/);
+    const rawFetches = src => (src.split('\n').filter(l => !/^\s*(\/\/|\*|\/\*)/.test(l)).join('\n').match(/(?<![.\w])fetch\(/g) || []).length;
+    assert.strictEqual(rawFetches(APP_JS), 0, 'app.js never calls fetch directly, only apiFetch');
+    assert.match(APP_JS, /return transport\.request\(url, options\);/, 'apiFetch goes through the transport');
 });
 
 // ── #76: quadratic re-render on every keystroke ───────────────────────────────

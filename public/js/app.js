@@ -17,10 +17,14 @@
         return id;
     })();
 
-    /** fetch() with the session header attached. Every API call goes through this. */
+    /**
+     * HTTP to server.js in the browser, messages to the extension in a VS Code
+     * webview (see transport.js). Every API call goes through apiFetch().
+     */
+    const transport = window.MATransport.createTransport({ sessionId: SESSION_ID, globalRef: window });
+
     function apiFetch(url, options = {}) {
-        const headers = Object.assign({}, options.headers, { 'x-ma-session': SESSION_ID });
-        return fetch(url, Object.assign({}, options, { headers }));
+        return transport.request(url, options);
     }
 
     /** Parse a JSON response, turning a non-2xx into a thrown Error. */
@@ -200,6 +204,11 @@
 
     // Fabric event listeners
     document.getElementById('btn-fabric-connect').addEventListener('click', openFabricModal);
+    // The "Sign in to Fabric" buttons inside the Source and Target panels act as the
+    // header button. Wired here rather than in onclick="" so the page runs under a
+    // Content Security Policy that forbids inline handlers (the VS Code webview).
+    document.querySelectorAll('.btn-fabric-connect-inline').forEach(btn =>
+        btn.addEventListener('click', () => document.getElementById('btn-fabric-connect').click()));
     document.getElementById('fabric-modal-close').addEventListener('click', closeFabricModal);
     document.getElementById('btn-fabric-login').addEventListener('click', handleFabricLogin);
     document.getElementById('btn-fabric-cancel-login').addEventListener('click', handleFabricCancelLogin);
@@ -2587,17 +2596,11 @@ tr:hover { background: #2a2a3e; }
             mimeType = 'text/html;charset=utf-8;';
         }
 
-        // Trigger download (CSV gets a UTF-8 BOM so Excel reads accents correctly)
-        const parts = format === 'csv' ? ['\uFEFF', content] : [content];
-        const blob = new Blob(parts, { type: mimeType });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = filename;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
+        // A download in the browser, a save dialog in VS Code.
+        // CSV gets a UTF-8 BOM so Excel reads accents correctly.
+        transport.saveFile({ filename, content, mimeType, bom: format === 'csv' })
+            .then(result => { if (result.error) showError(`Export failed: ${result.error}`); })
+            .catch(err => showError(`Export failed: ${err.message}`));
     }
 
     function formatExportValue(val) {
