@@ -1,0 +1,5 @@
+node_modules/
+dist/
+*.vsix
+# Copied from the repo root by scripts/build.js
+LICENSE

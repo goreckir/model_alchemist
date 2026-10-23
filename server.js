@@ -3,6 +3,7 @@ const path = require('path');
 const { execFile } = require('child_process');
 const sessionStore = require('./lib/session-store');
 const { createService, accountForClient, APP_VERSION } = require('./core/service');
+const { ROUTES } = require('./core/routes');
 const { deployToFabric, inspectTargetReadiness, detectTablesNeedingRefresh } = require('./core/fabric-deploy');
 
 const BACKUP_DIR = path.join(__dirname, 'backups');
@@ -30,37 +31,14 @@ const service = createService({ backupDir: BACKUP_DIR });
 // concurrent tabs used to overwrite each other's comparison and deploy target.
 const stateFor = req => sessionStore.stateFor(req);
 
-/** Route a request to a service operation and send its { status, body }. */
-function route(operation, input = req => req.body) {
-    return async (req, res) => {
-        const { status, body } = await operation(stateFor(req), input(req));
+// Every /api route comes from the shared table in core/routes.js, which the
+// VS Code extension uses for its webview messages too.
+for (const { method, path: routePath, operation, input } of ROUTES) {
+    app[method.toLowerCase()](routePath, async (req, res) => {
+        const { status, body } = await service[operation](stateFor(req), input(req));
         res.status(status).json(body);
-    };
+    });
 }
-
-app.get('/api/version', route(service.version));
-app.get('/api/defaults', route(service.defaults));
-
-app.post('/api/compare', route(service.compare));
-app.post('/api/compare-fabric', route(service.compareFabric));
-app.post('/api/deploy', route(service.deploy));
-app.post('/api/deploy/preview', route(service.previewDeploy));
-app.post('/api/resolve-model', route(service.resolveModel));
-
-// ===== Fabric API Endpoints =====
-// Login opens the system browser to the Microsoft sign-in page.
-app.post('/api/fabric/login', route(service.fabricLogin));
-app.get('/api/fabric/status', route(service.fabricStatus));
-app.post('/api/fabric/cancel-login', route(service.fabricCancelLogin));
-app.post('/api/fabric/disconnect', route(service.fabricDisconnect));
-app.post('/api/fabric/resolve', route(service.fabricResolve));
-app.post('/api/fabric/refresh', route(service.fabricRefresh));
-app.get('/api/fabric/refresh/status/:requestId', route(service.fabricRefreshStatus, req => ({ requestId: req.params.requestId })));
-app.get('/api/fabric/refresh/history', route(service.fabricRefreshHistory));
-app.get('/api/fabric/refresh/active', route(service.fabricRefreshActive));
-app.get('/api/fabric/readiness', route(service.fabricReadiness));
-
-app.get('/api/activity-log', route(service.activityLog, req => ({ limit: req.query.limit })));
 
 // API: Open native folder dialog (via PowerShell WinForms)
 app.get('/api/pick-file', (req, res) => {

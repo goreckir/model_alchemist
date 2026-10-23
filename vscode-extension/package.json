@@ -1,0 +1,85 @@
+{
+  "name": "model-alchemist",
+  "displayName": "Model Alchemist",
+  "description": "Compare two Power BI semantic models (PBIP / TMDL) object by object and deploy only the changes you pick.",
+  "version": "5.2.0",
+  "publisher": "goreckir",
+  "license": "MIT",
+  "icon": "dist/icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/goreckir/model_alchemist"
+  },
+  "engines": {
+    "vscode": "^1.95.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "keywords": [
+    "Power BI",
+    "TMDL",
+    "PBIP",
+    "semantic model",
+    "diff"
+  ],
+  "extensionKind": [
+    "workspace"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "modelAlchemist.open",
+        "title": "Open",
+        "category": "Model Alchemist"
+      },
+      {
+        "command": "modelAlchemist.compareWith",
+        "title": "Compare with…",
+        "category": "Model Alchemist"
+      },
+      {
+        "command": "modelAlchemist.openLogs",
+        "title": "Open Logs Folder",
+        "category": "Model Alchemist"
+      }
+    ],
+    "menus": {
+      "explorer/context": [
+        {
+          "command": "modelAlchemist.compareWith",
+          "when": "explorerResourceIsFolder && resourceFilename =~ /\\.SemanticModel$/i || resourceExtname == .pbip",
+          "group": "3_compare@9"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Model Alchemist",
+      "properties": {
+        "modelAlchemist.backupPath": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Default folder for backups taken before a deploy. Empty: the extension's own storage folder."
+        },
+        "modelAlchemist.logPath": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Folder for the activity log and refresh history. Empty: the extension's own storage folder."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "node scripts/build.js",
+    "package": "node scripts/build.js && vsce package --no-dependencies --out model-alchemist.vsix",
+    "test": "node --test \"test/*.test.js\"",
+    "test:e2e": "node scripts/build.js && node test/e2e/run.js"
+  },
+  "devDependencies": {
+    "@types/vscode": "1.95.0",
+    "@vscode/test-electron": "3.1.0",
+    "@vscode/vsce": "4.0.0",
+    "esbuild": "0.28.2"
+  }
+}

@@ -16,6 +16,8 @@
  *   host → UI   { type: 'response', id, status, body }
  *   UI → host   { type: 'saveFile', id, filename, content, mimeType, bom }
  *   host → UI   { type: 'saveFileResult', id, saved, path?, error? }
+ *   UI → host   { type: 'ready' }                once app.js has wired the page
+ *   host → UI   { type: 'command', command, ... } e.g. 'setPaths' from "Compare with…"
  * `path` is the URL path the browser would call (e.g. '/api/compare'), `query`
  * its query string as an object. /api/pick-file is answered by the host's own
  * folder dialog with the same body the web server returns.
@@ -67,6 +69,9 @@
                 return fetchImpl(url, Object.assign({}, options, { headers }));
             },
             // Trigger a download (CSV gets a UTF-8 BOM so Excel reads accents correctly).
+            // A browser tab has no host to send it commands.
+            onCommand() {},
+            ready() {},
             async saveFile({ filename, content, mimeType, bom = false }) {
                 const parts = bom ? ['﻿', content] : [content];
                 const blob = new Blob(parts, { type: mimeType });
@@ -90,9 +95,14 @@
     function createWebviewTransport({ vscodeApi, windowRef }) {
         let nextId = 1;
         const pending = new Map();
+        const commandHandlers = [];
 
         windowRef.addEventListener('message', event => {
             const msg = event.data;
+            if (msg && msg.type === 'command') {
+                commandHandlers.forEach(fn => fn(msg));
+                return;
+            }
             if (!msg || !pending.has(msg.id)) return;
             const resolve = pending.get(msg.id);
             pending.delete(msg.id);
@@ -123,6 +133,8 @@
             saveFile({ filename, content, mimeType, bom = false }) {
                 return send({ type: 'saveFile', filename, content, mimeType, bom });
             },
+            onCommand(fn) { commandHandlers.push(fn); },
+            ready() { vscodeApi.postMessage({ type: 'ready' }); },
             pendingCount: () => pending.size
         };
     }

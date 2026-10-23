@@ -247,6 +247,19 @@
         } catch { /* non-critical */ }
     })();
 
+    // Commands from a host that embeds the page. The VS Code extension's
+    // "Compare with…" sends setPaths to fill both local paths and compare.
+    transport.onCommand(async cmd => {
+        if (cmd.command !== 'setPaths') return;
+        for (const [target, value] of [['dev', cmd.source], ['prod', cmd.target]]) {
+            if (!value) continue;
+            switchSourceTab(target, 'local');
+            (target === 'dev' ? devPathInput : prodPathInput).value = value;
+            await resolveManualPath(target);
+        }
+        if (cmd.compare && devPath && prodPath) await handleCompare();
+    });
+
     document.querySelectorAll('.filter-btn').forEach(btn => {
         btn.addEventListener('click', () => {
             document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
@@ -2640,4 +2653,7 @@ tr:hover { background: #2a2a3e; }
         const note = `<span class="chg-count">(${changedCount} changed line${changedCount === 1 ? '' : 's'})</span>`;
         return { srcHtml, tgtHtml, note };
     }
+
+    // Last statement: every listener above is wired, so a host may now send commands.
+    transport.ready();
 })();
