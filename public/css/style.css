@@ -540,6 +540,35 @@ body {
 ::-webkit-scrollbar-thumb { background: var(--color-border); border-radius: 4px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--color-text-dim); }
 
+/* ===== VS Code webview =====
+   VS Code adds its own default styles to every webview (@layer vscode-default):
+   body font size, <code> colours and font, scrollbar-color, focus outlines. They
+   apply wherever this file sets nothing, so the extension's panel looked unlike
+   the web app. Put the browser's defaults back. VS Code marks the webview body
+   with vscode-light / vscode-dark / vscode-high-contrast(-light); in a browser
+   none of this matches. :where() keeps the specificity at zero, so these rules
+   never override a style of ours. */
+:where(body.vscode-light, body.vscode-dark, body.vscode-high-contrast, body.vscode-high-contrast-light) {
+    font-size: revert;
+    font-weight: revert;
+    overscroll-behavior-x: revert;
+    /* scrollbar-color is inherited from <html>, and while it is set the
+       ::-webkit-scrollbar styles above are ignored. */
+    scrollbar-color: auto;
+}
+:where(body.vscode-light, body.vscode-dark, body.vscode-high-contrast, body.vscode-high-contrast-light) code {
+    font-family: revert;
+    color: revert;
+    background-color: revert;
+    border-radius: revert;
+}
+:where(body.vscode-light, body.vscode-dark, body.vscode-high-contrast, body.vscode-high-contrast-light) :is(input, select, textarea):focus {
+    outline: revert;
+    outline-offset: revert;
+}
+:where(body.vscode-light, body.vscode-dark, body.vscode-high-contrast, body.vscode-high-contrast-light) ::-webkit-scrollbar { height: revert; }
+:where(body.vscode-light, body.vscode-dark, body.vscode-high-contrast, body.vscode-high-contrast-light) ::-webkit-scrollbar-corner { background-color: revert; }
+
 .empty-state {
     display: flex; flex-direction: column; align-items: center;
     justify-content: center; height: 100%; color: var(--color-text-dim);
