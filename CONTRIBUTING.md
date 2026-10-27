@@ -25,6 +25,18 @@ Two conventions worth knowing before adding a test:
 - **Name the test after the issue it locks down** (`#42 modifying a table header preserves the target lineageTag`). When it fails, the name alone says which defect came back.
 - **Use the real pipeline.** `test/helpers/tmdl.js` writes throwaway TMDL folders to a temp directory and runs them through the actual loader, comparison engine and deployer, so a test exercises the same code path the app does. `test/roundtrip.test.js` is the broadest of these: it deploys every difference between two models and asserts nothing is left to deploy.
 
+The VS Code extension has its own suite, because it needs its own dev dependencies:
+
+```bash
+cd vscode-extension
+npm install
+npm test           # router, webview HTML and CSP, in plain Node
+npm run test:e2e   # the extension in a throwaway VS Code instance, against the Demo Kit
+npm run package    # model-alchemist-<version>.vsix
+```
+
+`test:e2e` uses the VS Code installed on the machine (or `VSCODE_PATH`) with its own user-data and extensions folders, so your setup is not touched.
+
 Frontend logic that can be tested lives in `public/js/pure.js`. These are DOM-free functions (filtering, group indexing, escaping, export formatting) exported to both the browser (`window.MAPure`) and the test runner. Put logic there rather than inside `app.js` wherever it does not need the DOM.
 
 ## Language
@@ -35,7 +47,12 @@ All written artifacts are in English: code comments, commit messages, user-facin
 
 ```
 model_alchemist/
-├── server.js                # Express server (API + static files)
+├── server.js                # Express server: maps /api routes onto core/service.js
+├── core/
+│   ├── service.js           # every operation, host-independent ({ status, body })
+│   ├── routes.js            # method + path → operation, shared by server.js and the extension
+│   ├── fabric-deploy.js     # Fabric drift check, upload, refresh detection
+│   └── model-paths.js       # .pbip / .SemanticModel → definition/ folder
 ├── parser/
 │   ├── tmdl-parser.js       # TMDL text → object tree
 │   └── model-loader.js      # definition/ folder → model
@@ -62,8 +79,9 @@ model_alchemist/
 ├── public/                  # frontend (single page)
 │   ├── index.html
 │   ├── css/style.css
-│   └── js/{app,pure,diff}.js
+│   └── js/{app,pure,diff,transport}.js  # transport: HTTP in the browser, messages in VS Code
 ├── test/                    # node:test suite
+├── vscode-extension/        # the same app in a VS Code panel (src/, test/, scripts/build.js)
 └── assets/                  # README images + their sources
 ```
 

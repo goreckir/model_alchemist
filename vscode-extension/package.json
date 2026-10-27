@@ -1,0 +1,131 @@
+{
+  "name": "model-alchemist",
+  "displayName": "Model Alchemist",
+  "description": "Compare two Power BI semantic models (PBIP / TMDL) object by object and deploy only the changes you pick.",
+  "version": "5.2.0",
+  "publisher": "SmartData",
+  "preview": true,
+  "pricing": "Free",
+  "license": "MIT",
+  "icon": "dist/icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/goreckir/model_alchemist"
+  },
+  "bugs": {
+    "url": "https://github.com/goreckir/model_alchemist/issues"
+  },
+  "homepage": "https://github.com/goreckir/model_alchemist#readme",
+  "galleryBanner": {
+    "color": "#15151d",
+    "theme": "dark"
+  },
+  "engines": {
+    "vscode": "^1.95.0"
+  },
+  "categories": [
+    "Data Science",
+    "Other"
+  ],
+  "keywords": [
+    "Power BI",
+    "TMDL",
+    "PBIP",
+    "semantic model",
+    "diff",
+    "compare",
+    "deploy",
+    "Fabric"
+  ],
+  "extensionKind": [
+    "workspace"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "modelAlchemist.open",
+        "title": "Open",
+        "category": "Model Alchemist"
+      },
+      {
+        "command": "modelAlchemist.compareWith",
+        "title": "Model Alchemist: Compare with…"
+      },
+      {
+        "command": "modelAlchemist.openLogs",
+        "title": "Open Logs Folder",
+        "category": "Model Alchemist"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "modelAlchemist",
+          "title": "Model Alchemist",
+          "icon": "media/activity-bar.png"
+        }
+      ]
+    },
+    "views": {
+      "modelAlchemist": [
+        {
+          "id": "modelAlchemist.start",
+          "name": "Start"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "modelAlchemist.start",
+        "contents": "Compare two Power BI semantic models (PBIP / TMDL) object by object and deploy only the changes you pick.\n[Open Model Alchemist](command:modelAlchemist.open)\n[Compare Two Models…](command:modelAlchemist.compareWith)\nYou can also right-click a .SemanticModel folder or a .pbip file in the Explorer and choose \"Model Alchemist: Compare with…\".\n[Open Logs Folder](command:modelAlchemist.openLogs)"
+      }
+    ],
+    "menus": {
+      "explorer/context": [
+        {
+          "command": "modelAlchemist.compareWith",
+          "when": "explorerResourceIsFolder && resourceFilename =~ /\\.SemanticModel$/i || resourceExtname == .pbip",
+          "group": "3_compare@9"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Model Alchemist",
+      "properties": {
+        "modelAlchemist.backupPath": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Default folder for backups taken before a deploy. Empty: the extension's own storage folder."
+        },
+        "modelAlchemist.logPath": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Folder for the activity log and refresh history. Empty: the extension's own storage folder."
+        },
+        "modelAlchemist.fabric.clientId": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Application (client) ID of the Entra app registration that signs in to Fabric. Empty: VS Code's own sign-in app. Set it when your organisation does not let VS Code's app call the Power BI API."
+        },
+        "modelAlchemist.fabric.tenant": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Directory (tenant) ID or domain to sign in to. Empty: the account's home directory (`organizations`)."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "node scripts/build.js",
+    "package": "node scripts/build.js && vsce package --no-dependencies",
+    "test": "node --test \"test/*.test.js\"",
+    "test:e2e": "node scripts/build.js && node test/e2e/run.js"
+  },
+  "devDependencies": {
+    "@types/vscode": "1.95.0",
+    "@vscode/test-electron": "3.1.0",
+    "@vscode/vsce": "4.0.0",
+    "esbuild": "0.28.2"
+  }
+}

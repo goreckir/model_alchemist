@@ -1,0 +1,8 @@
+# Ship only the bundle, the UI and the docs. Sources and tests are in the bundle or not needed.
+src/**
+scripts/**
+test/**
+node_modules/**
+*.vsix
+**/*.map
+.gitignore
