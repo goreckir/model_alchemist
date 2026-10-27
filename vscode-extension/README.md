@@ -47,14 +47,4 @@ The extension collects no telemetry. Models are read and written on your machine
 - Windows is the tested platform. The extension uses only VS Code APIs for dialogs, so it is expected to work elsewhere, including Remote and WSL.
 - Fabric sign-in has been tested on one tenant.
 
-## Build from source
-
-```bash
-npm install
-npm run package
-code --install-extension model-alchemist-5.2.1.vsix
-```
-
-`npm test` runs the unit tests; `npm run test:e2e` runs the extension in a throwaway VS Code instance against the Demo Kit.
-
 MIT licence. Source: [goreckir/model_alchemist](https://github.com/goreckir/model_alchemist).
