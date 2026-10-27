@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### New Features
+
+- **VS Code extension (Preview).** `vscode-extension/` packages Model Alchemist for VS Code, published as `SmartData.model-alchemist`. It runs the same engine in a panel, with an Activity Bar icon, **Model Alchemist: Compare with…** in the Explorer, VS Code's file dialogs, and Fabric sign-in through the Microsoft account in VS Code. The web app and the External Tool are unchanged. Changes per release: `vscode-extension/CHANGELOG.md`.
+
 ### Changes
 
 - **Role members are no longer compared or deployed.** Power BI assigns RLS role members in the service (Security), not in the model definition. Members written into a PBIP made Power BI Desktop crash when it reopened the project, and members deployed to Fabric never appeared. Role logic is still compared and deployed: `modelPermission`, `tablePermission` filters, column and data coverage permissions. Adding a role copies it without the source's members, and any members already in the target are kept.

@@ -3,17 +3,28 @@
   "displayName": "Model Alchemist",
   "description": "Compare two Power BI semantic models (PBIP / TMDL) object by object and deploy only the changes you pick.",
   "version": "5.2.0",
-  "publisher": "goreckir",
+  "publisher": "SmartData",
+  "preview": true,
+  "pricing": "Free",
   "license": "MIT",
   "icon": "dist/icon.png",
   "repository": {
     "type": "git",
     "url": "https://github.com/goreckir/model_alchemist"
   },
+  "bugs": {
+    "url": "https://github.com/goreckir/model_alchemist/issues"
+  },
+  "homepage": "https://github.com/goreckir/model_alchemist#readme",
+  "galleryBanner": {
+    "color": "#15151d",
+    "theme": "dark"
+  },
   "engines": {
     "vscode": "^1.95.0"
   },
   "categories": [
+    "Data Science",
     "Other"
   ],
   "keywords": [
@@ -21,7 +32,10 @@
     "TMDL",
     "PBIP",
     "semantic model",
-    "diff"
+    "diff",
+    "compare",
+    "deploy",
+    "Fabric"
   ],
   "extensionKind": [
     "workspace"
@@ -104,7 +118,7 @@
   },
   "scripts": {
     "build": "node scripts/build.js",
-    "package": "node scripts/build.js && vsce package --no-dependencies --out model-alchemist.vsix",
+    "package": "node scripts/build.js && vsce package --no-dependencies",
     "test": "node --test \"test/*.test.js\"",
     "test:e2e": "node scripts/build.js && node test/e2e/run.js"
   },

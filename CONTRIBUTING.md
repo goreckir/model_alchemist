@@ -32,7 +32,7 @@ cd vscode-extension
 npm install
 npm test           # router, webview HTML and CSP, in plain Node
 npm run test:e2e   # the extension in a throwaway VS Code instance, against the Demo Kit
-npm run package    # model-alchemist.vsix
+npm run package    # model-alchemist-<version>.vsix
 ```
 
 `test:e2e` uses the VS Code installed on the machine (or `VSCODE_PATH`) with its own user-data and extensions folders, so your setup is not touched.

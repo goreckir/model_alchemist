@@ -20,7 +20,7 @@ function waitFor(api, predicate, what, ms = 60000) {
 }
 
 async function run() {
-    const ext = vscode.extensions.getExtension('goreckir.model-alchemist');
+    const ext = vscode.extensions.getExtension('SmartData.model-alchemist');
     assert.ok(ext, 'the extension is loaded');
     const api = await ext.activate();
 
