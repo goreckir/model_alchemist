@@ -36,8 +36,7 @@
       },
       {
         "command": "modelAlchemist.compareWith",
-        "title": "Compare with…",
-        "category": "Model Alchemist"
+        "title": "Model Alchemist: Compare with…"
       },
       {
         "command": "modelAlchemist.openLogs",
