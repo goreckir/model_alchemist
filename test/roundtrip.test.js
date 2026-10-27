@@ -13,12 +13,13 @@ const H = require('./helpers/tmdl');
 
 test.after(() => H.cleanup());
 
-function model({ measureFormat, columnType, partitionServer, culture, roleFilter, member, exprBody, hidden }) {
+function model({ measureFormat, columnType, partitionServer, queryCulture, roleFilter, member, exprBody, hidden }) {
     return {
         'database.tmdl': H.databaseTmdl(1567),
         'model.tmdl': [
             'model Model',
-            `\tculture: ${culture}`,
+            '\tculture: en-US',
+            `\tsourceQueryCulture: ${queryCulture}`,
             '',
             'ref table Sales',
             'ref table Dim',
@@ -103,12 +104,12 @@ function model({ measureFormat, columnType, partitionServer, culture, roleFilter
 
 const DEV = model({
     measureFormat: '#,0', columnType: 'double', partitionServer: 'dev-sql',
-    culture: 'pl-PL', roleFilter: '[Amount] > 100', member: 'dev-user@corp.com',
+    queryCulture: 'pl-PL', roleFilter: '[Amount] > 100', member: 'dev-user@corp.com',
     exprBody: '1', hidden: true
 });
 const PROD = model({
     measureFormat: '0.00', columnType: 'int64', partitionServer: 'prod-sql',
-    culture: 'en-US', roleFilter: '[Amount] > 0', member: 'dev-user@corp.com',
+    queryCulture: 'en-US', roleFilter: '[Amount] > 0', member: 'dev-user@corp.com',
     exprBody: '2', hidden: false
 });
 

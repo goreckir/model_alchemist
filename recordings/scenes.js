@@ -212,40 +212,6 @@ module.exports = [
         }
     },
     {
-        name: 'rls-preserved',
-        card: 'rls-preserved-card.png',
-        linkedinBand: false,
-        // Trim the static end caption and close on the card.
-        outro: { trim: 2.9, hold: 3 },
-        headline: 'Change the rule.<br>Keep the people.',
-        models: scenario('rls-preserved'),
-        async run(d, staged) {
-            const p = d.page;
-            await openComparison(d, staged, 'Production roles have real members');
-
-            await d.click(group(p, 'Roles & Row-Level Security'));
-            await d.caption('Dev widened the Regional Manager filter');
-            await d.click(row(p, 'Regional Manager → Store').locator('.diff-object-header-left'), { pauseAfter: 2200 });
-
-            await d.caption('The members exist only in production');
-            await d.hover(row(p, 'Regional Manager → manager.north@apothecary.example'), 700);
-            await d.wait(1400);
-
-            await d.caption('Deploy only the filter');
-            await d.click(row(p, 'Regional Manager → Store').locator('.diff-checkbox'), { pauseAfter: 600 });
-            await deploySelected(d);
-
-            await d.caption('Filter updated. Every member is still there.');
-            await d.wait(2400);
-
-            await d.caption('Model Alchemist · free and open source');
-            await d.wait(2200);
-            await d.caption('');
-            await d.wait(400);
-        }
-    }
-    ,
-    {
         name: 'scoped-refresh',
         card: 'scoped-refresh-card.png',
         linkedinBand: false,

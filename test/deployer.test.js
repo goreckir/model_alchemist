@@ -89,56 +89,45 @@ test('#24 adding a calculation group writes each calculationItem exactly once', 
     assert.strictEqual(count('calculationGroup'), 1, 'calculationGroup written once');
 });
 
-// ── #25: roleMember diffs had no planner case ─────────────────────────────────
-test('#25 adding an RLS role member actually writes it', () => {
-    const roleFile = members => [
-        'role Viewer',
-        '\tmodelPermission: read',
-        '',
-        '\ttablePermission Sales = [Amount] > 0',
-        ...members.map(m => ['', `\tmember ${m}`, '\t\tmemberType: user']).flat(),
-        ''
-    ].join('\n');
+// ── Role members are not part of the model in Power BI ───────────────────────
+// Power BI assigns role members in the service (Security). They are never diffed
+// and never deployed; only the role logic is.
+const viewerRole = (filter, members) => [
+    'role Viewer',
+    '\tmodelPermission: read',
+    '',
+    `\ttablePermission Sales = ${filter}`,
+    ...members.map(m => ['', `\tmember ${m}`, '\t\tmemberType: user']).flat(),
+    ''
+].join('\n');
 
-    const base = {
-        'database.tmdl': H.databaseTmdl(),
-        'model.tmdl': H.modelTmdl(['table Sales', 'role Viewer']),
-        'tables/Sales.tmdl': 'table Sales\n\n\tcolumn Amount\n\t\tdataType: double\n'
-    };
+const SALES_ONLY = {
+    'database.tmdl': H.databaseTmdl(),
+    'tables/Sales.tmdl': 'table Sales\n\n\tcolumn Amount\n\t\tdataType: double\n'
+};
+
+test('role members are not compared', () => {
+    const base = { ...SALES_ONLY, 'model.tmdl': H.modelTmdl(['table Sales', 'role Viewer']) };
     const s = scenario(
-        { ...base, 'roles/Viewer.tmdl': roleFile(['alice@corp.com', 'bob@corp.com']) },
-        { ...base, 'roles/Viewer.tmdl': roleFile(['alice@corp.com']) }
+        { ...base, 'roles/Viewer.tmdl': viewerRole('[Amount] > 0', ['alice@corp.com', 'bob@corp.com']) },
+        { ...base, 'roles/Viewer.tmdl': viewerRole('[Amount] > 0', ['carol@corp.com']) }
     );
-
-    const { selected, result } = deploy(s, d => d.objectType === 'roleMember');
-    assert.strictEqual(selected.length, 1, 'the new member is a diff');
-    assert.strictEqual(result.success, true, errorText(result));
-    assert.ok(result.actions.some(a => a.type === 'applied'), 'an operation was applied');
-    assert.match(read(s.prodPath, 'roles/Viewer.tmdl'), /member bob@corp\.com/);
+    assert.deepStrictEqual(s.comparison.diffs.map(d => d.displayName), []);
 });
 
-test('#25 removing an RLS role member actually removes it', () => {
-    const roleFile = members => [
-        'role Viewer',
-        '\tmodelPermission: read',
-        ...members.map(m => ['', `\tmember ${m}`, '\t\tmemberType: user']).flat(),
-        ''
-    ].join('\n');
-
-    const base = {
-        'database.tmdl': H.databaseTmdl(),
-        'model.tmdl': H.modelTmdl(['role Viewer'])
-    };
+test('adding a role deploys its logic without the DEV members', () => {
     const s = scenario(
-        { ...base, 'roles/Viewer.tmdl': roleFile(['alice@corp.com']) },
-        { ...base, 'roles/Viewer.tmdl': roleFile(['alice@corp.com', 'bob@corp.com']) }
+        { ...SALES_ONLY, 'model.tmdl': H.modelTmdl(['table Sales', 'role Viewer']), 'roles/Viewer.tmdl': viewerRole('[Amount] > 0', ['dev-user@corp.com']) },
+        { ...SALES_ONLY, 'model.tmdl': H.modelTmdl(['table Sales']) }
     );
 
-    const { result } = deploy(s, d => d.objectType === 'roleMember' && d.type === 1);
+    const { selected, result } = deploy(s, d => d.objectType === 'role');
+    assert.strictEqual(selected.length, 1);
     assert.strictEqual(result.success, true, errorText(result));
+
     const written = read(s.prodPath, 'roles/Viewer.tmdl');
-    assert.ok(!written.includes('bob@corp.com'), 'bob removed');
-    assert.match(written, /member alice@corp\.com/, 'alice kept');
+    assert.match(written, /tablePermission Sales = \[Amount\] > 0/, 'the role logic is deployed');
+    assert.ok(!/\bmember\b/.test(written), 'no member is deployed');
 });
 
 // ── #26: tablePermission modify overwrote the whole role file ─────────────────
@@ -369,11 +358,12 @@ test('#72 the preview names block content that ships beyond the reviewed propert
 
 // ── #43: model-properties modify replaced the whole model block ───────────────
 test('#43 a model modify keeps refs indented inside the model block', () => {
-    const modelFile = (culture, indentRefs) => {
+    const modelFile = (queryCulture, indentRefs) => {
         const refIndent = indentRefs ? '\t' : '';
         return [
             'model Model',
-            `\tculture: ${culture}`,
+            '\tculture: en-US',
+            `\tsourceQueryCulture: ${queryCulture}`,
             '',
             `${refIndent}ref table Sales`,
             `${refIndent}ref table Dim`,
@@ -401,9 +391,39 @@ test('#43 a model modify keeps refs indented inside the model block', () => {
     assert.strictEqual(result.success, true, errorText(result));
 
     const written = read(s.prodPath, 'model.tmdl');
-    assert.match(written, /culture: pl-PL/, 'the reviewed change is deployed');
+    assert.match(written, /sourceQueryCulture: pl-PL/, 'the reviewed change is deployed');
     assert.match(written, /ref table Sales/, 'the Sales ref survives');
     assert.match(written, /ref table Dim/, 'the Dim ref survives');
+});
+
+// ── The model culture cannot change after the model is created ────────────────
+const modelWith = props => ['model Model', ...props.map(p => `\t${p}`), ''].join('\n');
+const cultureScenario = (devProps, prodProps) => scenario(
+    { 'database.tmdl': H.databaseTmdl(), 'model.tmdl': modelWith(devProps) },
+    { 'database.tmdl': H.databaseTmdl(), 'model.tmdl': modelWith(prodProps) }
+);
+
+test('a model diff that only changes the culture is blocked', () => {
+    const s = cultureScenario(['culture: en-US'], ['culture: en-GB']);
+    const { selected, result } = deploy(s, d => d.objectType === 'model');
+    assert.strictEqual(selected.length, 1);
+    assert.strictEqual(result.success, false);
+    assert.match(errorText(result), /\[MODEL_CULTURE_IMMUTABLE\]/);
+    assert.match(read(s.prodPath, 'model.tmdl'), /culture: en-GB/, 'the target is left untouched');
+});
+
+test('other model properties deploy and the target keeps its culture', () => {
+    const s = cultureScenario(
+        ['culture: en-US', 'sourceQueryCulture: pl-PL'],
+        ['culture: en-GB', 'sourceQueryCulture: en-GB']
+    );
+    const { result } = deploy(s, d => d.objectType === 'model');
+    assert.strictEqual(result.success, true, errorText(result));
+    assert.ok(result.warnings.some(w => w.code === 'MODEL_CULTURE_KEPT'), 'the kept culture is reported');
+
+    const written = read(s.prodPath, 'model.tmdl');
+    assert.match(written, /sourceQueryCulture: pl-PL/, 'the other property is deployed');
+    assert.match(written, /\tculture: en-GB/, 'the target culture is kept');
 });
 
 test('#43 mergeModelBlock keeps target refs and drops source refs', () => {

@@ -1,8 +1,7 @@
 /**
  * Demo Kit regression: the Default Scenario (demo/dev → demo/prod) is the model
  * new users try first and the source of the campaign recordings. It must cover
- * every Change Group, and deploying it must leave only the Prod-only RLS members
- * behind. See docs/adr/0001-demo-kit-single-synthetic-model.md.
+ * every Change Group, and deploying all of it must leave no difference behind. See docs/adr/0001-demo-kit-single-synthetic-model.md.
  */
 const test = require('node:test');
 const assert = require('node:assert');
@@ -31,24 +30,17 @@ test('Default Scenario covers every Change Group', () => {
     assert.deepStrictEqual(missing, [], `Change Groups without a difference: ${missing.join(', ')}`);
 });
 
-test('deploying the Default Scenario leaves only the Prod-only RLS members', () => {
+test('deploying the whole Default Scenario leaves no difference', () => {
     const devModel = loadModelFromFolder(DEV_MODEL);
     const prodPath = H.makeModelFolder(readModel(PROD_MODEL));
     const prodModel = loadModelFromFolder(prodPath);
     const before = compareModels(devModel, prodModel, DEV_MODEL, prodPath);
 
-    const selected = before.diffs.filter(d => d.objectType !== 'roleMember');
-    const result = deployChanges(selected, devModel, prodPath, { backup: false, prodModel, allDiffs: before.diffs });
+    const result = deployChanges(before.diffs, devModel, prodPath, { backup: false, prodModel, allDiffs: before.diffs });
     assert.strictEqual(result.success, true, (result.errors || []).map(e => e.error).join(' | '));
 
     const after = compareModels(devModel, loadModelFromFolder(prodPath), DEV_MODEL, prodPath);
-    assert.deepStrictEqual(
-        after.diffs.map(d => `${d.objectType} ${d.displayName}`).sort(),
-        [
-            'roleMember Regional Manager → auditor@apothecary.example',
-            'roleMember Regional Manager → manager.north@apothecary.example'
-        ]
-    );
+    assert.deepStrictEqual(after.diffs.map(d => `${d.objectType} ${d.displayName}`), []);
 });
 
 // Selective deploys that used to pass validation and leave the target broken:
