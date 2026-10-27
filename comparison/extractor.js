@@ -480,6 +480,8 @@ function extractRole(role, objects) {
             tablePermissions: permSummary
         }
     };
+    // Role members are not compared: Power BI assigns them in the service (Security),
+    // not in the model definition. Only the role logic (permissions, filters) is diffed.
     for (const child of tablePerms) {
         const tpKey = childKey('tablePermission', role.name, child.name);
         const filterExpr = child.expression || child.properties.filterExpression || '';
@@ -498,26 +500,6 @@ function extractRole(role, objects) {
                 metadataPermission: child.properties.metadataPermission || '',
                 columnPermissions: serializeChildren(child, ['columnpermission']),
                 dataCoveragePermission: serializeChildren(child, ['dataCoveragePermission'])
-            }
-        };
-    }
-
-    // Extract role members
-    const members = (role.children || []).filter(c => c.type === 'member');
-    for (const member of members) {
-        const mKey = childKey('roleMember', role.name, member.name);
-        objects[mKey] = {
-            objectType: 'roleMember',
-            identityKey: mKey,
-            displayName: `${role.name} → ${member.name}`,
-            objectName: member.name,
-            parentRole: role.name,
-            changeGroup: CHANGE_GROUPS.ROLES,
-            sourceFile: role.file,
-            rawBlock: member.rawBlock,
-            properties: {
-                memberName: member.name,
-                memberType: member.properties.memberType || member.properties.identityProvider || ''
             }
         };
     }

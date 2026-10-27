@@ -69,6 +69,31 @@ function validateDependencies(selectedDiffs, devModel, prodModel, allDiffs = [])
         }
     }
 
+    // A model's culture (language) cannot change after it is created. Power BI and
+    // Fabric reject such a model, so the deployer keeps the target's culture.
+    for (const d of selectedDiffs) {
+        if (d.objectType !== 'model' || d.type !== 2) continue;
+        const props = d.propertyDiffs || [];
+        const culture = props.find(p => p.propertyName === 'culture');
+        if (!culture) continue;
+        const change = `source ${culture.devValue || '(none)'}, target ${culture.prodValue || '(none)'}`;
+        if (props.length === 1) {
+            errors.push({
+                code: 'MODEL_CULTURE_IMMUTABLE',
+                identityKey: d.identityKey,
+                message: `The model culture cannot be changed after the model is created (${change}). ` +
+                    `There is nothing else to deploy in Model Properties. To use another culture, create a new model.`
+            });
+        } else {
+            warnings.push({
+                code: 'MODEL_CULTURE_KEPT',
+                identityKey: d.identityKey,
+                message: `The model culture cannot be changed after the model is created (${change}). ` +
+                    `The other model properties are deployed; the target keeps culture ${culture.prodValue || '(none)'}.`
+            });
+        }
+    }
+
     const prodObjects = extractAll(prodModel);
     const devObjects = extractAll(devModel);
 

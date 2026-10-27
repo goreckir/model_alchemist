@@ -8,7 +8,7 @@
  * - Adding/removing/modifying relationships (manipulate relationships.tmdl)
  * - Adding/removing/modifying expressions (manipulate expressions.tmdl)
  * - Adding/removing roles, perspectives, cultures (copy/delete files)
- * - Row-level-security membership and per-tablePermission edits
+ * - Per-tablePermission RLS edits (role members are never deployed; target members are kept)
  * - Backup before deployment
  * - Transactional execution: stop on the first failure and roll every file back
  * - Cardinality change validation warnings for relationships
@@ -337,7 +337,7 @@ function planFileOperations(selectedDiffs, devModel, prodPath, prodModel, contex
     }
 
     const CHILD_OBJECT_TYPES = new Set(['column', 'measure', 'hierarchy', 'partition', 'calculationGroup', 'calculationItem']);
-    const ROLE_CHILD_DIFF_TYPES = new Set(['tablePermission', 'roleMember']);
+    const ROLE_CHILD_DIFF_TYPES = new Set(['tablePermission']);
 
     // Detect whether any selected diff introduces a calculation group into the
     // target. Calculation groups require `discourageImplicitMeasures: true` on
@@ -366,7 +366,7 @@ function planFileOperations(selectedDiffs, devModel, prodPath, prodModel, contex
             // unloadable (duplicate object names).
             if (diff.type === 0 && diff.objectType === 'calculationItem' && calcGroupsBeingAdded.has(diff.parentTable)) continue;
         }
-        // A whole role ADD/REMOVE already covers its tablePermission/member children
+        // A whole role ADD/REMOVE already covers its tablePermission children
         // (ADD writes the full DEV file, REMOVE deletes it). Planning a separate op
         // for the child either duplicated it or failed with TARGET_FILE_MISSING
         // against a file the role op had already deleted.
@@ -461,9 +461,6 @@ function planSingleDiff(diff, devModel, prodPath, context) {
             break;
         case 'tablePermission':
             ops.push(...planRoleChildOp(diff, devModel, prodPath, context, 'tablePermission'));
-            break;
-        case 'roleMember':
-            ops.push(...planRoleChildOp(diff, devModel, prodPath, context, 'member'));
             break;
         case 'perspective':
             ops.push(...planFileBasedOp(diff, devModel, prodPath, context, 'perspectives'));
@@ -682,17 +679,33 @@ function planModelOp(diff, devModel, prodPath, context) {
 
     // Only modify is meaningful for the model object (add/remove of model itself isn't supported)
     if (diff.type === 2) {
+        // A model's culture cannot change after it is created: keep the target's.
+        // The validator blocks a model diff that changes nothing else.
+        const cultureDiff = (diff.propertyDiffs || []).find(p => p.propertyName === 'culture');
         return [{
             action: 'replaceModelBlock',
             targetPath: targetFile,
             objectType: 'model',
             objectName: modelName,
-            newBlock: diff.rawBlock,
-            reviewedProperties: (diff.propertyDiffs || []).map(p => p.propertyName),
+            newBlock: cultureDiff ? withCulture(diff.rawBlock, cultureDiff.prodValue) : diff.rawBlock,
+            reviewedProperties: (diff.propertyDiffs || []).map(p => p.propertyName).filter(n => n !== 'culture'),
             description: { action: 'modify', objectType: 'model', name: diff.displayName, file: targetKey }
         }];
     }
     return [];
+}
+
+/** Set the model block's `culture:` line to `culture`, or drop it when the target has none. */
+function withCulture(block, culture) {
+    const lines = String(block).replace(/\r\n/g, '\n').split('\n');
+    const i = lines.findIndex(l => /^\tculture:/.test(l));
+    if (culture) {
+        if (i >= 0) lines[i] = `\tculture: ${culture}`;
+        else lines.splice(lines.findIndex(l => /^model\b/.test(l)) + 1, 0, `\tculture: ${culture}`);
+    } else if (i >= 0) {
+        lines.splice(i, 1);
+    }
+    return lines.join('\n');
 }
 
 /**
@@ -701,6 +714,8 @@ function planModelOp(diff, devModel, prodPath, context) {
  * A role modify replaces ONLY the role header. Writing the whole DEV role file
  * replaced the target's RLS members with DEV's (dev accounts in, prod accounts
  * out) and deployed every other unselected change in that file.
+ * A role add copies the DEV file without its members: Power BI assigns role
+ * members in the service, so they are never deployed.
  */
 function planRoleOp(diff, devModel, prodPath, context) {
     const roleName = diff.displayName;
@@ -715,7 +730,7 @@ function planRoleOp(diff, devModel, prodPath, context) {
         return [{
             action: 'writeFile',
             targetPath: targetFile,
-            content,
+            content: stripRoleMembers(content),
             ensureDir: true,
             updateModelRef: { type: 'add', refType: 'role', name: roleName },
             description: { action: 'add', objectType: 'role', name: roleName, file: targetKey }
@@ -744,10 +759,28 @@ function planRoleOp(diff, devModel, prodPath, context) {
 }
 
 /**
- * Plan operations for a role's children: tablePermission and member.
- *
- * roleMember had no case at all, so a selected RLS membership change produced
- * zero operations and zero errors — a silent, security-relevant no-op.
+ * Remove every `member` block (and the blank lines leading into it) from a role file.
+ */
+function stripRoleMembers(content) {
+    const eol = content.includes('\r\n') ? '\r\n' : '\n';
+    const out = [];
+    let inMember = false;
+    for (const line of content.split(/\r?\n/)) {
+        if (/^\tmember\b/.test(line)) {
+            while (out.length && out[out.length - 1].trim() === '') out.pop();
+            out.push('');
+            inMember = true;
+            continue;
+        }
+        if (inMember && (line.trim() === '' || /^\t\t/.test(line))) continue;
+        inMember = false;
+        out.push(line);
+    }
+    return out.join(eol);
+}
+
+/**
+ * Plan operations for a role's tablePermission children.
  */
 function planRoleChildOp(diff, devModel, prodPath, context, childType) {
     const roleName = diff.parentRole || String(diff.displayName).split(' → ')[0];

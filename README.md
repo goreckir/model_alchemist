@@ -15,7 +15,7 @@
 
 Model Alchemist is an open-source diff and deployment tool for Power BI semantic models in TMDL format. It reads two models, compares them object by object, and lets you promote a chosen subset of the differences instead of republishing the whole model. Each model can be a PBIP `.SemanticModel` folder on disk, a semantic model in Microsoft Fabric, or one of each. It runs locally as a small web app, and it can be launched straight from Power BI Desktop as an External Tool.
 
-It exists because "publish" is all-or-nothing. When one measure needs to move from a development model to production, republishing carries every other unreviewed change with it, overwrites row-level security membership, and gives you no record of what actually shipped.
+It exists because "publish" is all-or-nothing. When one measure needs to move from a development model to production, republishing carries every other unreviewed change with it and gives you no record of what actually shipped.
 
 ![Model Alchemist in 30 seconds. An opening card contrasts republishing the model, 27 differences landing at once, with Model Alchemist deploying 2 objects and leaving 25 untouched. Then two versions of the same Power BI model are compared, 27 differences appear sorted into eleven change groups, a changed format string is highlighted, one measure and the function it calls are ticked, the deploy preview lists exactly those two objects, and after the deploy the target shows 25 remaining differences.](assets/recordings/launch.gif)
 
@@ -62,7 +62,7 @@ Eleven change groups, each diffed at property level. Object identity is matched 
 
 > **Known limitation: model-level annotations are not compared.** Annotations written at the top level of `model.tmdl` are currently ignored by both comparison and deployment. Power BI Desktop saves model annotations this way: the Auto date/time setting (`__PBI_TimeIntelligenceEnabled`) and custom annotations added by other tools, such as version stamps or Best Practice Analyzer settings. A difference in them is not reported, and the target keeps its own values. Check those settings by hand. Annotations on tables, columns, measures and other objects are compared as usual.
 
-![The eleven change groups Model Alchemist compares, each listed with the TMDL properties it reads. Tables and Relationships, Measures, Calculation Groups, Hierarchies, Roles and Row-Level Security, Perspectives, Translations, Data Sources and Parameters, Named Expressions, Functions, and Model Properties. A twelfth panel lists what is deliberately never compared: lineageTag, sourceLineageTag and PBI_ annotations, which are per-environment identifiers and Power BI runtime state preserved in the target on every write.](assets/diagram-coverage.png)
+![The eleven change groups Model Alchemist compares, each listed with the TMDL properties it reads. Tables and Relationships, Measures, Calculation Groups, Hierarchies, Roles and Row-Level Security, Perspectives, Translations, Data Sources and Parameters, Named Expressions, Functions, and Model Properties. A twelfth panel lists what is deliberately never compared: lineageTag, sourceLineageTag and PBI_ annotations, which are per-environment identifiers and Power BI runtime state preserved in the target on every write, and role members, which Power BI assigns in the service.](assets/diagram-coverage.png)
 
 ---
 
@@ -74,7 +74,7 @@ For a Fabric target, open the refresh modal and click **Check Target State** to 
 
 Before any write:
 
-1. **Dependency validation** (hard error, deploy blocked). A missing parent table or relationship endpoint, a calculation item without its calculation group, a duplicate relationship, a perspective or role pointing at something that will not exist, a measure calling a function or named expression the target lacks, a removed function or expression the target still uses, or a compatibility level that is too low.
+1. **Dependency validation** (hard error, deploy blocked). A missing parent table or relationship endpoint, a calculation item without its calculation group, a duplicate relationship, a perspective or role pointing at something that will not exist, a measure calling a function or named expression the target lacks, a removed function or expression the target still uses, a change of the model culture (it cannot change after a model is created; other model properties still deploy and the target keeps its culture), or a compatibility level that is too low.
 2. **Cascade and cardinality warnings** (shown in the preview). Relationships orphaned by a removed column or table are listed for automatic removal. A cardinality change states which key column must be unique before the engine will accept it.
 3. **Fabric drift check** (`PROD_CHANGED_SINCE_COMPARE`, deploy blocked). The live definition is re-fetched and compared with the snapshot your comparison was taken from. If someone else published in between, the changed files are named.
 4. **Backup.** The whole `.SemanticModel` folder is copied next to the model, not just `definition/`, so `definition.pbism`, the diagram layout and every sibling artifact come back too.
@@ -185,7 +185,7 @@ Leave `path` as `C:\\WINDOWS\\System32\\cmd.exe`. Only the path inside `argument
 A local web app that compares two Power BI semantic models in TMDL format and deploys a selected subset of the differences from one to the other. Both models can be local PBIP folders, Microsoft Fabric semantic models, or one of each.
 
 **How is this different from publishing from Power BI Desktop?**
-Publishing replaces the whole model. Model Alchemist writes only the objects you ticked, leaves everything else in the target untouched, and shows you the full plan before it writes. That matters most for row-level security membership, which differs between environments and is destroyed by a republish.
+Publishing replaces the whole model. Model Alchemist writes only the objects you ticked, leaves everything else in the target untouched, and shows you the full plan before it writes.
 
 **Do I need PBIP or TMDL?**
 Yes for local models. Enable Developer Mode in Power BI Desktop and save as a `.pbip` project; the model is then stored as TMDL text files that this tool reads directly. Fabric models are fetched as TMDL over the REST API, so nothing extra is needed there.
