@@ -1,6 +1,8 @@
 # Model Alchemist — Release Notes
 
-## Unreleased
+## v5.2.1
+
+Adds Model Alchemist for VS Code (Preview) on the same engine, and stops deploying what Power BI does not allow to change: role members and the model culture.
 
 ### New Features
 
@@ -11,6 +13,10 @@
 - **Role members are no longer compared or deployed.** Power BI assigns RLS role members in the service (Security), not in the model definition. Members written into a PBIP made Power BI Desktop crash when it reopened the project, and members deployed to Fabric never appeared. Role logic is still compared and deployed: `modelPermission`, `tablePermission` filters, column and data coverage permissions. Adding a role copies it without the source's members, and any members already in the target are kept.
 - **The model culture is never deployed.** A model's language cannot change after it is created, and Fabric rejects the whole import when it differs. A Model Properties diff that changes only the culture now fails validation with `MODEL_CULTURE_IMMUTABLE`. When other model properties differ too, they are deployed, the target keeps its culture, and `MODEL_CULTURE_KEPT` warns about it.
 - **Demo Kit:** `demo/prod` has no role members, and its Model Properties difference is `sourceQueryCulture` instead of `culture`. The `rls-preserved` scenario, its recording and topic card are removed.
+
+### Bug Fixes
+
+- **VS Code: the panel looks like the web app.** VS Code's default webview styles gave `<code>` text a light background and a sans-serif font, shrank body text and replaced the dark dialog scrollbars. `public/css/style.css` restores the browser defaults inside the webview only (scoped to VS Code's `vscode-*` body classes); the browser is unaffected. Extension 5.2.0 on the Marketplace shipped without this fix.
 
 ## v5.2.0
 

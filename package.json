@@ -1,6 +1,6 @@
 {
   "name": "model-alchemist",
-  "version": "5.2.0",
+  "version": "5.2.1",
   "description": "Semantic Model Analysis, Comparison and Deployment Tool (TMDL + Fabric XMLA)",
   "main": "server.js",
   "scripts": {

@@ -1,5 +1,9 @@
 # Changelog
 
+## 5.2.1 (Preview)
+
+- **The panel looks like the web app.** VS Code's default webview styles gave `<code>` text (backup path, object and table names) a light background, another colour and a sans-serif font, made body text smaller, and replaced the dark scrollbars in dialogs with light native ones. The browser's defaults are now restored inside the panel.
+
 ## 5.2.0 (Preview)
 
 First release of Model Alchemist as a VS Code extension, on the same engine as the web app 5.2.0.

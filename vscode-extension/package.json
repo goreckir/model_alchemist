@@ -2,7 +2,7 @@
   "name": "model-alchemist",
   "displayName": "Model Alchemist",
   "description": "Compare two Power BI semantic models (PBIP / TMDL) object by object and deploy only the changes you pick.",
-  "version": "5.2.0",
+  "version": "5.2.1",
   "publisher": "SmartData",
   "preview": true,
   "pricing": "Free",

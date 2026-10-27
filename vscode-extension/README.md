@@ -52,7 +52,7 @@ The extension collects no telemetry. Models are read and written on your machine
 ```bash
 npm install
 npm run package
-code --install-extension model-alchemist-5.2.0.vsix
+code --install-extension model-alchemist-5.2.1.vsix
 ```
 
 `npm test` runs the unit tests; `npm run test:e2e` runs the extension in a throwaway VS Code instance against the Demo Kit.
