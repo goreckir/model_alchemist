@@ -53,6 +53,10 @@ function activate(context) {
     }
 
     context.subscriptions.push(
+        // The Activity Bar view has no items of its own: its welcome content
+        // (package.json, viewsWelcome) is the start page, shown while the tree is empty.
+        vscode.window.registerTreeDataProvider('modelAlchemist.start', { getChildren: () => [], getTreeItem: item => item }),
+
         vscode.commands.registerCommand('modelAlchemist.open', () => { openPanel(); }),
 
         // From the Explorer: the clicked model is the Source; the Target is picked next.

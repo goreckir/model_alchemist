@@ -6,6 +6,7 @@ This is the same Model Alchemist as the web app, in a VS Code panel: the same co
 
 ## Use it
 
+- **Activity Bar:** click the Model Alchemist icon. The start view opens the panel, compares two models you pick, or opens the logs folder.
 - **Explorer:** right-click a `.SemanticModel` folder or a `.pbip` file → **Model Alchemist: Compare with…**, then pick the Target model. The panel opens and compares.
 - **Command Palette:** `Model Alchemist: Open`, `Model Alchemist: Compare with…`, `Model Alchemist: Open Logs Folder`.
 

@@ -24,6 +24,12 @@ async function run() {
     assert.ok(ext, 'the extension is loaded');
     const api = await ext.activate();
 
+    // The Activity Bar icon opens the Model Alchemist container with its start view.
+    const commands = await vscode.commands.getCommands(true);
+    assert.ok(commands.includes('workbench.view.extension.modelAlchemist'), 'the Activity Bar container is contributed');
+    await vscode.commands.executeCommand('workbench.view.extension.modelAlchemist');
+    await vscode.commands.executeCommand('modelAlchemist.start.focus');
+
     const work = fs.mkdtempSync(path.join(os.tmpdir(), 'ma-e2e-target-'));
     const target = path.join(work, 'Apothecary.SemanticModel');
     fs.cpSync(PROD, target, { recursive: true });

@@ -44,6 +44,29 @@
         "category": "Model Alchemist"
       }
     ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "modelAlchemist",
+          "title": "Model Alchemist",
+          "icon": "media/activity-bar.png"
+        }
+      ]
+    },
+    "views": {
+      "modelAlchemist": [
+        {
+          "id": "modelAlchemist.start",
+          "name": "Start"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "modelAlchemist.start",
+        "contents": "Compare two Power BI semantic models (PBIP / TMDL) object by object and deploy only the changes you pick.\n[Open Model Alchemist](command:modelAlchemist.open)\n[Compare Two Models…](command:modelAlchemist.compareWith)\nYou can also right-click a .SemanticModel folder or a .pbip file in the Explorer and choose \"Model Alchemist: Compare with…\".\n[Open Logs Folder](command:modelAlchemist.openLogs)"
+      }
+    ],
     "menus": {
       "explorer/context": [
         {
