@@ -25,19 +25,32 @@ Two conventions worth knowing before adding a test:
 - **Name the test after the issue it locks down** (`#42 modifying a table header preserves the target lineageTag`). When it fails, the name alone says which defect came back.
 - **Use the real pipeline.** `test/helpers/tmdl.js` writes throwaway TMDL folders to a temp directory and runs them through the actual loader, comparison engine and deployer, so a test exercises the same code path the app does. `test/roundtrip.test.js` is the broadest of these: it deploys every difference between two models and asserts nothing is left to deploy.
 
-The VS Code extension has its own suite, because it needs its own dev dependencies:
+Frontend logic that can be tested lives in `public/js/pure.js`. These are DOM-free functions (filtering, group indexing, escaping, export formatting) exported to both the browser (`window.MAPure`) and the test runner. Put logic there rather than inside `app.js` wherever it does not need the DOM.
+
+## VS Code extension
+
+`vscode-extension/` builds the same app as a VS Code extension. Its bundle includes the engine from the repo root (`core/`, `parser/`, `fabric/`, …) together with the engine's dependencies, so a build needs `npm install` in **both** folders. With only `vscode-extension/node_modules` the bundler stops at `Could not resolve "@azure/msal-node"` (and `apache-arrow`, `lz4js`).
+
+From a fresh clone (Node.js 18 or newer):
 
 ```bash
+git clone https://github.com/goreckir/model_alchemist
+cd model_alchemist
+npm install
 cd vscode-extension
 npm install
 npm test           # router, webview HTML and CSP, in plain Node
 npm run test:e2e   # the extension in a throwaway VS Code instance, against the Demo Kit
-npm run package    # model-alchemist-<version>.vsix
+npm run package    # writes model-alchemist-<version>.vsix
+```
+
+`<version>` is the `version` in `package.json`; the build refuses to run when the root and the extension disagree. To try the build in your own VS Code:
+
+```bash
+code --install-extension model-alchemist-<version>.vsix
 ```
 
 `test:e2e` uses the VS Code installed on the machine (or `VSCODE_PATH`) with its own user-data and extensions folders, so your setup is not touched.
-
-Frontend logic that can be tested lives in `public/js/pure.js`. These are DOM-free functions (filtering, group indexing, escaping, export formatting) exported to both the browser (`window.MAPure`) and the test runner. Put logic there rather than inside `app.js` wherever it does not need the DOM.
 
 ## Language
 
