@@ -9,7 +9,7 @@ const vscode = require('vscode');
 const { createService } = require('../../core/service');
 const activityLog = require('../../lib/activity-log');
 const refreshStore = require('../../lib/refresh-store');
-const unavailableAuth = require('./auth-unavailable');
+const { createVsCodeAuth } = require('./auth-vscode');
 const { ModelAlchemistPanel } = require('./panel');
 
 /** Backup and log folders: the settings when set, else the extension's storage. */
@@ -28,14 +28,23 @@ function activate(context) {
     let folders = resolveFolders(context);
     activityLog.setLogDir(folders.logDir);
     refreshStore.setLogDir(folders.logDir);
-    let service = createService({ auth: unavailableAuth, backupDir: folders.backupDir });
+
+    // Fabric signs in with the Microsoft account in VS Code. One instance for the
+    // whole extension, so the session survives a settings change and a new panel.
+    const auth = createVsCodeAuth(vscode, () => {
+        const config = vscode.workspace.getConfiguration('modelAlchemist.fabric');
+        return { clientId: config.get('clientId') || '', tenant: config.get('tenant') || '' };
+    });
+    context.subscriptions.push(vscode.authentication.onDidChangeSessions(auth.onSessionsChanged));
+
+    let service = createService({ auth, backupDir: folders.backupDir });
 
     context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(e => {
         if (!e.affectsConfiguration('modelAlchemist')) return;
         folders = resolveFolders(context);
         activityLog.setLogDir(folders.logDir);
         refreshStore.setLogDir(folders.logDir);
-        service = createService({ auth: unavailableAuth, backupDir: folders.backupDir });
+        service = createService({ auth, backupDir: folders.backupDir });
     }));
 
     const observers = [];

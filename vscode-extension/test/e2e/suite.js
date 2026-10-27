@@ -38,11 +38,15 @@ async function run() {
     api.onMessage(msg => seen.push(msg.type === 'request' ? `${msg.method} ${msg.path}` : msg.type));
 
     const ready = waitFor(api, msg => msg.type === 'ready', 'the page to load under the CSP and post ready');
+    // The throwaway profile has no Microsoft account: Fabric is plainly disconnected, without a prompt.
+    const fabricStatus = waitFor(api, (msg, reply) => msg.path === '/api/fabric/status' && reply, 'the Fabric status');
     const compared = waitFor(api, (msg, reply) => msg.path === '/api/compare' && reply, 'the comparison');
 
     await vscode.commands.executeCommand('modelAlchemist.compareWith', vscode.Uri.file(DEV), vscode.Uri.file(target));
 
     await ready;
+    const status = (await fabricStatus).reply;
+    assert.deepStrictEqual({ code: status.status, body: status.body }, { code: 200, body: { status: 'disconnected' } });
     const { reply } = await compared;
     assert.strictEqual(reply.status, 200, JSON.stringify(reply.body).slice(0, 300));
 

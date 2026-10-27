@@ -88,6 +88,16 @@
           "type": "string",
           "default": "",
           "markdownDescription": "Folder for the activity log and refresh history. Empty: the extension's own storage folder."
+        },
+        "modelAlchemist.fabric.clientId": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Application (client) ID of the Entra app registration that signs in to Fabric. Empty: VS Code's own sign-in app. Set it when your organisation does not let VS Code's app call the Power BI API."
+        },
+        "modelAlchemist.fabric.tenant": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Directory (tenant) ID or domain to sign in to. Empty: the account's home directory (`organizations`)."
         }
       }
     }

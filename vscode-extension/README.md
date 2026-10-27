@@ -20,10 +20,17 @@ Exports (CSV, Markdown, HTML) are saved through the VS Code save dialog.
 |---|---|---|
 | `modelAlchemist.backupPath` | extension storage | default folder for backups taken before a deploy |
 | `modelAlchemist.logPath` | extension storage | activity log and refresh history |
+| `modelAlchemist.fabric.clientId` | VS Code's sign-in app | Entra app registration used for Fabric sign-in |
+| `modelAlchemist.fabric.tenant` | home directory | directory to sign in to |
+
+## Microsoft Fabric
+
+Fabric sources and targets sign in with the Microsoft account in VS Code (the Accounts menu), so there is no separate login: **Sign in to Fabric** in the panel asks VS Code for a Power BI token, and VS Code stores and refreshes it. **Disconnect** signs Model Alchemist out; the account stays signed in to VS Code.
+
+If your organisation does not let VS Code's sign-in app call the Power BI API, the sign-in error says so. Set `modelAlchemist.fabric.clientId` to an Entra app registration with the Power BI Service permission, and `modelAlchemist.fabric.tenant` if you sign in to another directory.
 
 ## Current limits
 
-- **Local models only.** Microsoft Fabric sources and targets are not available in the extension yet; use the web app for them.
 - Windows is the tested platform. The extension uses only VS Code APIs for dialogs, so it is expected to work elsewhere, including Remote and WSL.
 
 ## Build from source

@@ -8,7 +8,12 @@ const { createService } = require('../../core/service');
 const { ROUTES, matchRoute } = require('../../core/routes');
 const sessionStore = require('../../lib/session-store');
 const activityLog = require('../../lib/activity-log');
-const unavailableAuth = require('../src/auth-unavailable');
+const { createVsCodeAuth } = require('../src/auth-vscode');
+
+/** VS Code with no Microsoft account signed in, and a sign-in the user cancels. */
+const signedOutAuth = () => createVsCodeAuth({
+    authentication: { getSession: async (_, __, options) => { if (options.createIfNone) throw new Error('User did not consent to login.'); return undefined; } }
+}, () => ({}));
 
 const ROOT = path.join(__dirname, '..', '..');
 const DEV = path.join(ROOT, 'demo', 'dev', 'Apothecary.SemanticModel');
@@ -35,7 +40,7 @@ function setup(t, hostOverrides) {
     fs.cpSync(PROD, target, { recursive: true });
     const host = fakeHost(hostOverrides);
     const state = sessionStore.getState('router-' + Math.random());
-    const router = createRouter({ service: createService({ auth: unavailableAuth, backupDir: path.join(work, 'backups') }), state, host });
+    const router = createRouter({ service: createService({ auth: signedOutAuth(), backupDir: path.join(work, 'backups') }), state, host });
     let id = 0;
     const call = (method, p, body, query) => router.handle({ type: 'request', id: ++id, method, path: p, query, body });
     return { work, target, host, router, state, call };
@@ -110,12 +115,12 @@ test('exports are saved by the host; a failing save is reported, not thrown', as
     );
 });
 
-test('Fabric reports why it is unavailable instead of opening a browser', async t => {
+test('Fabric goes through the VS Code account: none signed in is disconnected, a cancelled sign-in is a 401', async t => {
     const { call } = setup(t);
-    assert.deepStrictEqual((await call('GET', '/api/fabric/status')).body, { status: 'disconnected', reason: unavailableAuth.REASON });
+    assert.deepStrictEqual((await call('GET', '/api/fabric/status')).body, { status: 'disconnected' });
     const login = await call('POST', '/api/fabric/login');
     assert.strictEqual(login.status, 401);
-    assert.strictEqual(login.body.error, unavailableAuth.REASON);
+    assert.strictEqual(login.body.error, 'Sign-in was cancelled.');
 });
 
 test('unknown routes, ready and stray messages', async t => {
