@@ -32,7 +32,6 @@ const TARGETS = [
     { file: 'fabric-drift-card.html', out: 'fabric-drift-card.png',     width: 1600, height: 1000, scale: 2 },
     { file: 'object-diff-card.html', out: 'object-diff-card.png', width: 1600, height: 1000, scale: 2 },
     { file: 'selective-deploy-card.html', out: 'selective-deploy-card.png', width: 1600, height: 1000, scale: 2 },
-    { file: 'rls-preserved-card.html', out: 'rls-preserved-card.png', width: 1600, height: 1000, scale: 2 },
     { file: 'scoped-refresh-card.html', out: 'scoped-refresh-card.png', width: 1600, height: 1000, scale: 2 },
     { file: 'readiness-card.html', out: 'readiness-card.png', width: 1600, height: 1000, scale: 2 }
 ];

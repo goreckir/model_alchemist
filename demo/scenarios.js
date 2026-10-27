@@ -112,24 +112,21 @@ const DATE = 'tables/Date.tmdl';
 const MODEL_TMDL = 'model.tmdl';
 const PL = 'cultures/pl-PL.tmdl';
 
-/**
- * Fictional members only (.example is a reserved domain). They exist in Prod and must survive a deploy.
- * Quoted: TOM reads an unquoted name with a dot as an object path, and Power BI cannot open the model.
- */
-const prodRoleMembers = replace('roles/Regional Manager.tmdl',
+/** Prod still has the narrower RLS filter of the Regional Manager role. */
+const prodRoleFilter = replace('roles/Regional Manager.tmdl',
     '\ttablePermission Store = Store[Region] IN { "Northern Reach", "Eastern Isles" }\n',
-    '\ttablePermission Store = Store[Region] = "Northern Reach"\n' +
-    "\n\tmember 'manager.north@apothecary.example'\n\t\tmemberType: user\n" +
-    "\n\tmember 'auditor@apothecary.example'\n\t\tmemberType: user\n");
+    '\ttablePermission Store = Store[Region] = "Northern Reach"\n');
 
 /**
  * Prod is the older model. Each line below is one difference the Default
  * Scenario shows, grouped by Change Group (see analysis/2026-10-15-demo-kit-design.md).
  */
 const PROD_PATCHES = [
-    // Model properties: Prod still uses the British culture. (discourageImplicitMeasures
-    // is not diffed by design, and a model with a calculation group needs it on.)
-    replace(MODEL_TMDL, '\tculture: en-US\n', '\tculture: en-GB\n'),
+    // Model properties: Prod still reads queries with British regional settings. Not the
+    // model culture: it cannot change after a model is created, so it is never deployable.
+    // (discourageImplicitMeasures is not diffed by design, and a model with a calculation
+    // group needs it on.)
+    replace(MODEL_TMDL, '\tsourceQueryCulture: en-US\n', '\tsourceQueryCulture: en-GB\n'),
 
     // Tables and relationships: Budget table is new in Dev
     deleteFile('tables/Budget.tmdl'),
@@ -171,8 +168,8 @@ const PROD_PATCHES = [
     // Hierarchies: Dev added the Rarity level
     removeObject('tables/Product.tmdl', 'level Rarity'),
 
-    // Roles / RLS: Dev widened the filter; Prod has members that must be preserved
-    prodRoleMembers,
+    // Roles / RLS: Dev widened the filter
+    prodRoleFilter,
 
     // Perspectives: Budget Planning is new in Dev
     deleteFile('perspectives/Budget Planning.tmdl'),
@@ -196,8 +193,6 @@ const SCENARIOS = {
             replace(SALES, 'discount = if fnRandom(i, 5) < 0.2 then 0.1 else 0', 'discount = if fnRandom(i, 5) < 0.2 then 0.15 else 0')
         ]
     },
-    // Prod-only RLS members survive a deploy of the changed role filter
-    'rls-preserved': { target: [prodRoleMembers] },
     // A parameter change that requires refreshing only Product and Sales
     'scoped-refresh': {
         target: [replace('expressions.tmdl', "expression 'Price Index' = 1.05 meta", "expression 'Price Index' = 1.00 meta")]
