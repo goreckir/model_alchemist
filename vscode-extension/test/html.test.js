@@ -29,6 +29,22 @@ test('every script carries the nonce, and the CSP allows only those', () => {
     assert.doesNotMatch(csp, /connect-src/, 'the page makes no network calls');
 });
 
+test('style.css puts back the browser defaults that VS Code\'s webview styles change', () => {
+    // VS Code injects @layer vscode-default into every webview: body font size,
+    // <code> colours and font, scrollbar-color. Without these resets the panel
+    // looks unlike the web app (white code chips, smaller text, a light scrollbar).
+    const css = fs.readFileSync(path.join(__dirname, '..', '..', 'public', 'css', 'style.css'), 'utf-8');
+    const scope = ':where(body.vscode-light, body.vscode-dark, body.vscode-high-contrast, body.vscode-high-contrast-light)';
+    const block = selector => {
+        const at = css.indexOf(`${scope}${selector} {`);
+        assert.ok(at >= 0, `rule for "${selector || 'body'}" scoped to the webview`);
+        return css.slice(at, css.indexOf('}', at));
+    };
+    assert.match(block(''), /font-size: revert/);
+    assert.match(block(''), /scrollbar-color: auto/);
+    for (const prop of ['font-family', 'color', 'background-color']) assert.match(block(' code'), new RegExp(`${prop}: revert`));
+});
+
 test('nonces are long and differ per page', () => {
     const a = makeNonce();
     assert.strictEqual(a.length, 32);
