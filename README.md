@@ -214,6 +214,16 @@ The server runs on any platform with Node.js and the comparison and deployment w
 
 Project layout, the test suite, and how the images in this README are regenerated are documented in [CONTRIBUTING.md](CONTRIBUTING.md). Release history is in [RELEASE_NOTES.md](RELEASE_NOTES.md), the reasoning behind the relationship cardinality warnings is in [RELATIONSHIP_CARDINALITY_WARNINGS.md](RELATIONSHIP_CARDINALITY_WARNINGS.md), and a full reference of deploy warning/error codes is in [DEPLOYMENT_TROUBLESHOOTING.md](DEPLOYMENT_TROUBLESHOOTING.md).
 
+## Related tools
+
+Other open-source tools for Power BI semantic models:
+
+**[Semantic Model Cleaner](https://github.com/MrPerfectH/Semantic-Model-Cleaner)**
+Semantic Model Cleaner helps review apparently unused model items across selected PBIR reports and apply local cleanup actions. Use the Viewer to understand a model and the Cleaner to review cleanup opportunities. See the Cleaner repository for its beta status, setup, and analysis limitations.
+
+**[Semantic Model Viewer](https://github.com/MrPerfectH/Semantic-Model-Viewer)**
+Interactive viewer for Power BI semantic models (TMDL): table canvas, relationship matrix, measure dependency flow. Installable web app.
+
 ## License
 
 MIT © [Radosław Górecki](https://github.com/goreckir)
