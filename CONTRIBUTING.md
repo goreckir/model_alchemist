@@ -99,7 +99,7 @@ model_alchemist/
 
 ## Regenerating the README images
 
-The banner, logo and four diagrams are rendered from source in `assets/src/`. The two screenshots are captured from the running app against a throwaway pair of models. Nothing in the README is mocked up by hand.
+The banner, logo and four diagrams are rendered from source in `assets/src/`. The product GIFs are recorded from the running app against the Demo Kit (see below). Nothing in the README is mocked up by hand.
 
 This needs Playwright's Chromium, which is a development-only tool and deliberately not a dependency of the app:
 

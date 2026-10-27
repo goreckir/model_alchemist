@@ -1,0 +1,34 @@
+<!doctype html><meta charset="utf-8">
+<link rel="stylesheet" href="card.css">
+<!-- Lead image of post 14 (hotfix): the two bad options a full publish leaves, and the third one. -->
+<style>
+  .steps { grid-template-columns: 1fr 1fr 1fr; gap: 28px; }
+  .step .t { font-size: 36px; }
+  .step .d { margin-top: 14px; font-size: 24px; line-height: 1.4; color: #c6c6de; }
+</style>
+<div class="wrap grid-bg">
+  <div class="brand"><img src="logo.svg" alt=""><div class="n">Model <em>Alchemist</em></div></div>
+  <h1>Ship the fix. <span class="hl">Not the unfinished work.</span></h1>
+  <div class="sub">Production shows the wrong number. The fix is in Dev, next to one week of work that is not ready.</div>
+  <div class="body steps">
+    <div class="step bad" style="--c: var(--removed);">
+      <div class="k">Option 1</div>
+      <div class="t">Publish Dev</div>
+      <div class="d">The fix goes live, and so does everything that is not ready.</div>
+      <div class="chip">✗ unfinished work in production</div>
+    </div>
+    <div class="step bad" style="--c: var(--removed);">
+      <div class="k">Option 2</div>
+      <div class="t">Patch production by hand</div>
+      <div class="d">Fast today. Then someone has to remember to make Dev match.</div>
+      <div class="chip">✗ Dev and production drift apart</div>
+    </div>
+    <div class="step good" style="--c: var(--added);">
+      <div class="k">Option 3</div>
+      <div class="t">Ship only the fix</div>
+      <div class="d">Tick the corrected measure. Everything else stays in Dev.</div>
+      <div class="chip">✓ one change, checked, deployed</div>
+    </div>
+  </div>
+  <div class="foot2"><span>Diff and selective deploy for Power BI semantic models</span><span>github.com/goreckir/model_alchemist</span></div>
+</div>
