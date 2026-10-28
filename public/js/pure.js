@@ -289,7 +289,121 @@
         return m ? { code: m[1], message: m[2] } : { code: fallbackCode, message: text };
     }
 
+    // ===== Git source =====
+    // One selection per side (Source, Target). The server re-derives everything
+    // from repoPath + ref + modelPath; the SHA shown here is for the user only.
+
+    function emptyGitSelection() {
+        return {
+            seq: 0,
+            repoPath: '',
+            repoRoot: null,
+            repoName: null,
+            currentBranch: null,
+            modelPathHint: null,
+            remotes: [],
+            branches: [],
+            lastFetchAt: null,
+            ref: '',
+            sha: null,
+            shortSha: null,
+            checkedOut: false,
+            models: [],
+            modelPath: null,
+            // Short SHA the branch pointed at before it moved under the user
+            // (a new commit, a reset): shown until the branch is picked again or compared.
+            movedFrom: null
+        };
+    }
+
+    /** The branch to select: the remembered one, else the checked-out one, else the first local one. */
+    function pickBranch(branches, preferred, current) {
+        const list = branches || [];
+        const has = name => !!name && list.some(b => b.name === name);
+        if (has(preferred)) return preferred;
+        if (has(current)) return current;
+        const local = list.find(b => b.type === 'local');
+        return local ? local.name : (list[0] ? list[0].name : '');
+    }
+
+    /** The model to select: the remembered one, else the one the path pointed into, else the only one. */
+    function pickModelPath(models, preferred, hint) {
+        const list = models || [];
+        const has = p => !!p && list.some(m => m.modelPath === p);
+        if (has(preferred)) return preferred;
+        if (has(hint)) return hint;
+        return list.length === 1 ? list[0].modelPath : null;
+    }
+
+    /** What is still missing before this side can be compared, or null. */
+    function gitSelectionProblem(sel) {
+        if (!sel || !sel.repoRoot) return 'Open a Git repository';
+        if (!sel.ref) return 'Select a branch';
+        if (!sel.modelPath) return (sel.models || []).length ? 'Select a semantic model' : 'This branch has no semantic model';
+        return null;
+    }
+
+    function gitDescriptor(sel) {
+        return { type: 'git', repoPath: sel.repoRoot, ref: sel.ref, modelPath: sel.modelPath };
+    }
+
+    function branchOptionLabel(b) {
+        return `${b.name} · ${b.shortSha}${b.current ? ' (checked out)' : ''}`;
+    }
+
+    function relativeTime(iso, now = Date.now()) {
+        if (!iso) return 'never';
+        const seconds = Math.max(0, Math.round((now - new Date(iso).getTime()) / 1000));
+        if (seconds < 60) return 'just now';
+        if (seconds < 3600) return `${Math.round(seconds / 60)} min ago`;
+        if (seconds < 86400) return `${Math.round(seconds / 3600)} h ago`;
+        const days = Math.round(seconds / 86400);
+        return `${days} day${days === 1 ? '' : 's'} ago`;
+    }
+
+    /**
+     * The status line under a Git panel: { text, kind } with kind '' or 'warning'.
+     * Two things are called out: a branch that moved since it was selected
+     * (new commit, reset), and, on the checked-out branch, uncommitted files in
+     * the selected model, which the Git tab leaves out because it reads commits.
+     */
+    function gitStatusLine(sel, now = Date.now()) {
+        if (!sel || !sel.repoRoot) return { text: '', kind: '' };
+        const parts = [sel.repoName];
+        if (sel.ref && sel.shortSha) parts.push(`${sel.ref} @ ${sel.shortSha}`);
+        parts.push(sel.remotes && sel.remotes.length ? `last fetch ${relativeTime(sel.lastFetchAt, now)}` : 'no remote');
+        let text = parts.join(' · ');
+        let kind = '';
+        if (sel.movedFrom && sel.shortSha && sel.movedFrom !== sel.shortSha) {
+            text += `. The branch moved since it was selected (was ${sel.movedFrom}); Compare uses ${sel.shortSha}.`;
+            kind = 'warning';
+        }
+        const model = (sel.models || []).find(m => m.modelPath === sel.modelPath);
+        if (sel.checkedOut && model && model.uncommitted > 0) {
+            const n = model.uncommitted;
+            text += `. ${n} uncommitted file${n === 1 ? '' : 's'} in this model ${n === 1 ? 'is' : 'are'} not included; use the Local tab to include ${n === 1 ? 'it' : 'them'}.`;
+            kind = 'warning';
+        }
+        return { text: text.replace(/\.\. /g, '. '), kind };
+    }
+
+    /** The short label above a panel, e.g. "🌿 Apothecary @ main". */
+    function gitLabel(sel) {
+        if (sel && sel.modelPath) return `🌿 ${sel.modelPath.split('/').pop().replace(/\.SemanticModel$/i, '')} @ ${sel.ref}`;
+        if (sel && sel.repoName) return `🌿 ${sel.repoName}`;
+        return '—';
+    }
+
     return {
+        emptyGitSelection,
+        pickBranch,
+        pickModelPath,
+        gitSelectionProblem,
+        gitDescriptor,
+        branchOptionLabel,
+        relativeTime,
+        gitStatusLine,
+        gitLabel,
         filterDiffs,
         describeDeployIssue,
         buildGroupIndex,

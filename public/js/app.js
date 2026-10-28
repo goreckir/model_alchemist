@@ -54,11 +54,13 @@
     let fabricConnected = false;
     let workspacesCache = [];
 
-    // Source mode: 'local' or 'fabric' for each side
+    // Source mode: 'local', 'fabric' or 'git' for each side
     let devSourceMode = 'local';
     let prodSourceMode = 'local';
     let devFabricSelection = { workspaceId: null, semanticModelId: null, modelName: null };
     let prodFabricSelection = { workspaceId: null, semanticModelId: null, modelName: null };
+    // Git selection per side: repository, branch, model (see the Git source section).
+    const gitState = { dev: Pure.emptyGitSelection(), prod: Pure.emptyGitSelection() };
 
     // DOM Elements
     const connectionPanel = document.getElementById('connection-panel');
@@ -288,29 +290,64 @@
         });
     });
 
+    /** What the server needs to load one side: { type: 'local' | 'fabric' | 'git', ... }. */
+    function sourceDescriptor(target) {
+        const mode = target === 'dev' ? devSourceMode : prodSourceMode;
+        if (mode === 'local') return { type: 'local', path: target === 'dev' ? devPath : prodPath };
+        if (mode === 'git') return Pure.gitDescriptor(gitState[target]);
+        const sel = target === 'dev' ? devFabricSelection : prodFabricSelection;
+        return { type: 'fabric', connectionString: sel.connectionString, workspaceId: sel.workspaceId, semanticModelId: sel.semanticModelId };
+    }
+
+    /** Both local: the original endpoint. Anything else: the descriptor endpoint. */
+    function requestComparison() {
+        if (devSourceMode === 'local' && prodSourceMode === 'local') {
+            return apiFetch('/api/compare', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ devPath, prodPath })
+            });
+        }
+        return apiFetch('/api/compare-fabric', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ devSource: sourceDescriptor('dev'), prodSource: sourceDescriptor('prod') })
+        });
+    }
+
     async function handleCompare() {
         const devIsLocal = devSourceMode === 'local';
         const prodIsLocal = prodSourceMode === 'local';
+        const devIsFabric = devSourceMode === 'fabric';
+        const prodIsFabric = prodSourceMode === 'fabric';
 
         // Validate inputs
         if (devIsLocal && !devPath) {
             showError('Please select a SOURCE model file.');
             return;
         }
-        if (!devIsLocal && !fabricConnected) {
+        for (const [target, label] of [['dev', 'SOURCE'], ['prod', 'TARGET']]) {
+            const mode = target === 'dev' ? devSourceMode : prodSourceMode;
+            const problem = mode === 'git' ? Pure.gitSelectionProblem(gitState[target]) : null;
+            if (problem) {
+                showError(`${problem} (${label}).`);
+                return;
+            }
+        }
+        if (devIsFabric && !fabricConnected) {
             showError('Sign in to Fabric first (SOURCE).');
             return;
         }
-        if (!prodIsLocal && !fabricConnected) {
+        if (prodIsFabric && !fabricConnected) {
             showError('Sign in to Fabric first (TARGET).');
             return;
         }
 
         // Auto-verify Fabric access if not yet verified OR if the connection string was changed manually
-        const currentDevConn = !devIsLocal ? document.getElementById('dev-conn-string').value.trim() : null;
-        const currentProdConn = !prodIsLocal ? document.getElementById('prod-conn-string').value.trim() : null;
-        const needsDevVerify = !devIsLocal && (!devFabricSelection.semanticModelId || currentDevConn !== devFabricSelection.connectionString);
-        const needsProdVerify = !prodIsLocal && (!prodFabricSelection.semanticModelId || currentProdConn !== prodFabricSelection.connectionString);
+        const currentDevConn = devIsFabric ? document.getElementById('dev-conn-string').value.trim() : null;
+        const currentProdConn = prodIsFabric ? document.getElementById('prod-conn-string').value.trim() : null;
+        const needsDevVerify = devIsFabric && (!devFabricSelection.semanticModelId || currentDevConn !== devFabricSelection.connectionString);
+        const needsProdVerify = prodIsFabric && (!prodFabricSelection.semanticModelId || currentProdConn !== prodFabricSelection.connectionString);
         if (needsDevVerify || needsProdVerify) {
             showLoading();
             try {
@@ -320,11 +357,11 @@
                 hideLoading();
             }
             // Check again after auto-verify
-            if (!devIsLocal && !devFabricSelection.semanticModelId) {
+            if (devIsFabric && !devFabricSelection.semanticModelId) {
                 showError('Cannot verify SOURCE Fabric access. Check connection string.');
                 return;
             }
-            if (!prodIsLocal && !prodFabricSelection.semanticModelId) {
+            if (prodIsFabric && !prodFabricSelection.semanticModelId) {
                 showError('Cannot verify TARGET Fabric access. Check connection string.');
                 return;
             }
@@ -339,30 +376,7 @@
         showLoading();
 
         try {
-            let response;
-
-            // If both are local, use the original endpoint
-            if (devIsLocal && prodIsLocal) {
-                response = await apiFetch('/api/compare', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ devPath, prodPath })
-                });
-            } else {
-                // Use the fabric-aware comparison endpoint
-                const devSource = devIsLocal
-                    ? { type: 'local', path: devPath }
-                    : { type: 'fabric', connectionString: devFabricSelection.connectionString, workspaceId: devFabricSelection.workspaceId, semanticModelId: devFabricSelection.semanticModelId };
-                const prodSource = prodIsLocal
-                    ? { type: 'local', path: prodPath }
-                    : { type: 'fabric', connectionString: prodFabricSelection.connectionString, workspaceId: prodFabricSelection.workspaceId, semanticModelId: prodFabricSelection.semanticModelId };
-
-                response = await apiFetch('/api/compare-fabric', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ devSource, prodSource })
-                });
-            }
+            const response = await requestComparison();
 
             if (!response.ok) {
                 const err = await response.json();
@@ -371,6 +385,7 @@
 
             comparisonResult = await response.json();
             selectedKeys.clear();
+            syncGitFromComparison(comparisonResult);
             showResults();
         } catch (err) {
             showError(err.message);
@@ -384,31 +399,9 @@
         btnRefresh.textContent = '⏳ Refreshing...';
 
         try {
-            const devIsLocal = devSourceMode === 'local';
-            const prodIsLocal = prodSourceMode === 'local';
-            let response;
-
-            if (devIsLocal && prodIsLocal) {
-                if (!devPath || !prodPath) return;
-                response = await apiFetch('/api/compare', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ devPath, prodPath })
-                });
-            } else {
-                const devSource = devIsLocal
-                    ? { type: 'local', path: devPath }
-                    : { type: 'fabric', connectionString: devFabricSelection.connectionString, workspaceId: devFabricSelection.workspaceId, semanticModelId: devFabricSelection.semanticModelId };
-                const prodSource = prodIsLocal
-                    ? { type: 'local', path: prodPath }
-                    : { type: 'fabric', connectionString: prodFabricSelection.connectionString, workspaceId: prodFabricSelection.workspaceId, semanticModelId: prodFabricSelection.semanticModelId };
-
-                response = await apiFetch('/api/compare-fabric', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ devSource, prodSource })
-                });
-            }
+            if (devSourceMode === 'local' && prodSourceMode === 'local' && (!devPath || !prodPath)) return;
+            // A Git side is re-resolved here: Refresh picks up new commits on the branch.
+            const response = await requestComparison();
 
             if (!response.ok) {
                 const err = await response.json();
@@ -417,6 +410,7 @@
 
             comparisonResult = await response.json();
             selectedKeys.clear();
+            syncGitFromComparison(comparisonResult);
             showResults();
         } catch (err) {
             showError(err.message);
@@ -457,8 +451,9 @@
         // rescanning every group's memberKeys array on each render.
         groupIndex = Pure.buildGroupIndex(comparisonResult.groups || []);
 
-        setModelInfo(devModelName, comparisonResult.devSource, devPathInput.value);
-        setModelInfo(prodModelName, comparisonResult.prodSource, prodPathInput.value);
+        const sources = comparisonResult.sources || {};
+        setModelInfo(devModelName, comparisonResult.devSource, devPathInput.value, sources.source);
+        setModelInfo(prodModelName, comparisonResult.prodSource, prodPathInput.value, sources.target);
 
         const diffs = comparisonResult.diffs || [];
         const added = diffs.filter(d => d.type === 0).length;
@@ -475,8 +470,16 @@
         updateDeployButton();
     }
 
-    function setModelInfo(el, source, inputPath) {
+    function setModelInfo(el, source, inputPath, meta) {
         if (!source) { el.textContent = ''; return; }
+        // Git source: model name, then repository, branch and the commit actually compared.
+        if (meta && meta.type === 'git') {
+            const modelName = meta.modelPath.split('/').pop().replace(/\.SemanticModel$/i, '');
+            el.innerHTML = `<span class="model-filename">🌿 ${escapeHtml(modelName)}</span><span class="model-path">${escapeHtml(meta.repoName)} · ${escapeHtml(meta.ref)} @ ${escapeHtml(meta.shortSha)}</span>`;
+            el.title = `${meta.repoRoot} · ${meta.modelPath} · ${meta.resolvedSha}`;
+            return;
+        }
+        el.title = '';
         // Fabric source: "Fabric: Workspace/Model"
         if (source.startsWith('Fabric:')) {
             const parts = source.replace('Fabric: ', '').split('/');
@@ -1028,7 +1031,10 @@
     function updateDeployButton() {
         const count = selectedKeys.size;
         deployCount.textContent = count;
-        btnDeploy.disabled = count === 0;
+        // Deploying into a branch (as a pull request) is the next phase; compare works today.
+        const gitTarget = !!(comparisonResult && comparisonResult.sources && comparisonResult.sources.target && comparisonResult.sources.target.type === 'git');
+        btnDeploy.disabled = count === 0 || gitTarget;
+        btnDeploy.title = gitTarget ? 'Deploying to a Git branch is not available yet. Compare against a Local or Fabric target to deploy.' : '';
     }
 
     function selectAllVisible() {
@@ -2117,6 +2123,16 @@
         devFabricSelection = { ...prodFabricSelection };
         prodFabricSelection = tmpFabric;
 
+        // Swap Git selections; seq moves with them, so a response still in flight
+        // lands on the side its selection now belongs to.
+        const tmpGit = gitState.dev;
+        gitState.dev = gitState.prod;
+        gitState.prod = tmpGit;
+        renderGitPanel('dev');
+        renderGitPanel('prod');
+        saveGitSelection('dev');
+        saveGitSelection('prod');
+
         // Swap Fabric connection strings
         const devConnInput = document.getElementById('dev-conn-string');
         const prodConnInput = document.getElementById('prod-conn-string');
@@ -2361,6 +2377,326 @@
                 labelEl.textContent = savedFile ? savedFile.split(/[/\\]/).pop() : '—';
             }
         }
+
+        if (source === 'git') {
+            // A remembered repository is opened the first time its tab is shown.
+            const sel = gitState[target];
+            if (sel.repoPath && !sel.repoRoot && sel.seq === 0) {
+                const saved = loadGitSelection(target);
+                openGitRepo(target, sel.repoPath, saved || {});
+            } else {
+                renderGitPanel(target);
+                refreshGitSide(target);
+            }
+        }
+    }
+
+    // ===== Git source =====
+    // Each side keeps its own selection in gitState. Changing the repository
+    // clears branch and model; changing the branch clears the model. Every
+    // request bumps the side's `seq`, and a response that comes back after a
+    // newer request was made is dropped, so a slow answer never overwrites a
+    // newer choice. Nothing here touches the network except the Fetch button.
+
+    const gitEl = (target, part) => document.getElementById({
+        repo: `${target}-git-repo`,
+        branch: `${target}-git-branch`,
+        model: `${target}-git-model`,
+        fetch: `btn-git-fetch-${target}`,
+        browse: `btn-browse-git-${target}`,
+        status: `git-status-${target}`
+    }[part]);
+
+    async function gitPost(url, body) {
+        const res = await apiFetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+        });
+        return apiJson(res, 'Git request failed');
+    }
+
+    function loadGitSelection(target) {
+        try { return JSON.parse(localStorage.getItem(`ma_git_${target}`) || 'null'); } catch { return null; }
+    }
+
+    function saveGitSelection(target) {
+        const sel = gitState[target];
+        try {
+            localStorage.setItem(`ma_git_${target}`, JSON.stringify({ repoPath: sel.repoPath, ref: sel.ref, modelPath: sel.modelPath }));
+        } catch { /* storage unavailable: the selection just is not remembered */ }
+    }
+
+    function setGitStatus(target, text, kind = '') {
+        const el = gitEl(target, 'status');
+        el.textContent = text;
+        el.className = `fabric-resolve-status${kind ? ' ' + kind : ''}`;
+    }
+
+    function renderGitPanel(target) {
+        const sel = gitState[target];
+
+        const repoInput = gitEl(target, 'repo');
+        if (document.activeElement !== repoInput) repoInput.value = sel.repoPath || '';
+
+        const branchSelect = gitEl(target, 'branch');
+        branchSelect.innerHTML = '';
+        if (!sel.branches.length) {
+            branchSelect.appendChild(new Option(sel.repoRoot ? 'No branches' : 'Branch', ''));
+        } else {
+            for (const [type, title] of [['local', 'Local branches'], ['remote', 'Remote branches']]) {
+                const list = sel.branches.filter(b => b.type === type);
+                if (!list.length) continue;
+                const group = document.createElement('optgroup');
+                group.label = title;
+                for (const b of list) group.appendChild(new Option(Pure.branchOptionLabel(b), b.name));
+                branchSelect.appendChild(group);
+            }
+            branchSelect.value = sel.ref;
+        }
+        branchSelect.disabled = !sel.branches.length;
+
+        const modelSelect = gitEl(target, 'model');
+        modelSelect.innerHTML = '';
+        if (!sel.models.length) {
+            modelSelect.appendChild(new Option(sel.sha ? 'No semantic model in this branch' : 'Semantic model', ''));
+        } else {
+            if (!sel.modelPath) modelSelect.appendChild(new Option('Select a semantic model', ''));
+            for (const m of sel.models) modelSelect.appendChild(new Option(`${m.name} · ${m.modelPath}`, m.modelPath));
+            modelSelect.value = sel.modelPath || '';
+        }
+        modelSelect.disabled = !sel.models.length;
+
+        gitEl(target, 'fetch').disabled = !sel.repoRoot || !sel.remotes.length;
+
+        const status = Pure.gitStatusLine(sel);
+        setGitStatus(target, status.text, status.kind);
+
+        if ((target === 'dev' ? devSourceMode : prodSourceMode) === 'git') {
+            document.getElementById(target === 'dev' ? 'label-dev-file' : 'label-prod-file').textContent = Pure.gitLabel(sel);
+        }
+    }
+
+    /**
+     * The side a selection object sits on now, or null if it was replaced.
+     * The swap button moves selection objects between sides, so a response
+     * still in flight is applied to whichever side holds its selection.
+     */
+    function sideOf(sel) {
+        if (gitState.dev === sel) return 'dev';
+        if (gitState.prod === sel) return 'prod';
+        return null;
+    }
+
+    /** Open the repository a path belongs to, then its branches, then the models of the chosen branch. */
+    async function openGitRepo(target, inputPath, prefer = {}) {
+        const sel = Object.assign(Pure.emptyGitSelection(), { seq: gitState[target].seq + 1, repoPath: inputPath || '' });
+        const seq = sel.seq;
+        gitState[target] = sel;
+        renderGitPanel(target);
+        if (!inputPath) { saveGitSelection(target); return; }
+
+        setGitStatus(target, 'Opening repository…');
+        try {
+            const repo = await gitPost('/api/git/open', { path: inputPath });
+            const list = await gitPost('/api/git/branches', { repoPath: repo.root });
+            const side = sideOf(sel);
+            if (!side || sel.seq !== seq) return;
+            Object.assign(sel, {
+                repoRoot: repo.root,
+                repoName: repo.name,
+                currentBranch: repo.currentBranch,
+                modelPathHint: repo.modelPathHint,
+                remotes: repo.remotes || [],
+                branches: list.branches,
+                lastFetchAt: list.lastFetchAt,
+                ref: Pure.pickBranch(list.branches, prefer.ref, repo.currentBranch)
+            });
+            renderGitPanel(side);
+            saveGitSelection(side);
+            if (sel.ref) await loadGitModels(side, prefer.modelPath);
+        } catch (err) {
+            const side = sideOf(sel);
+            if (side && sel.seq === seq) setGitStatus(side, `✗ ${err.message}`, 'error');
+        }
+    }
+
+    /** The models in the selected branch; keeps `preferModel` selected when that branch has it. */
+    async function loadGitModels(target, preferModel) {
+        const sel = gitState[target];
+        const seq = ++sel.seq;
+        Object.assign(sel, { models: [], modelPath: null, sha: null, shortSha: null, checkedOut: false });
+        renderGitPanel(target);
+        if (!sel.repoRoot || !sel.ref) return;
+
+        setGitStatus(target, 'Reading models…');
+        try {
+            const result = await gitPost('/api/git/models', { repoPath: sel.repoRoot, ref: sel.ref });
+            const side = sideOf(sel);
+            if (!side || sel.seq !== seq) return;
+            Object.assign(sel, {
+                models: result.models,
+                sha: result.sha,
+                shortSha: result.shortSha,
+                checkedOut: result.checkedOut,
+                modelPath: Pure.pickModelPath(result.models, preferModel, sel.modelPathHint)
+            });
+            renderGitPanel(side);
+            saveGitSelection(side);
+        } catch (err) {
+            const side = sideOf(sel);
+            if (side && sel.seq === seq) setGitStatus(side, `✗ ${err.message}`, 'error');
+        }
+    }
+
+    async function fetchGitRemotes(target) {
+        const sel = gitState[target];
+        if (!sel.repoRoot) return;
+        const btn = gitEl(target, 'fetch');
+        btn.disabled = true;
+        btn.textContent = 'Fetching…';
+        setGitStatus(target, 'Fetching from the remote…');
+        try {
+            const result = await gitPost('/api/git/fetch', { repoPath: sel.repoRoot });
+            const side = sideOf(sel);
+            if (!side) return;
+            sel.branches = result.branches;
+            sel.lastFetchAt = result.lastFetchAt;
+            // The user asked for new commits: show them, keeping the same branch and model.
+            sel.ref = Pure.pickBranch(result.branches, sel.ref, sel.currentBranch);
+            sel.movedFrom = null; // the user asked for the new commits
+            const updates = [loadGitModels(side, sel.modelPath)];
+            // The other side may be the same repository: it was fetched too.
+            const otherSide = side === 'dev' ? 'prod' : 'dev';
+            const other = gitState[otherSide];
+            if (other.repoRoot && other.repoRoot === sel.repoRoot) {
+                other.branches = result.branches;
+                other.lastFetchAt = result.lastFetchAt;
+                other.ref = Pure.pickBranch(result.branches, other.ref, other.currentBranch);
+                other.movedFrom = null;
+                updates.push(loadGitModels(otherSide, other.modelPath));
+            }
+            await Promise.all(updates);
+        } catch (err) {
+            const side = sideOf(sel);
+            if (side) setGitStatus(side, `✗ ${err.message}`, 'error');
+        } finally {
+            btn.textContent = 'Fetch';
+            const side = sideOf(sel);
+            if (side) renderGitPanel(side);
+            else renderGitPanel(target);
+        }
+    }
+
+    /**
+     * After a comparison, each Git panel shows the commit that was actually
+     * compared. The server resolves the branch again on every Compare, so a
+     * commit made after the branch was picked is included; the panel says so.
+     */
+    function syncGitFromComparison(result) {
+        const sources = (result && result.sources) || {};
+        for (const [target, meta] of [['dev', sources.source], ['prod', sources.target]]) {
+            const sel = gitState[target];
+            if (!meta || meta.type !== 'git' || (target === 'dev' ? devSourceMode : prodSourceMode) !== 'git') continue;
+            if (sel.ref !== meta.ref || sel.modelPath !== meta.modelPath) continue;
+            const branch = sel.branches.find(b => b.name === meta.ref);
+            if (branch) Object.assign(branch, { sha: meta.resolvedSha, shortSha: meta.shortSha });
+            Object.assign(sel, { sha: meta.resolvedSha, shortSha: meta.shortSha, movedFrom: null });
+            renderGitPanel(target);
+            refreshGitSide(target); // uncommitted counts may have changed with the commit
+        }
+    }
+
+    /**
+     * Re-read branches and the selected branch's models without clearing the
+     * panel: used when the window regains focus or a Git tab is shown again, so
+     * a commit made in another tool (or a reset) shows up before Compare.
+     * A branch that moved keeps its old short SHA in `movedFrom` for the warning.
+     */
+    async function refreshGitSide(target) {
+        const sel = gitState[target];
+        if (!sel.repoRoot || !sel.ref || !sel.sha || sel.refreshing) return;
+        const seq = sel.seq;
+        sel.refreshing = true;
+        try {
+            const [list, result] = await Promise.all([
+                gitPost('/api/git/branches', { repoPath: sel.repoRoot }),
+                gitPost('/api/git/models', { repoPath: sel.repoRoot, ref: sel.ref })
+            ]);
+            const side = sideOf(sel);
+            if (!side || sel.seq !== seq) return;
+            if (result.sha !== sel.sha && !sel.movedFrom) sel.movedFrom = sel.shortSha;
+            if (sel.movedFrom === result.shortSha) sel.movedFrom = null; // moved back
+            Object.assign(sel, {
+                branches: list.branches,
+                lastFetchAt: list.lastFetchAt,
+                currentBranch: list.currentBranch,
+                models: result.models,
+                sha: result.sha,
+                shortSha: result.shortSha,
+                checkedOut: result.checkedOut,
+                modelPath: Pure.pickModelPath(result.models, sel.modelPath, sel.modelPathHint)
+            });
+            renderGitPanel(side);
+        } catch (err) {
+            const side = sideOf(sel);
+            if (side && sel.seq === seq) setGitStatus(side, `✗ ${err.message}`, 'error');
+        } finally {
+            sel.refreshing = false;
+        }
+    }
+
+    // Coming back to the window (from Power BI Desktop, an editor, a terminal):
+    // check the visible Git panels for new commits and uncommitted files.
+    let lastGitRefreshAt = 0;
+    function refreshVisibleGitSides() {
+        if (Date.now() - lastGitRefreshAt < 2000) return;
+        lastGitRefreshAt = Date.now();
+        if (devSourceMode === 'git') refreshGitSide('dev');
+        if (prodSourceMode === 'git') refreshGitSide('prod');
+    }
+    window.addEventListener('focus', refreshVisibleGitSides);
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') refreshVisibleGitSides(); });
+
+    async function browseGitRepo(target) {
+        const btn = gitEl(target, 'browse');
+        btn.disabled = true;
+        try {
+            const current = gitEl(target, 'repo').value.trim();
+            let url = `/api/pick-file?target=${target}`;
+            if (current) url += `&initialdir=${encodeURIComponent(current)}`;
+            const picked = await apiJson(await apiFetch(url), 'Folder picker failed');
+            if (picked.cancelled || !picked.filePath) return;
+            gitEl(target, 'repo').value = picked.filePath;
+            await openGitRepo(target, picked.filePath);
+        } catch (err) {
+            setGitStatus(target, `✗ ${err.message}`, 'error');
+        } finally {
+            btn.disabled = false;
+        }
+    }
+
+    for (const target of ['dev', 'prod']) {
+        const saved = loadGitSelection(target);
+        if (saved && saved.repoPath) gitState[target].repoPath = saved.repoPath;
+        renderGitPanel(target);
+
+        gitEl(target, 'repo').addEventListener('change', e => openGitRepo(target, e.target.value.trim()));
+        gitEl(target, 'browse').addEventListener('click', () => browseGitRepo(target));
+        gitEl(target, 'fetch').addEventListener('click', () => fetchGitRemotes(target));
+        gitEl(target, 'branch').addEventListener('change', e => {
+            const sel = gitState[target];
+            const keepModel = sel.modelPath;
+            sel.ref = e.target.value;
+            sel.movedFrom = null;
+            saveGitSelection(target);
+            loadGitModels(target, keepModel);
+        });
+        gitEl(target, 'model').addEventListener('change', e => {
+            gitState[target].modelPath = e.target.value || null;
+            renderGitPanel(target);
+            saveGitSelection(target);
+        });
     }
 
     function enableFabricSelectors() {

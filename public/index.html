@@ -58,7 +58,7 @@
         <section id="connection-panel" class="connection-panel">
             <div class="connection-card">
                 <h2>Compare & Deploy Semantic Models</h2>
-                <p class="subtitle">Select local .SemanticModel folders or connect to Microsoft Fabric</p>
+                <p class="subtitle">Select local .SemanticModel folders, branches of a Git repository, or models in Microsoft Fabric</p>
                 
                 <div class="connection-form">
                     <div class="form-group">
@@ -70,6 +70,7 @@
                             <div class="source-tabs" data-target="dev">
                                 <button class="source-tab active" data-source="local">📁 Local</button>
                                 <button class="source-tab" data-source="fabric">☁️ Fabric</button>
+                                <button class="source-tab" data-source="git">🌿 Git</button>
                             </div>
                             <div class="source-content source-local active" data-target="dev">
                                 <div class="file-picker-row">
@@ -92,6 +93,20 @@
                                     </div>
                                 </div>
                             </div>
+                            <div class="source-content source-git" data-target="dev">
+                                <div class="git-selector">
+                                    <div class="file-picker-row">
+                                        <input type="text" id="dev-git-repo" placeholder="Repository folder, or a .SemanticModel inside one..." />
+                                        <button id="btn-browse-git-dev" class="btn btn-secondary btn-browse">Browse...</button>
+                                    </div>
+                                    <div class="git-select-row">
+                                        <select id="dev-git-branch" class="fabric-select" aria-label="Branch" disabled><option value="">Branch</option></select>
+                                        <button id="btn-git-fetch-dev" class="btn btn-secondary btn-sm" disabled title="Fetch every remote of this repository. Nothing is fetched unless you click.">Fetch</button>
+                                    </div>
+                                    <select id="dev-git-model" class="fabric-select" aria-label="Semantic model" disabled><option value="">Semantic model</option></select>
+                                    <span id="git-status-dev" class="fabric-resolve-status"></span>
+                                </div>
+                            </div>
                         </div>
                     </div>
 
@@ -108,6 +123,7 @@
                             <div class="source-tabs" data-target="prod">
                                 <button class="source-tab active" data-source="local">📁 Local</button>
                                 <button class="source-tab" data-source="fabric">☁️ Fabric</button>
+                                <button class="source-tab" data-source="git">🌿 Git</button>
                             </div>
                             <div class="source-content source-local active" data-target="prod">
                                 <div class="file-picker-row">
@@ -128,6 +144,20 @@
                                             <span id="fabric-status-prod" class="fabric-resolve-status"></span>
                                         </div>
                                     </div>
+                                </div>
+                            </div>
+                            <div class="source-content source-git" data-target="prod">
+                                <div class="git-selector">
+                                    <div class="file-picker-row">
+                                        <input type="text" id="prod-git-repo" placeholder="Repository folder, or a .SemanticModel inside one..." />
+                                        <button id="btn-browse-git-prod" class="btn btn-secondary btn-browse">Browse...</button>
+                                    </div>
+                                    <div class="git-select-row">
+                                        <select id="prod-git-branch" class="fabric-select" aria-label="Branch" disabled><option value="">Branch</option></select>
+                                        <button id="btn-git-fetch-prod" class="btn btn-secondary btn-sm" disabled title="Fetch every remote of this repository. Nothing is fetched unless you click.">Fetch</button>
+                                    </div>
+                                    <select id="prod-git-model" class="fabric-select" aria-label="Semantic model" disabled><option value="">Semantic model</option></select>
+                                    <span id="git-status-prod" class="fabric-resolve-status"></span>
                                 </div>
                             </div>
                         </div>

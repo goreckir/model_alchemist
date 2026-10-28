@@ -33,6 +33,12 @@ const ROUTES = [
     { method: 'GET', path: '/api/fabric/refresh/active', operation: 'fabricRefreshActive' },
     { method: 'GET', path: '/api/fabric/readiness', operation: 'fabricReadiness' },
 
+    // Git: a local repository, its branches, the models in a branch, explicit fetch.
+    { method: 'POST', path: '/api/git/open', operation: 'gitOpen' },
+    { method: 'POST', path: '/api/git/branches', operation: 'gitBranches' },
+    { method: 'POST', path: '/api/git/models', operation: 'gitModels' },
+    { method: 'POST', path: '/api/git/fetch', operation: 'gitFetch' },
+
     { method: 'GET', path: '/api/activity-log', operation: 'activityLog', input: req => ({ limit: req.query.limit }) }
 ].map(r => Object.assign({ input: fromBody }, r));
 

@@ -24,11 +24,23 @@ const refreshStore = require('../lib/refresh-store');
 const sessionStore = require('../lib/session-store');
 const { resolveDefinitionPath, resolveModelFromFile } = require('./model-paths');
 const { deployToFabric, inspectTargetReadiness } = require('./fabric-deploy');
+const gitClient = require('../git/git-client');
+const gitModelLoader = require('../git/model-loader');
 
 const pkg = require('../package.json');
 const APP_VERSION = pkg.version;
 
 const reply = (status, body) => ({ status, body });
+
+/** An expected failure with its HTTP status; Git errors carry a stable code too. */
+const failure = err => reply(err.status || 500, err.code ? { error: err.message, code: err.code } : { error: err.message });
+const statusError = (status, message) => Object.assign(new Error(message), { status });
+
+/** A Git target cannot be deployed to yet: that is the next phase of the feature. */
+const GIT_DEPLOY_NOT_AVAILABLE = {
+    error: 'Deploying to a Git branch is not available yet. Compare against a Local or Fabric target to deploy.',
+    code: 'GIT_DEPLOY_NOT_AVAILABLE'
+};
 
 /**
  * The account as the browser may see it. With MA_PRESENTATION=1 (or true) the
@@ -98,6 +110,9 @@ function createService({ auth = fabricAuth, backupDir } = {}) {
         if (!lastComparison || !lastDevModel) {
             return reply(400, { error: 'No comparison result available. Run a comparison first.' });
         }
+        if (state.lastProdGitInfo) {
+            return reply(400, GIT_DEPLOY_NOT_AVAILABLE);
+        }
         if (!lastProdPath && !lastProdFabricInfo) {
             return reply(400, { error: 'No valid PROD target. Run a comparison first.' });
         }
@@ -163,6 +178,12 @@ function createService({ auth = fabricAuth, backupDir } = {}) {
         }
         if (!lastComparison || !lastDevModel) {
             return reply(400, { error: 'No comparison result available.' });
+        }
+        if (state.lastProdGitInfo) {
+            return reply(400, GIT_DEPLOY_NOT_AVAILABLE);
+        }
+        if (!lastProdPath && !lastProdFabricInfo) {
+            return reply(400, { error: 'No valid PROD target. Run a comparison first.' });
         }
 
         try {
@@ -478,82 +499,160 @@ function createService({ auth = fabricAuth, backupDir } = {}) {
         }
     }
 
-    // Compare with Fabric model (local vs Fabric, Fabric vs local, Fabric vs Fabric)
-    // Each source independently specifies its type and connection string.
-    async function compareFabric(state, { devSource, prodSource } = {}) {
-        // devSource/prodSource: { type: 'local', path } or { type: 'fabric', connectionString }
+    /**
+     * Load one side of a comparison from its descriptor:
+     *   { type: 'local', path }
+     *   { type: 'fabric', connectionString, workspaceId, semanticModelId }
+     *   { type: 'git', repoPath, ref, modelPath }
+     * Resolves to { model, label, meta }; `meta` is what the client gets back in
+     * `sources` and holds nothing the client could not see already.
+     */
+    async function loadSide(desc, side, getToken) {
+        if (!desc || typeof desc !== 'object') throw statusError(400, `Invalid ${side} type.`);
 
+        if (desc.type === 'local') {
+            return { model: loadModelFromFolder(desc.path), label: desc.path, meta: { type: 'local', path: desc.path } };
+        }
+
+        if (desc.type === 'fabric') {
+            const token = await getToken();
+            const parsed = parseConnectionString(desc.connectionString);
+            const model = await loadModelFromFabric(token, desc.workspaceId, desc.semanticModelId, parsed.modelName);
+            return {
+                model,
+                label: `Fabric: ${parsed.workspaceName}/${parsed.modelName}`,
+                meta: { type: 'fabric', workspaceName: parsed.workspaceName, modelName: parsed.modelName }
+            };
+        }
+
+        if (desc.type === 'git') {
+            // Everything is re-derived on the server: the repository from the path,
+            // the commit from the branch name, the model from that commit's tree.
+            const repo = await gitClient.inspectRepository(desc.repoPath);
+            const ref = gitClient.validateRef(desc.ref);
+            const sha = await gitClient.resolveCommit(repo.root, ref);
+            const modelPath = gitModelLoader.validateModelPath(desc.modelPath, await gitModelLoader.discoverModels(repo.root, sha));
+            const model = await gitModelLoader.loadModelFromGitRef({ root: repo.root, sha, modelPath, ref });
+            const shortSha = sha.slice(0, 7);
+            return {
+                model,
+                label: `Git: ${repo.name}@${ref} (${shortSha})/${modelPath}`,
+                meta: { type: 'git', repoRoot: repo.root, repoName: repo.name, ref, resolvedSha: sha, shortSha, modelPath }
+            };
+        }
+
+        throw statusError(400, `Invalid ${side} type.`);
+    }
+
+    // Compare any two sources: local, Fabric or a Git branch on either side.
+    // The route keeps its historical name, /api/compare-fabric.
+    async function compareFabric(state, { devSource, prodSource } = {}) {
         if (!devSource || !prodSource) {
             return reply(400, { error: 'Both devSource and prodSource are required.' });
         }
 
+        // A Fabric token only when a side is in Fabric: Git and local need no sign-in.
+        let token = null;
+        const getToken = async () => {
+            if (!token) token = await auth.getAccessToken();
+            if (!token) throw statusError(401, 'Not authenticated to Fabric.');
+            return token;
+        };
+
         try {
-            const token = await auth.getAccessToken();
-            if (!token) {
-                return reply(401, { error: 'Not authenticated to Fabric.' });
-            }
-            let devModel, prodModel;
-            let devLabel, prodLabel;
+            const dev = await loadSide(devSource, 'devSource', getToken);
+            const prod = await loadSide(prodSource, 'prodSource', getToken);
 
-            // Load DEV model
-            if (devSource.type === 'local') {
-                devModel = loadModelFromFolder(devSource.path);
-                devLabel = devSource.path;
-            } else if (devSource.type === 'fabric') {
-                const parsed = parseConnectionString(devSource.connectionString);
-                const wsId = devSource.workspaceId;
-                const modelId = devSource.semanticModelId;
-                devModel = await loadModelFromFabric(token, wsId, modelId, parsed.modelName);
-                devLabel = `Fabric: ${parsed.workspaceName}/${parsed.modelName}`;
-            } else {
-                return reply(400, { error: 'Invalid devSource type.' });
-            }
-
-            // Load PROD model
-            if (prodSource.type === 'local') {
-                prodModel = loadModelFromFolder(prodSource.path);
-                prodLabel = prodSource.path;
-            } else if (prodSource.type === 'fabric') {
-                const parsed = parseConnectionString(prodSource.connectionString);
-                const wsId = prodSource.workspaceId;
-                const modelId = prodSource.semanticModelId;
-                prodModel = await loadModelFromFabric(token, wsId, modelId, parsed.modelName);
-                prodLabel = `Fabric: ${parsed.workspaceName}/${parsed.modelName}`;
-            } else {
-                return reply(400, { error: 'Invalid prodSource type.' });
-            }
-
-            // Run comparison
-            const result = compareModels(devModel, prodModel, devLabel, prodLabel);
+            const result = compareModels(dev.model, prod.model, dev.label, prod.label);
+            result.sources = { source: dev.meta, target: prod.meta };
 
             // Store for potential deployment
             state = sessionStore.resetComparison(state);
             state.lastComparison = result;
-            state.lastDevModel = devModel;
-            state.lastProdModel = prodModel;
+            state.lastDevModel = dev.model;
+            state.lastProdModel = prod.model;
             if (prodSource.type === 'local') {
                 state.lastProdPath = resolveDefinitionPath(prodSource.path);
-            } else {
+            } else if (prodSource.type === 'fabric') {
                 state.lastProdFabricInfo = {
                     workspaceId: prodSource.workspaceId,
                     semanticModelId: prodSource.semanticModelId,
-                    modelName: prodModel.name || 'SemanticModel'
+                    modelName: prod.model.name || 'SemanticModel'
                 };
+            } else {
+                const { repoRoot, ref, resolvedSha, modelPath } = prod.meta;
+                state.lastProdGitInfo = { repoRoot, ref, sha: resolvedSha, modelPath };
             }
 
             logEvent('compare', {
                 mode: `${devSource.type}-${prodSource.type}`,
-                devSource: devLabel,
-                prodSource: prodLabel,
+                devSource: dev.label,
+                prodSource: prod.label,
                 diffCount: result.diffs ? result.diffs.length : 0,
                 groupCount: result.groups ? result.groups.length : 0,
                 success: true
             });
             return reply(200, result);
         } catch (err) {
-            console.error('Comparison error:', err);
-            logEvent('compare', { mode: `${devSource && devSource.type}-${prodSource && prodSource.type}`, success: false, error: err.message });
-            return reply(500, { error: err.message });
+            if (!err.status) console.error('Comparison error:', err);
+            logEvent('compare', { mode: `${devSource && devSource.type}-${prodSource && prodSource.type}`, success: false, error: gitClient.redact(err.message) });
+            return err.status ? failure(err) : reply(500, { error: err.message });
+        }
+    }
+
+    // ===== Git =====
+    // Every operation takes the user's path again and re-checks it: the server
+    // keeps no repository handle the client could forge.
+
+    async function gitOpen(state, { path: repoPath } = {}) {
+        try {
+            const repo = await gitClient.inspectRepository(repoPath);
+            const remotes = await gitClient.listRemotes(repo.root);
+            return reply(200, Object.assign({}, repo, { remotes }));
+        } catch (err) {
+            return failure(err);
+        }
+    }
+
+    async function gitBranches(state, { repoPath } = {}) {
+        try {
+            const repo = await gitClient.inspectRepository(repoPath);
+            const { branches, lastFetchAt } = await gitClient.listBranches(repo.root);
+            return reply(200, { repoRoot: repo.root, currentBranch: repo.currentBranch, branches, lastFetchAt });
+        } catch (err) {
+            return failure(err);
+        }
+    }
+
+    // The models in one branch. On the checked-out branch each model also says
+    // how many uncommitted files it has, which the Git tab does not include.
+    async function gitModels(state, { repoPath, ref } = {}) {
+        try {
+            const repo = await gitClient.inspectRepository(repoPath);
+            const name = gitClient.validateRef(ref);
+            const sha = await gitClient.resolveCommit(repo.root, name);
+            const models = await gitModelLoader.discoverModels(repo.root, sha);
+            const checkedOut = !!repo.currentBranch && (name === repo.currentBranch || name === `refs/heads/${repo.currentBranch}`);
+            if (checkedOut) {
+                for (const m of models) m.uncommitted = await gitClient.countUncommitted(repo.root, m.modelPath);
+            }
+            return reply(200, { repoRoot: repo.root, ref: name, sha, shortSha: sha.slice(0, 7), checkedOut, models, modelPathHint: repo.modelPathHint });
+        } catch (err) {
+            return failure(err);
+        }
+    }
+
+    // Fetch runs only when the user asks; nothing else here touches the network.
+    async function gitFetch(state, { repoPath } = {}) {
+        try {
+            const repo = await gitClient.inspectRepository(repoPath);
+            const fetched = await gitClient.fetchAll(repo.root);
+            const { branches, lastFetchAt } = await gitClient.listBranches(repo.root);
+            logEvent('git-fetch', { repository: repo.root, remotes: fetched.remotes, success: true });
+            return reply(200, { repoRoot: repo.root, fetched: fetched.fetched, remotes: fetched.remotes, branches, lastFetchAt });
+        } catch (err) {
+            logEvent('git-fetch', { repository: typeof repoPath === 'string' ? repoPath : null, success: false, error: gitClient.redact(err.message) });
+            return failure(err);
         }
     }
 
@@ -586,6 +685,10 @@ function createService({ auth = fabricAuth, backupDir } = {}) {
         fabricRefreshHistory,
         fabricRefreshActive,
         fabricReadiness,
+        gitOpen,
+        gitBranches,
+        gitModels,
+        gitFetch,
         activityLog
     };
 }

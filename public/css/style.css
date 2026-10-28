@@ -734,6 +734,12 @@ body {
 }
 .fabric-resolve-status.success { color: var(--color-added-text); }
 .fabric-resolve-status.error { color: var(--color-removed-text); }
+.fabric-resolve-status.warning { color: var(--color-modified-text); }
+
+/* Git source */
+.git-selector { display: flex; flex-direction: column; gap: 8px; }
+.git-select-row { display: flex; gap: 8px; align-items: center; }
+.git-select-row select { flex: 1; min-width: 0; }
 .btn-microsoft {
     display: inline-flex; align-items: center;
     font-size: 15px; padding: 12px 24px;
