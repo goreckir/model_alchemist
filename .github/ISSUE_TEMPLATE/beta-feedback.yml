@@ -1,0 +1,59 @@
+name: Beta feedback
+description: Report a result from testing a pre-release (passed or failed).
+title: "[beta] "
+labels: ["beta"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for testing. Scenarios are listed in docs/beta-git-compare.md. A scenario that passed is worth reporting too.
+        Do not paste a client's model or anything confidential. If you cannot share details publicly, say so and we will continue elsewhere.
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: As shown in the app header.
+      placeholder: v5.3.0-beta.1
+    validations:
+      required: true
+  - type: dropdown
+    id: result
+    attributes:
+      label: Result
+      options:
+        - Passed
+        - Failed
+        - Works, but confusing
+    validations:
+      required: true
+  - type: input
+    id: scenario
+    attributes:
+      label: Scenario
+      description: Number from the tester guide, or a short description.
+      placeholder: "5: push and draft pull request on GitHub"
+  - type: dropdown
+    id: remote
+    attributes:
+      label: Remote
+      options:
+        - GitHub
+        - GitHub Enterprise
+        - Azure DevOps
+        - Other
+        - None (local repository only)
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: Operating system, `git --version`, and `gh --version` or `az version` if used. HTTPS or SSH remote.
+      placeholder: Windows 11, git 2.47.0, gh 2.62.0, HTTPS
+    validations:
+      required: true
+  - type: textarea
+    id: details
+    attributes:
+      label: What happened
+      description: What you did, what you expected, what happened. A screenshot of the deploy result helps; hide model or company names if needed.
+    validations:
+      required: true
