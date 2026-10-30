@@ -1,5 +1,33 @@
 # Model Alchemist — Release Notes
 
+## v5.3.0-beta.1 (pre-release)
+
+Beta for testing. Compares two branches of a local Git repository and deploys the selected changes into a new branch with a draft pull request ([#110](https://github.com/goreckir/model_alchemist/issues/110)). The web app only; the VS Code extension and the Marketplace stay on 5.2.1. `v5.2.1` was never tagged, so this beta also contains every change listed under v5.2.1 below.
+
+How to install it next to a stable copy, what to test and how to report problems: [docs/beta-git-compare.md](docs/beta-git-compare.md).
+
+### New Features
+
+- **Git as a source or target.** Each side of a comparison has a **🌿 Git** tab: pick a local repository, a branch (local or remote-tracking) and the semantic model inside it. The model is read straight from the commit, without checking anything out, and compares exactly like a folder on disk. **Fetch** updates the remote branches. The panel shows the commit it compared, warns about uncommitted changes in your checkout, and warns when the branch has moved since the comparison.
+- **Deploy into a new branch.** With a Git target, Deploy creates a new branch from the compared commit in a temporary worktree, writes the selected changes and commits them. Your own checkout and working tree are not touched. The dialog proposes a branch name (`model-alchemist/<source>-<date>-<time>`), a commit message listing the objects, and a pull-request title; all three can be edited.
+- **Push and draft pull request.** When the repository has a remote, the branch is pushed and a pull request into the target branch is opened, as a draft by default: through `gh` for GitHub and `az repos` for Azure DevOps. Without the CLI, the result shows a link that opens the pull request page instead.
+- **Problems are shown before you confirm.** An existing branch name, a missing Git identity (`user.name` / `user.email`) or a missing remote blocks the deploy. A moved target branch, an unsupported remote or a missing CLI is a warning.
+- **Safety.** The commit keeps each file's line endings, so the diff shows only the selected objects. Changes outside the model folder are refused, and an empty change reports `NOTHING_TO_COMMIT`. Leftover worktrees from an interrupted deploy are removed when the app starts.
+
+### Changes
+
+- **The local server accepts connections from this computer only.** It listens on `127.0.0.1` instead of every network interface, and `/api` refuses requests whose `Host` is not localhost, whose `Origin` is another site, or that a browser marks as cross-site (`FORBIDDEN_ORIGIN`). If you opened Model Alchemist from another machine, that no longer works.
+- The version in the header shows **Beta** for pre-release builds.
+
+### Bug Fixes
+
+- **Redeploying a modified object no longer adds a blank line each time.** Replacing an object block kept the trailing blank line of the merged text, so every deploy of the same object grew the file by one line. Affected local and Fabric deploys too.
+
+### Not Tested Yet
+
+- Opening a real pull request on GitHub or Azure DevOps; tests use a stubbed provider. This is the main thing the beta should confirm.
+- GitHub Enterprise, SSH remotes, Azure CLI installed without the MSI installer, macOS and Linux.
+
 ## v5.2.1
 
 Adds Model Alchemist for VS Code (Preview) on the same engine, and stops deploying what Power BI does not allow to change: role members and the model culture.

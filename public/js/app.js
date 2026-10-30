@@ -239,6 +239,12 @@
             if (versionEl && data.version) {
                 versionEl.textContent = `v${data.version}`;
                 document.title = `Model Alchemist v${data.version} — Compare & Deploy`;
+                // A pre-release version (5.3.0-beta.1) marks the build as a beta.
+                if (data.version.includes('-')) {
+                    versionEl.classList.add('prerelease');
+                    versionEl.textContent = `v${data.version} · Beta`;
+                    versionEl.title = 'Pre-release build for testing. Report problems on GitHub with the "beta" label.';
+                }
             }
             // Set default backup path if user hasn't overridden it
             const backupInput = document.getElementById('backup-path');

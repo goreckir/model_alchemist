@@ -58,6 +58,7 @@ body {
     border-radius: 4px;
     color: var(--color-text-dim);
 }
+.version.prerelease { background: var(--color-modified); color: var(--color-modified-text); font-weight: 600; }
 
 .header-actions { display: flex; gap: 12px; align-items: center; }
 
