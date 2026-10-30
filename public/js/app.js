@@ -1031,10 +1031,13 @@
     function updateDeployButton() {
         const count = selectedKeys.size;
         deployCount.textContent = count;
-        // Deploying into a branch (as a pull request) is the next phase; compare works today.
-        const gitTarget = !!(comparisonResult && comparisonResult.sources && comparisonResult.sources.target && comparisonResult.sources.target.type === 'git');
-        btnDeploy.disabled = count === 0 || gitTarget;
-        btnDeploy.title = gitTarget ? 'Deploying to a Git branch is not available yet. Compare against a Local or Fabric target to deploy.' : '';
+        btnDeploy.disabled = count === 0;
+        btnDeploy.title = isGitTarget() ? 'Creates a new branch from the compared target commit with the selected changes, then pushes it and opens a draft pull request.' : '';
+    }
+
+    /** The target of the current comparison is a Git branch. */
+    function isGitTarget() {
+        return !!(comparisonResult && comparisonResult.sources && comparisonResult.sources.target && comparisonResult.sources.target.type === 'git');
     }
 
     function selectAllVisible() {
@@ -1127,9 +1130,19 @@
         const modified = selectedDiffs.filter(d => d.type === 2).length;
 
         // Determine target label
-        const targetLabel = prodSourceMode === 'fabric' && prodFabricSelection.modelName
-            ? `☁️ Fabric: ${prodFabricSelection.modelName}`
-            : prodPathInput.value;
+        const gitTarget = isGitTarget();
+        const gitMeta = gitTarget ? comparisonResult.sources.target : null;
+        const targetLabel = gitTarget
+            ? `🌿 ${gitMeta.repoName} · ${gitMeta.ref} @ ${gitMeta.shortSha} · ${gitMeta.modelPath}`
+            : prodSourceMode === 'fabric' && prodFabricSelection.modelName
+                ? `☁️ Fabric: ${prodFabricSelection.modelName}`
+                : prodPathInput.value;
+
+        // A Git target has branch, commit and pull-request fields instead of a backup.
+        document.getElementById('deploy-backup-options').classList.toggle('hidden', gitTarget);
+        document.getElementById('git-deploy-options').classList.toggle('hidden', !gitTarget);
+        if (gitTarget) resetGitDeployFields();
+        else btnConfirmDeploy.innerHTML = '<span class="deploy-icon">🚀</span> Confirm Deployment';
 
         deploySummary.innerHTML = `
             <p>Deploying <span class="count-highlight">${selectedDiffs.length}</span> changes to TARGET:</p>
@@ -1152,16 +1165,28 @@
 
         // Get preview
         try {
-            const response = await apiFetch('/api/deploy/preview', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ selectedKeys: [...selectedKeys] })
-            });
-            // A 400/500 JSON error body parses fine and leaves actions/warnings
-            // undefined, which fell through to "No file operations planned" —
-            // read as "safe" right above the Confirm button.
-            const preview = await apiJson(response, 'Preview failed');
+            const preview = await requestDeployPreview(gitTarget);
+            renderDeployPreview(preview, gitTarget);
+        } catch (err) {
+            renderPreviewFailure(err);
+        }
 
+        deployModal.classList.remove('hidden');
+    }
+
+    async function requestDeployPreview(gitTarget) {
+        const response = await apiFetch('/api/deploy/preview', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(Object.assign({ selectedKeys: [...selectedKeys] }, gitTarget ? gitDeployFields() : {}))
+        });
+        // A 400/500 JSON error body parses fine and leaves actions/warnings
+        // undefined, which fell through to "No file operations planned" —
+        // read as "safe" right above the Confirm button.
+        return apiJson(response, 'Preview failed');
+    }
+
+    function renderDeployPreview(preview, gitTarget) {
             let previewHtml = '';
 
             // Warnings from validator — show prominently ABOVE the action list
@@ -1199,26 +1224,97 @@
 
             deployPreview.innerHTML = previewHtml;
             btnConfirmDeploy.disabled = false;
-        } catch (err) {
-            // Never let a failed preview look like an empty, safe plan.
-            deployPreview.innerHTML =
-                `<div style="background: rgba(229,83,75,0.08); border-left: 3px solid var(--color-removed-text); border-radius: 4px; padding: 10px; font-size: 13px;">
-                    <strong style="color: var(--color-removed-text);">✗ Could not build the deployment preview</strong><br>
-                    <span>${escapeHtml(err.message)}</span><br><br>
-                    <span>Deployment is disabled until the preview succeeds. Re-run the comparison and try again.</span>
-                </div>`;
-            btnConfirmDeploy.disabled = true;
-        }
-
-        deployModal.classList.remove('hidden');
+            if (gitTarget) applyGitPlan(preview.git);
     }
+
+    function renderPreviewFailure(err) {
+        // Never let a failed preview look like an empty, safe plan.
+        deployPreview.innerHTML =
+            `<div style="background: rgba(229,83,75,0.08); border-left: 3px solid var(--color-removed-text); border-radius: 4px; padding: 10px; font-size: 13px;">
+                <strong style="color: var(--color-removed-text);">✗ Could not build the deployment preview</strong><br>
+                <span>${escapeHtml(err.message)}</span><br><br>
+                <span>Deployment is disabled until the preview succeeds. Re-run the comparison and try again.</span>
+            </div>`;
+        btnConfirmDeploy.disabled = true;
+    }
+
+    // ===== Git deploy fields =====
+    // The server proposes branch name, commit message and PR title in the
+    // preview; the user can edit them. Changing the branch name or the
+    // pull-request switch asks for a new preview, so the problems shown
+    // (an existing branch, no remote, no CLI) always match the fields.
+
+    const gitField = id => document.getElementById(id);
+
+    function resetGitDeployFields() {
+        gitField('git-branch-name').value = '';
+        gitField('git-commit-message').value = '';
+        gitField('git-pr-title').value = '';
+        gitField('git-open-pr').disabled = false;
+        gitField('git-problems').innerHTML = '';
+        gitField('git-target-info').textContent = '';
+    }
+
+    function gitDeployFields() {
+        return {
+            branchName: gitField('git-branch-name').value.trim(),
+            commitMessage: gitField('git-commit-message').value.trim(),
+            prTitle: gitField('git-pr-title').value.trim(),
+            openPullRequest: gitField('git-open-pr').checked,
+            draft: gitField('git-pr-draft').checked
+        };
+    }
+
+    function applyGitPlan(plan) {
+        if (!plan) return;
+        gitField('git-target-info').textContent = Pure.gitPlanSummary(plan);
+        gitField('git-branch-name').value = plan.branchName || '';
+        if (!gitField('git-commit-message').value.trim()) gitField('git-commit-message').value = plan.commitMessage || '';
+        if (!gitField('git-pr-title').value.trim()) gitField('git-pr-title').value = plan.prTitle || '';
+
+        // Without a remote there is nothing to push to: local branch only.
+        const canPush = !!plan.remote;
+        if (!canPush) gitField('git-open-pr').checked = false;
+        gitField('git-open-pr').disabled = !canPush;
+        gitField('git-open-pr-label').textContent = canPush
+            ? `Push to ${plan.remote} and open a pull request into ${plan.baseBranch}`
+            : 'No remote: the branch stays local';
+        gitField('git-pr-fields').classList.toggle('hidden', !gitField('git-open-pr').checked);
+
+        const problems = (plan.problems || []).filter(p => p.blocking || gitField('git-open-pr').checked);
+        gitField('git-problems').innerHTML = problems.map(p =>
+            `<div class="git-problem ${p.blocking ? 'blocking' : 'note'}"><strong>${p.blocking ? '✗' : '⚠'} ${escapeHtml(p.code)}</strong><br>${escapeHtml(p.message)}</div>`
+        ).join('');
+
+        const blocked = Pure.gitBlockingProblems(plan).length > 0;
+        if (blocked) btnConfirmDeploy.disabled = true;
+        btnConfirmDeploy.innerHTML = `<span class="deploy-icon">🌿</span> ${escapeHtml(Pure.gitConfirmLabel(gitField('git-open-pr').checked, gitField('git-pr-draft').checked))}`;
+    }
+
+    async function refreshGitDeployPreview() {
+        if (!isGitTarget() || deployModal.classList.contains('hidden')) return;
+        btnConfirmDeploy.disabled = true;
+        try {
+            renderDeployPreview(await requestDeployPreview(true), true);
+        } catch (err) {
+            renderPreviewFailure(err);
+        }
+    }
+
+    gitField('git-branch-name').addEventListener('change', refreshGitDeployPreview);
+    gitField('git-open-pr').addEventListener('change', refreshGitDeployPreview);
+    gitField('git-pr-draft').addEventListener('change', () => {
+        btnConfirmDeploy.innerHTML = `<span class="deploy-icon">🌿</span> ${escapeHtml(Pure.gitConfirmLabel(gitField('git-open-pr').checked, gitField('git-pr-draft').checked))}`;
+    });
 
     async function handleConfirmDeploy() {
         const backupPathInput = document.getElementById('backup-path');
         const backupPathRow = document.getElementById('backup-path-row');
+        const gitTarget = isGitTarget();
 
-        // When the backup checkbox is checked, the backup-path must be non-empty
-        if (optBackup.checked) {
+        // When the backup checkbox is checked, the backup-path must be non-empty.
+        // A Git target needs none: the new branch starts from an existing commit.
+        if (!gitTarget && optBackup.checked) {
             const val = backupPathInput && backupPathInput.value.trim();
             if (!val) {
                 if (backupPathInput) {
@@ -1237,12 +1333,10 @@
         showAlchemistAnimation();
 
         try {
-            const payload = {
-                selectedKeys: [...selectedKeys],
-                dryRun: false,
-                backup: optBackup.checked
-            };
-            if (optBackup.checked && backupPathInput && backupPathInput.value.trim()) {
+            const payload = gitTarget
+                ? Object.assign({ selectedKeys: [...selectedKeys], dryRun: false }, gitDeployFields())
+                : { selectedKeys: [...selectedKeys], dryRun: false, backup: optBackup.checked };
+            if (!gitTarget && optBackup.checked && backupPathInput && backupPathInput.value.trim()) {
                 payload.backupPath = backupPathInput.value.trim();
             }
 
@@ -1299,6 +1393,25 @@
         if (overlay) overlay.classList.add('hidden');
     }
 
+    /** Branch, commit, push and pull request of a Git deploy, or '' for any other target. */
+    function renderGitResult(g, warnings) {
+        if (!g || (!g.branch && !g.stoppedAt)) return '';
+        const lines = [];
+        if (g.branch) lines.push(`<p>🌿 Branch <code>${escapeHtml(g.branch)}</code> from <code>${escapeHtml(g.baseRef)} @ ${escapeHtml(g.baseShortSha)}</code>, commit <code>${escapeHtml((g.commitSha || '').slice(0, 7))}</code></p>`);
+        if (g.pushed) lines.push(`<p>⬆ Pushed to <code>${escapeHtml(g.remote)}</code></p>`);
+        if (g.pullRequest) {
+            lines.push(`<p>🔀 ${g.pullRequest.draft ? 'Draft pull request' : 'Pull request'}: <a href="${escapeAttr(g.pullRequest.url)}" target="_blank" rel="noopener">${escapeHtml(g.pullRequest.url)}</a></p>`);
+        } else if (g.pushed) {
+            // Why there is no pull request (no CLI, not signed in, an unsupported remote).
+            const why = (warnings || []).find(w => w && /^PR_/.test(w.code || ''));
+            if (why) lines.push(`<p>⚠ No pull request was opened: ${escapeHtml(String(why.message || '').replace(/ Open it here: \S+$/, ''))}</p>`);
+            if (g.compareUrl) lines.push(`<p>🔀 Open the pull request here: <a href="${escapeAttr(g.compareUrl)}" target="_blank" rel="noopener">${escapeHtml(g.compareUrl)}</a></p>`);
+        }
+        if (g.stoppedAt && g.stoppedAt !== 'pull-request') lines.push(`<p>Stopped at: <strong>${escapeHtml(g.stoppedAt)}</strong>${g.branch ? '. The local branch is kept; push it when the problem is fixed.' : '. Nothing was committed.'}</p>`);
+        lines.push('<p style="opacity: 0.8;">Your own checkout was not changed.</p>');
+        return `<div class="git-result">${lines.join('')}</div>`;
+    }
+
     function showDeployResult(result) {
         const titleEl = document.getElementById('result-title');
         const bodyEl = document.getElementById('result-body');
@@ -1311,7 +1424,7 @@
             titleEl.className = 'result-error';
         }
 
-        let html = '';
+        let html = renderGitResult(result.git, result.warnings);
         if (result.backupPath) {
             html += `<p style="margin-bottom: 12px; font-size: 13px;">Backup: <code>${escapeHtml(result.backupPath)}</code></p>`;
         }

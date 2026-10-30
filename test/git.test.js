@@ -244,19 +244,22 @@ test('service: branch to branch compares without a Fabric sign-in', async t => {
     assert.strictEqual(state.lastProdFabricInfo, null);
 });
 
-test('service: a Git target cannot be deployed or previewed yet', async t => {
+test('service: a Git target previews and deploys into a new branch', async t => {
     const repo = makeRepo(t);
     const svc = service(t);
     const state = sessionStore.getState('git-b');
     const compared = await svc.compareFabric(state, { devSource: gitSide(repo, 'dev'), prodSource: gitSide(repo, 'main') });
-    const key = compared.body.diffs[0].identityKey;
+    const measure = compared.body.diffs.find(d => d.type === 2 && d.objectType === 'measure');
 
-    for (const op of ['deploy', 'previewDeploy']) {
-        const res = await svc[op](state, { selectedKeys: [key] });
-        assert.strictEqual(res.status, 400, op);
-        assert.strictEqual(res.body.code, 'GIT_DEPLOY_NOT_AVAILABLE', op);
-    }
-    assert.strictEqual(sh(repo, 'status', '--porcelain'), '');
+    const preview = await svc.previewDeploy(state, { selectedKeys: [measure.identityKey], openPullRequest: false });
+    assert.strictEqual(preview.status, 200);
+    assert.strictEqual(preview.body.git.baseRef, 'main');
+
+    const res = await svc.deploy(state, { selectedKeys: [measure.identityKey], branchName: 'promote/service', openPullRequest: false });
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(res.body.success, true, JSON.stringify(res.body.errors));
+    assert.strictEqual(sh(repo, 'rev-parse', 'promote/service'), res.body.git.commitSha);
+    assert.strictEqual(sh(repo, 'branch', '--show-current'), 'main', 'the checkout stays on its branch');
 });
 
 test('service: Git mixes with local, and a later local compare clears the Git target', async t => {
@@ -426,4 +429,15 @@ test('ui: every comparison updates the Git panels with the commit it used', () =
     assert.strictEqual((app.match(/syncGitFromComparison\(comparisonResult\)/g) || []).length, 2);
     // Coming back to the window re-reads the visible Git panels.
     assert.match(app, /addEventListener\('focus', refreshVisibleGitSides\)/);
+});
+
+test('ui: the Git deploy dialog summary, blocking problems and button label', () => {
+    const plan = { baseRef: 'origin/main', baseShortSha: '780ecf6', remote: 'origin', provider: 'github', baseBranch: 'main',
+        problems: [{ code: 'PR_CLI_MISSING', blocking: false }, { code: 'BRANCH_EXISTS', blocking: true }] };
+    assert.strictEqual(Pure.gitPlanSummary(plan), 'New branch from origin/main @ 780ecf6, pushed to origin (GitHub); pull request into main.');
+    assert.strictEqual(Pure.gitPlanSummary(Object.assign({}, plan, { remote: null })), 'New branch from origin/main @ 780ecf6; no remote to push to.');
+    assert.deepStrictEqual(Pure.gitBlockingProblems(plan).map(p => p.code), ['BRANCH_EXISTS']);
+    assert.strictEqual(Pure.gitConfirmLabel(true, true), 'Create branch and open draft PR');
+    assert.strictEqual(Pure.gitConfirmLabel(true, false), 'Create branch and open PR');
+    assert.strictEqual(Pure.gitConfirmLabel(false, true), 'Create local branch');
 });

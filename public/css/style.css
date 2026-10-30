@@ -740,6 +740,23 @@ body {
 .git-selector { display: flex; flex-direction: column; gap: 8px; }
 .git-select-row { display: flex; gap: 8px; align-items: center; }
 .git-select-row select { flex: 1; min-width: 0; }
+.git-deploy-options { display: flex; flex-direction: column; gap: 10px; margin-bottom: 12px; }
+.git-deploy-options.hidden { display: none; }
+.git-target-info { font-size: 13px; color: var(--color-text-dim); margin: 0; }
+.git-field { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+.git-field input, .git-field textarea {
+    padding: 6px 8px; border: 1px solid var(--color-border); border-radius: 4px;
+    background: var(--color-bg-input, var(--color-bg)); color: var(--color-text);
+    font-family: var(--font-mono); font-size: 12px; box-sizing: border-box; width: 100%;
+}
+.git-field textarea { resize: vertical; }
+.git-pr-fields { display: flex; flex-direction: column; gap: 8px; margin-left: 22px; }
+.git-pr-fields.hidden { display: none; }
+.git-problem { border-radius: 4px; padding: 8px 10px; font-size: 12px; margin-top: 4px; }
+.git-problem.blocking { background: rgba(229,83,75,0.08); border-left: 3px solid var(--color-removed-text); }
+.git-problem.note { background: rgba(255,180,0,0.08); border-left: 3px solid #f0b400; }
+.git-result { margin-bottom: 14px; padding: 12px; border: 1px solid var(--color-border); border-radius: 8px; font-size: 13px; }
+.git-result p { margin: 4px 0; }
 .btn-microsoft {
     display: inline-flex; align-items: center;
     font-size: 15px; padding: 12px 24px;

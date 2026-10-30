@@ -31,6 +31,8 @@ const STATUS = {
     FETCH_IN_PROGRESS: 409,
     FETCH_FAILED: 502,
     GIT_IDENTITY_MISSING: 400,
+    BRANCH_EXISTS: 409,
+    PUSH_FAILED: 502,
     GIT_TIMEOUT: 504,
     GIT_FAILED: 500
 };
@@ -43,6 +45,7 @@ const MESSAGES = {
     FETCH_IN_PROGRESS: 'A fetch for this repository is already running.',
     FETCH_FAILED: 'Fetching from the remote failed.',
     GIT_IDENTITY_MISSING: 'Git has no user name or e-mail. Set them with git config user.name and git config user.email.',
+    PUSH_FAILED: 'Pushing the branch to the remote failed.',
     GIT_TIMEOUT: 'Git did not answer in time.'
 };
 
@@ -76,12 +79,17 @@ function classify(stderr, fallback) {
     const s = String(stderr || '');
     if (/dubious ownership/i.test(s)) return new GitError('REPOSITORY_UNSAFE');
     if (/not a git repository|must be run in a work tree/i.test(s)) return new GitError('REPOSITORY_NOT_FOUND');
-    if (/authentication failed|could not read (username|password)|terminal prompts disabled|permission denied \(publickey|could not read from remote repository/i.test(s)) {
+    // "Could not read from remote repository" is not here: Git prints it for a
+    // missing repository too, and the first line then says which it is.
+    if (/authentication failed|could not read (username|password)|terminal prompts disabled|permission denied \(publickey/i.test(s)) {
         return new GitError('AUTHENTICATION_REQUIRED');
     }
     if (/please tell me who you are|empty ident name|unable to auto-detect email/i.test(s)) return new GitError('GIT_IDENTITY_MISSING');
-    if (fallback && MESSAGES[fallback]) return new GitError(fallback);
     const firstLine = redact(s.split(/\r?\n/).find(l => l.trim()) || '').slice(0, 200);
+    if (fallback === 'PUSH_FAILED' || fallback === 'FETCH_FAILED') {
+        return new GitError(fallback, firstLine ? `${MESSAGES[fallback]} ${firstLine}` : MESSAGES[fallback]);
+    }
+    if (fallback && MESSAGES[fallback]) return new GitError(fallback);
     return new GitError(fallback || 'GIT_FAILED', firstLine ? `Git failed: ${firstLine}` : 'Git failed.');
 }
 
@@ -330,6 +338,109 @@ async function fetchAll(root) {
     });
 }
 
+// ===== Writing: worktree, branch, commit, push =====
+// Used only by core/git-deploy.js, always inside withRepoLock(). The user's
+// own checkout is never written to: every change happens in a temporary
+// worktree that is removed afterwards.
+
+/** A new branch name: Git's own rules, and never something that reads as an option. */
+async function validateBranchName(root, name) {
+    const value = requireString(name, 'Branch name', 200);
+    if (value.startsWith('-')) throw new GitError('INVALID_INPUT', `"${value}" is not a valid branch name.`);
+    try {
+        const { stdout } = await run(['check-ref-format', '--branch', value], { cwd: root });
+        return text(stdout).trim();
+    } catch {
+        throw new GitError('INVALID_INPUT', `"${value}" is not a valid branch name.`);
+    }
+}
+
+async function branchExists(root, name) {
+    try {
+        await run(['show-ref', '--verify', '--quiet', `refs/heads/${name}`], { cwd: root });
+        return true;
+    } catch {
+        return false;
+    }
+}
+
+/** user.name and user.email must be set, or the commit fails half-way. */
+async function assertIdentity(root) {
+    for (const key of ['user.name', 'user.email']) {
+        let value = '';
+        try {
+            const { stdout } = await run(['config', '--get', key], { cwd: root });
+            value = text(stdout).trim();
+        } catch { /* not set */ }
+        if (!value) throw new GitError('GIT_IDENTITY_MISSING');
+    }
+}
+
+/** How many commits `ref` has that `sha` does not; 0 when it has not moved. */
+async function commitsSince(root, sha, ref) {
+    const { stdout } = await run(['rev-list', '--count', `${sha}..${validateRef(ref)}`, '--'], { cwd: root });
+    return Number(text(stdout).trim()) || 0;
+}
+
+async function addWorktree(root, dir, sha) {
+    if (!SHA_RE.test(sha)) throw new GitError('INVALID_INPUT', 'A full commit SHA is required.');
+    await run(['worktree', 'add', '--detach', '--quiet', dir, sha], { cwd: root, timeout: 120000 });
+}
+
+/** Remove a worktree; falls back to deleting the folder and pruning Git's record of it. */
+async function removeWorktree(root, dir) {
+    try {
+        await run(['worktree', 'remove', '--force', dir], { cwd: root });
+    } catch {
+        try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* the caller checks */ }
+        try { await run(['worktree', 'prune'], { cwd: root }); } catch { /* best effort */ }
+    }
+}
+
+async function pruneWorktrees(root) {
+    await run(['worktree', 'prune'], { cwd: root });
+}
+
+/** Changed, added, deleted and untracked paths in a working tree (repository-relative, POSIX). */
+async function changedPaths(dir) {
+    const { stdout } = await run(['status', '--porcelain=v1', '-z', '--untracked-files=all'], { cwd: dir });
+    const entries = text(stdout).split('\0').filter(Boolean);
+    const paths = [];
+    for (let i = 0; i < entries.length; i++) {
+        paths.push(entries[i].slice(3));
+        if (/^[RC]/.test(entries[i])) paths.push(entries[++i]); // the rename's source path
+    }
+    return paths;
+}
+
+async function createBranchHere(dir, name) {
+    await run(['switch', '--quiet', '--create', name], { cwd: dir });
+}
+
+async function stageFolder(dir, folder) {
+    await run(['add', '--all', '--', folder], { cwd: dir });
+}
+
+/** Commit what is staged; resolves to the new commit's SHA. Hooks run as usual. */
+async function commit(dir, message) {
+    await run(['commit', '--quiet', '-m', message], { cwd: dir, timeout: 120000 });
+    const { stdout } = await run(['rev-parse', 'HEAD'], { cwd: dir });
+    return text(stdout).trim();
+}
+
+async function remoteUrl(root, remote) {
+    const { stdout } = await run(['remote', 'get-url', '--', remote], { cwd: root });
+    return text(stdout).trim();
+}
+
+/** Push one branch to a remote under the same name and track it. */
+async function pushBranch(dir, remote, branch) {
+    const remotes = await listRemotes(dir);
+    if (!remotes.includes(remote)) throw new GitError('INVALID_INPUT', `Unknown remote "${remote}".`);
+    await run(['push', '--quiet', '--set-upstream', remote, `refs/heads/${branch}:refs/heads/${branch}`], { cwd: dir, timeout: FETCH_TIMEOUT_MS, fallback: 'PUSH_FAILED' });
+}
+
+
 // ===== Per-repository lock =====
 // Fetch and (later) worktree changes of one repository run one at a time, so
 // two browser tabs, or the web app and the VS Code panel, cannot race.
@@ -372,5 +483,19 @@ module.exports = {
     fetchAll,
     withRepoLock,
     isLocked,
+    validateBranchName,
+    branchExists,
+    assertIdentity,
+    commitsSince,
+    addWorktree,
+    removeWorktree,
+    pruneWorktrees,
+    changedPaths,
+    createBranchHere,
+    stageFolder,
+    commit,
+    remoteUrl,
+    pushBranch,
+    run,
     SHA_RE
 };

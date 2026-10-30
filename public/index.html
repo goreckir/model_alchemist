@@ -252,7 +252,7 @@
                 </div>
                 <div class="modal-body">
                     <div class="deploy-summary" id="deploy-summary"></div>
-                    <div class="deploy-options">
+                    <div class="deploy-options" id="deploy-backup-options">
                         <label class="checkbox-label">
                             <input type="checkbox" id="opt-backup" checked />
                             Create backup before deployment
@@ -261,6 +261,29 @@
                             <label for="backup-path" style="font-size: 13px; white-space: nowrap;">Backup folder:</label>
                             <input type="text" id="backup-path" placeholder="Enter backup destination path..." style="flex: 1; padding: 4px 8px; border: 1px solid var(--color-border); border-radius: 4px; font-size: 13px; background: var(--color-bg-input); color: var(--color-text);" />
                         </div>
+                    </div>
+                    <div id="git-deploy-options" class="git-deploy-options hidden">
+                        <p id="git-target-info" class="git-target-info"></p>
+                        <label class="git-field">New branch
+                            <input type="text" id="git-branch-name" autocomplete="off" spellcheck="false" />
+                        </label>
+                        <label class="git-field">Commit message
+                            <textarea id="git-commit-message" rows="4" spellcheck="false"></textarea>
+                        </label>
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="git-open-pr" checked />
+                            <span id="git-open-pr-label">Push the branch and open a pull request</span>
+                        </label>
+                        <div id="git-pr-fields" class="git-pr-fields">
+                            <label class="git-field">Pull request title
+                                <input type="text" id="git-pr-title" autocomplete="off" />
+                            </label>
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="git-pr-draft" checked />
+                                Open as a draft
+                            </label>
+                        </div>
+                        <div id="git-problems"></div>
                     </div>
                     <div id="deploy-preview" class="deploy-preview"></div>
                 </div>

@@ -7,6 +7,7 @@ const fs = require('fs');
 const path = require('path');
 const vscode = require('vscode');
 const { createService } = require('../../core/service');
+const { cleanupAbandonedWorktrees } = require('../../core/git-deploy');
 const activityLog = require('../../lib/activity-log');
 const refreshStore = require('../../lib/refresh-store');
 const { createVsCodeAuth } = require('./auth-vscode');
@@ -36,6 +37,9 @@ function activate(context) {
         return { clientId: config.get('clientId') || '', tenant: config.get('tenant') || '' };
     });
     context.subscriptions.push(vscode.authentication.onDidChangeSessions(auth.onSessionsChanged));
+
+    // A crash in the middle of a Git deploy can leave a worktree behind; remove those first.
+    cleanupAbandonedWorktrees().catch(() => { /* best effort */ });
 
     let service = createService({ auth, backupDir: folders.backupDir });
 

@@ -155,7 +155,8 @@ test('#47 a multiline annotation stays inside one table row', () => {
 test('#68 API responses are checked before being rendered', () => {
     assert.match(APP_JS, /async function apiJson\(response, fallbackMessage\)/);
     assert.match(APP_JS, /if \(!response\.ok\)/);
-    assert.match(APP_JS, /const preview = await apiJson\(response, 'Preview failed'\)/);
+    // The preview request lives in requestDeployPreview(), which returns the checked parse.
+    assert.match(APP_JS, /(const preview = await|return) apiJson\(response, 'Preview failed'\)/);
     assert.match(APP_JS, /const result = await apiJson\(response, 'Deployment failed'\)/);
     assert.ok(
         !/const preview = await response\.json\(\)/.test(APP_JS),

@@ -17,7 +17,8 @@ test('#64 the port fallback increments numerically, not by concatenation', () =>
 test('#64 the server binds a free port and reports it', async () => {
     // Occupy the preferred port so the fallback path is exercised end to end.
     const blocker = http.createServer((_, res) => res.end('busy'));
-    await new Promise(resolve => blocker.listen(3401, resolve));
+    // The server binds the loopback interface only, so that is the address to occupy.
+    await new Promise(resolve => blocker.listen(3401, '127.0.0.1', resolve));
 
     const child = spawn(process.execPath, [path.join(__dirname, '..', 'server.js')], {
         env: { ...process.env, PORT: '3401' },

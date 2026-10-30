@@ -136,7 +136,12 @@ function replaceObjectBlock(content, objectType, objectName, parentIndent, newBl
     const lines = content.replace(/\r\n/g, '\n').split('\n');
     const oldBlock = lines.slice(location.startLine, location.endLine).join('\n');
     const mergedBlock = (mergeFn || mergeReplacementBlock)(oldBlock, newBlock);
-    const newBlockLines = mergedBlock.split('\n');
+    const newBlockLines = mergedBlock.replace(/\r\n/g, '\n').split('\n');
+    // The located block stops before the blank lines that follow it, and those
+    // stay in the file. A source block that ends in blank lines would add them
+    // again on every deploy, so a replace was never idempotent: each deploy of
+    // the same object grew the gap after it (visible as noise in a Git diff).
+    while (newBlockLines.length > 1 && !newBlockLines[newBlockLines.length - 1].trim()) newBlockLines.pop();
 
     lines.splice(location.startLine, location.endLine - location.startLine, ...newBlockLines);
     return lines.join('\n');

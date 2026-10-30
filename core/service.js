@@ -24,6 +24,7 @@ const refreshStore = require('../lib/refresh-store');
 const sessionStore = require('../lib/session-store');
 const { resolveDefinitionPath, resolveModelFromFile } = require('./model-paths');
 const { deployToFabric, inspectTargetReadiness } = require('./fabric-deploy');
+const { deployToGit } = require('./git-deploy');
 const gitClient = require('../git/git-client');
 const gitModelLoader = require('../git/model-loader');
 
@@ -36,11 +37,20 @@ const reply = (status, body) => ({ status, body });
 const failure = err => reply(err.status || 500, err.code ? { error: err.message, code: err.code } : { error: err.message });
 const statusError = (status, message) => Object.assign(new Error(message), { status });
 
-/** A Git target cannot be deployed to yet: that is the next phase of the feature. */
-const GIT_DEPLOY_NOT_AVAILABLE = {
-    error: 'Deploying to a Git branch is not available yet. Compare against a Local or Fabric target to deploy.',
-    code: 'GIT_DEPLOY_NOT_AVAILABLE'
-};
+/** What the deploy dialog may set for a Git target; everything else comes from the comparison. */
+function gitDeployOptions(body, comparison) {
+    return {
+        allDiffs: comparison.diffs,
+        sources: comparison.sources,
+        branchName: typeof body.branchName === 'string' ? body.branchName : '',
+        commitMessage: typeof body.commitMessage === 'string' ? body.commitMessage : '',
+        prTitle: typeof body.prTitle === 'string' ? body.prTitle : '',
+        openPullRequest: body.openPullRequest !== false,
+        draft: body.draft !== false
+    };
+}
+
+const diffSummary = diffs => diffs.map(d => ({ type: d.type, objectType: d.objectType, name: d.displayName, identityKey: d.identityKey }));
 
 /**
  * The account as the browser may see it. With MA_PRESENTATION=1 (or true) the
@@ -110,10 +120,7 @@ function createService({ auth = fabricAuth, backupDir } = {}) {
         if (!lastComparison || !lastDevModel) {
             return reply(400, { error: 'No comparison result available. Run a comparison first.' });
         }
-        if (state.lastProdGitInfo) {
-            return reply(400, GIT_DEPLOY_NOT_AVAILABLE);
-        }
-        if (!lastProdPath && !lastProdFabricInfo) {
+        if (!lastProdPath && !lastProdFabricInfo && !state.lastProdGitInfo) {
             return reply(400, { error: 'No valid PROD target. Run a comparison first.' });
         }
 
@@ -123,6 +130,30 @@ function createService({ auth = fabricAuth, backupDir } = {}) {
 
             if (selectedDiffs.length === 0) {
                 return reply(400, { error: 'None of the selected keys match current comparison results.' });
+            }
+
+            if (state.lastProdGitInfo) {
+                // Git branch: new branch from the compared commit, commit, push, draft PR.
+                const gitInfo = state.lastProdGitInfo;
+                const result = await deployToGit(selectedDiffs, lastDevModel, lastProdModel, gitInfo, Object.assign({ dryRun }, gitDeployOptions(body, lastComparison)));
+                const g = result.git || {};
+                logEvent('deploy', {
+                    mode: 'git',
+                    dryRun,
+                    target: `${gitInfo.repoRoot}@${gitInfo.ref} (${gitInfo.sha.slice(0, 7)})/${gitInfo.modelPath}`,
+                    selectedCount: selectedDiffs.length,
+                    selectedDiffs: diffSummary(selectedDiffs),
+                    success: result.success,
+                    branch: g.branch || null,
+                    commitSha: g.commitSha || null,
+                    pushed: !!g.pushed,
+                    remote: g.remote || null,
+                    pullRequest: g.pullRequest ? g.pullRequest.url : null,
+                    stoppedAt: g.stoppedAt || null,
+                    warnings: result.warnings || [],
+                    errors: result.errors || []
+                });
+                return reply(200, result);
             }
 
             if (lastProdPath) {
@@ -170,7 +201,8 @@ function createService({ auth = fabricAuth, backupDir } = {}) {
         }
     }
 
-    async function previewDeploy(state, { selectedKeys } = {}) {
+    async function previewDeploy(state, body = {}) {
+        const { selectedKeys } = body;
         const { lastComparison, lastDevModel, lastProdPath, lastProdModel, lastProdFabricInfo } = state;
 
         if (!selectedKeys || !selectedKeys.length) {
@@ -179,15 +211,16 @@ function createService({ auth = fabricAuth, backupDir } = {}) {
         if (!lastComparison || !lastDevModel) {
             return reply(400, { error: 'No comparison result available.' });
         }
-        if (state.lastProdGitInfo) {
-            return reply(400, GIT_DEPLOY_NOT_AVAILABLE);
-        }
-        if (!lastProdPath && !lastProdFabricInfo) {
+        if (!lastProdPath && !lastProdFabricInfo && !state.lastProdGitInfo) {
             return reply(400, { error: 'No valid PROD target. Run a comparison first.' });
         }
 
         try {
             const selectedDiffs = lastComparison.diffs.filter(d => selectedKeys.includes(d.identityKey));
+            if (state.lastProdGitInfo) {
+                const result = await deployToGit(selectedDiffs, lastDevModel, lastProdModel, state.lastProdGitInfo, Object.assign({ dryRun: true }, gitDeployOptions(body, lastComparison)));
+                return reply(200, result);
+            }
             if (lastProdPath) {
                 const result = deployChanges(selectedDiffs, lastDevModel, lastProdPath, { dryRun: true, backup: false, prodModel: lastProdModel, allDiffs: lastComparison.diffs });
                 return reply(200, result);

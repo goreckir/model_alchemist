@@ -2,6 +2,8 @@ const express = require('express');
 const path = require('path');
 const { execFile } = require('child_process');
 const sessionStore = require('./lib/session-store');
+const { requestGuard } = require('./lib/request-guard');
+const { cleanupAbandonedWorktrees } = require('./core/git-deploy');
 const { createService, accountForClient, APP_VERSION } = require('./core/service');
 const { ROUTES } = require('./core/routes');
 const { deployToFabric, inspectTargetReadiness, detectTablesNeedingRefresh } = require('./core/fabric-deploy');
@@ -13,6 +15,8 @@ const app = express();
 // '3001' + 1 = '30011' and bound a port nobody asked for.
 const PORT = parseInt(process.env.PORT, 10) || 3001;
 
+// Only this machine's own pages may call the API (see lib/request-guard.js).
+app.use(requestGuard);
 app.use(express.json({ limit: '50mb' }));
 app.use(express.static(path.join(__dirname, 'public'), {
     etag: false,
@@ -97,7 +101,9 @@ app.get('*', (req, res) => {
 
 function startServer(portArg, maxAttempts = 20) {
     const port = Number(portArg);
-    const server = app.listen(port, () => {
+    // Loopback only: the API writes model files, deploys to Fabric and pushes
+    // Git branches with the user's credentials, so nothing on the network may reach it.
+    const server = app.listen(port, '127.0.0.1', () => {
         const url = `http://localhost:${port}`;
         console.log(`Model Alchemist v${APP_VERSION} running at ${url}`);
         if (accountForClient({})?.presentation) console.log('Presentation Mode: the signed-in account is hidden in the UI.');
@@ -117,6 +123,8 @@ function startServer(portArg, maxAttempts = 20) {
 
 // Guarded so tests can `require('../server')` for its exports without binding a real port.
 if (require.main === module) {
+    // A crash in the middle of a Git deploy can leave a worktree behind; remove those first.
+    cleanupAbandonedWorktrees().catch(() => { /* best effort */ });
     startServer(PORT);
 }
 

@@ -394,7 +394,37 @@
         return '—';
     }
 
+    // ===== Git deploy dialog =====
+
+    const PROVIDER_NAMES = { github: 'GitHub', azure: 'Azure DevOps' };
+
+    /** One line about where the new branch starts and where it goes. */
+    function gitPlanSummary(plan) {
+        if (!plan) return '';
+        let text = `New branch from ${plan.baseRef} @ ${plan.baseShortSha}`;
+        if (plan.remote) {
+            const provider = PROVIDER_NAMES[plan.provider];
+            text += `, pushed to ${plan.remote}${provider ? ` (${provider})` : ''}; pull request into ${plan.baseBranch}`;
+        } else {
+            text += '; no remote to push to';
+        }
+        return text + '.';
+    }
+
+    /** Problems that stop the deploy (the dialog disables Confirm while any is listed). */
+    function gitBlockingProblems(plan) {
+        return ((plan && plan.problems) || []).filter(p => p.blocking);
+    }
+
+    function gitConfirmLabel(openPullRequest, draft) {
+        if (!openPullRequest) return 'Create local branch';
+        return draft ? 'Create branch and open draft PR' : 'Create branch and open PR';
+    }
+
     return {
+        gitPlanSummary,
+        gitBlockingProblems,
+        gitConfirmLabel,
         emptyGitSelection,
         pickBranch,
         pickModelPath,

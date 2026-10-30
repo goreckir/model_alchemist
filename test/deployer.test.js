@@ -764,3 +764,18 @@ test('4.3 an unrelated table with a similar name is left untouched by the case-i
     assert.strictEqual(result.success, true, errorText(result));
     assert.strictEqual(read(s.prodPath, 'tables/Dim.tmdl'), before, 'the unrelated Dim table is unaffected');
 });
+
+// ── Replacing a block twice equals replacing it once ──────────────────────────
+// The located block stops before the blank lines after it; a source block that
+// ended in blank lines added them again on every deploy, so the gap after a
+// redeployed measure grew each time (noise in every Git diff of the target).
+test('replaceObjectBlock is idempotent: no blank lines pile up after the block', () => {
+    const { replaceObjectBlock } = require('../deployment/tmdl-writer');
+    const target = 'table Sales\n\tlineageTag: t\n\n\tmeasure A = 1\n\t\tlineageTag: a\n\n\tmeasure B = 2\n\t\tlineageTag: b\n';
+    const source = '\tmeasure A = 10\n\t\tlineageTag: x\n\n\n';
+    const asIs = (oldBlock, newBlock) => newBlock; // the splice itself, without the property merge
+    const once = replaceObjectBlock(target, 'measure', 'A', 0, source, asIs);
+    const twice = replaceObjectBlock(once, 'measure', 'A', 0, source, asIs);
+    assert.strictEqual(twice, once);
+    assert.strictEqual(once, 'table Sales\n\tlineageTag: t\n\n\tmeasure A = 10\n\t\tlineageTag: x\n\n\tmeasure B = 2\n\t\tlineageTag: b\n');
+});
