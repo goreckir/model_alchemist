@@ -148,7 +148,7 @@ if (require.main === module) {
     const { findOutdatedDependencies, outdatedMessage } = require('./lib/dependency-check');
     const outdated = findOutdatedDependencies(__dirname);
     if (outdated.length) {
-        console.error(outdatedMessage(outdated));
+        console.error(outdatedMessage(outdated, __dirname));
         process.exit(1);
     }
     startServer(PORT);

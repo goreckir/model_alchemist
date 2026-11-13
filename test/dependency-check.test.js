@@ -43,9 +43,11 @@ test('dependency check: no lockfile means nothing to report', () => {
 
 test('dependency check: the message names the fix and caps the list', () => {
     const many = Array.from({ length: 7 }, (_, i) => ({ name: `p${i}`, locked: '2.0.0', installed: '1.0.0' }));
-    const text = outdatedMessage(many);
+    const text = outdatedMessage(many, 'D:\\tools\\model_alchemist');
     assert.match(text, /npm ci/);
+    // The folder is named, so the user knows where to run it.
+    assert.ok(text.includes('D:\\tools\\model_alchemist'), text);
     assert.match(text, /p0: installed 1\.0\.0, expected 2\.0\.0/);
     assert.match(text, /and 2 more/);
-    assert.match(outdatedMessage([{ name: 'x', locked: '1.0.0', installed: null }]), /installed missing/);
+    assert.match(outdatedMessage([{ name: 'x', locked: '1.0.0', installed: null }], '/tmp/ma'), /installed missing/);
 });
