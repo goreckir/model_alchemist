@@ -106,7 +106,7 @@ npm start
 
 The app opens at **http://localhost:3001**. Paste or browse to a `.SemanticModel` folder on each side, press **Compare Models**, then expand any row to see the changed fragment highlighted in place.
 
-If port 3001 is taken the server steps to the next free port and prints the URL it bound.
+If port 3001 is taken the server steps to the next free port and prints the URL it bound. The server listens on this computer only (`127.0.0.1`); other machines on the network cannot reach it.
 
 ### Try it in 2 minutes
 

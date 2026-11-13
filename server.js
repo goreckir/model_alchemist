@@ -4,6 +4,7 @@ const { execFile } = require('child_process');
 const sessionStore = require('./lib/session-store');
 const { createService, accountForClient, APP_VERSION } = require('./core/service');
 const { ROUTES } = require('./core/routes');
+const { localRequestsOnly } = require('./lib/local-requests');
 const { deployToFabric, inspectTargetReadiness, detectTablesNeedingRefresh } = require('./core/fabric-deploy');
 
 const BACKUP_DIR = path.join(__dirname, 'backups');
@@ -12,7 +13,14 @@ const app = express();
 // process.env.PORT is a STRING. Without the parse, the EADDRINUSE fallback did
 // '3001' + 1 = '30011' and bound a port nobody asked for.
 const PORT = parseInt(process.env.PORT, 10) || 3001;
+// Loopback only: the API reads local files and acts with the signed-in user's
+// Fabric token, and has no authentication of its own. Without a host, Express
+// listens on every interface and anyone on the network can call it.
+// Set HOST (e.g. 0.0.0.0) only if you accept that.
+const HOST = process.env.HOST || '127.0.0.1';
 
+// Before the body parser: a refused request is not worth parsing.
+app.use('/api', localRequestsOnly({ bindHost: process.env.HOST }));
 app.use(express.json({ limit: '50mb' }));
 app.use(express.static(path.join(__dirname, 'public'), {
     etag: false,
@@ -95,9 +103,33 @@ app.get('*', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
+/**
+ * Is the port free on every interface? Binding only HOST is not enough to tell:
+ * Windows lets 127.0.0.1:port be bound while another program holds the same port
+ * on all interfaces, and "localhost" in the browser may then reach that program.
+ */
+function portIsFree(port, callback) {
+    const probe = require('net').createServer();
+    probe.once('error', () => callback(false));
+    probe.listen(port, () => probe.close(() => callback(true)));
+}
+
 function startServer(portArg, maxAttempts = 20) {
     const port = Number(portArg);
-    const server = app.listen(port, () => {
+    const tryNext = () => {
+        if (port - PORT < maxAttempts - 1) {
+            console.log(`Port ${port} is busy, trying ${port + 1}...`);
+            startServer(port + 1, maxAttempts);
+        } else {
+            console.error(`Could not find a free port after ${maxAttempts} attempts (tried ${PORT}-${port}).`);
+            process.exit(1);
+        }
+    };
+    portIsFree(port, free => (free ? listen(port, tryNext) : tryNext()));
+}
+
+function listen(port, tryNext) {
+    const server = app.listen(port, HOST, () => {
         const url = `http://localhost:${port}`;
         console.log(`Model Alchemist v${APP_VERSION} running at ${url}`);
         if (accountForClient({})?.presentation) console.log('Presentation Mode: the signed-in account is hidden in the UI.');
@@ -105,13 +137,9 @@ function startServer(portArg, maxAttempts = 20) {
         exec(`start "" "${url}"`);
     });
     server.on('error', (err) => {
-        if (err.code === 'EADDRINUSE' && port - PORT < maxAttempts - 1) {
-            console.log(`Port ${port} is busy, trying ${port + 1}...`);
-            startServer(port + 1, maxAttempts);
-        } else {
-            console.error(`Could not find a free port after ${maxAttempts} attempts (tried ${PORT}-${port}).`);
-            process.exit(1);
-        }
+        if (err.code === 'EADDRINUSE') return tryNext();
+        console.error(`Could not start the server on ${HOST}:${port}: ${err.message}`);
+        process.exit(1);
     });
 }
 
