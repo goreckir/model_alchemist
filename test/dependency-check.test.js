@@ -47,7 +47,10 @@ test('dependency check: the message names the fix and caps the list', () => {
     assert.match(text, /npm ci/);
     // The folder is named, so the user knows where to run it.
     assert.ok(text.includes('D:\\tools\\model_alchemist'), text);
-    assert.match(text, /p0: installed 1\.0\.0, expected 2\.0\.0/);
+    assert.match(text, /p0: 1\.0\.0 \(needs 2\.0\.0\)/);
+    // Plain words first: no tool jargon before the steps.
+    assert.match(text.split('\n')[0], /cannot start: the update is not finished/);
+    assert.ok(!/package-lock|git pull/.test(text), text);
     assert.match(text, /and 2 more/);
-    assert.match(outdatedMessage([{ name: 'x', locked: '1.0.0', installed: null }], '/tmp/ma'), /installed missing/);
+    assert.match(outdatedMessage([{ name: 'x', locked: '1.0.0', installed: null }], '/tmp/ma'), /x: missing \(needs 1\.0\.0\)/);
 });
