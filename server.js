@@ -145,6 +145,12 @@ function listen(port, tryNext) {
 
 // Guarded so tests can `require('../server')` for its exports without binding a real port.
 if (require.main === module) {
+    const { findOutdatedDependencies, outdatedMessage } = require('./lib/dependency-check');
+    const outdated = findOutdatedDependencies(__dirname);
+    if (outdated.length) {
+        console.error(outdatedMessage(outdated));
+        process.exit(1);
+    }
     startServer(PORT);
 }
 
