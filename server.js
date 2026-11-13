@@ -4,6 +4,7 @@ const { execFile } = require('child_process');
 const sessionStore = require('./lib/session-store');
 const { createService, accountForClient, APP_VERSION } = require('./core/service');
 const { ROUTES } = require('./core/routes');
+const { localRequestsOnly } = require('./lib/local-requests');
 const { deployToFabric, inspectTargetReadiness, detectTablesNeedingRefresh } = require('./core/fabric-deploy');
 
 const BACKUP_DIR = path.join(__dirname, 'backups');
@@ -18,6 +19,8 @@ const PORT = parseInt(process.env.PORT, 10) || 3001;
 // Set HOST (e.g. 0.0.0.0) only if you accept that.
 const HOST = process.env.HOST || '127.0.0.1';
 
+// Before the body parser: a refused request is not worth parsing.
+app.use('/api', localRequestsOnly({ bindHost: process.env.HOST }));
 app.use(express.json({ limit: '50mb' }));
 app.use(express.static(path.join(__dirname, 'public'), {
     etag: false,
