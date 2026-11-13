@@ -115,7 +115,7 @@ git pull
 npm ci
 ```
 
-Then restart the server: stop the running one (close the `start.bat` window or press Ctrl+C) and start it again. `git pull` alone does not update the installed packages; the server checks them at start-up and refuses to start, naming the outdated ones, until `npm ci` has run.
+Then restart the server: stop the running one (close the `start.bat` window or press Ctrl+C) and start it again. `git pull` alone does not update the installed packages; the server checks them at start-up and refuses to start, naming the outdated ones, until `npm ci` has run. Started from `start.bat`, it asks "Finish the update now [Y,N]?" and runs `npm ci` for you on Y.
 
 ### Try it in 2 minutes
 

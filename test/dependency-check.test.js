@@ -43,9 +43,21 @@ test('dependency check: no lockfile means nothing to report', () => {
 
 test('dependency check: the message names the fix and caps the list', () => {
     const many = Array.from({ length: 7 }, (_, i) => ({ name: `p${i}`, locked: '2.0.0', installed: '1.0.0' }));
-    const text = outdatedMessage(many);
+    const text = outdatedMessage(many, 'D:\\tools\\model_alchemist');
     assert.match(text, /npm ci/);
-    assert.match(text, /p0: installed 1\.0\.0, expected 2\.0\.0/);
+    // The folder is named, so the user knows where to run it.
+    assert.ok(text.includes('D:\\tools\\model_alchemist'), text);
+    assert.match(text, /p0: 1\.0\.0 \(needs 2\.0\.0\)/);
+    // Plain words first: no tool jargon before the steps.
+    assert.match(text.split('\n')[0], /cannot start: the update is not finished/);
+    assert.ok(!/package-lock|git pull/.test(text), text);
     assert.match(text, /and 2 more/);
-    assert.match(outdatedMessage([{ name: 'x', locked: '1.0.0', installed: null }]), /installed missing/);
+    assert.match(outdatedMessage([{ name: 'x', locked: '1.0.0', installed: null }], '/tmp/ma'), /x: missing \(needs 1\.0\.0\)/);
+});
+
+test('dependency check: started from start.bat, the message leaves the fix to its Y/N prompt', () => {
+    const text = outdatedMessage([{ name: 'x', locked: '2.0.0', installed: '1.0.0' }], 'D:\\ma', { offeredByLauncher: true });
+    assert.match(text, /can finish the update now/);
+    assert.ok(!/npm ci|cd \/d/.test(text), text);
+    assert.match(text, /x: 1\.0\.0 \(needs 2\.0\.0\)/);
 });
