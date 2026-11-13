@@ -1,5 +1,39 @@
 # Model Alchemist — Release Notes
 
+## v5.3.0-beta.2 (pre-release)
+
+Second beta of Git branch compare ([#110](https://github.com/goreckir/model_alchemist/issues/110)). No new Git features: it brings the fixes released on `master` since beta.1, most importantly Fabric sign-in. The web app only; the VS Code extension stays on 5.2.1.
+
+### Upgrading from beta.1
+
+In your beta folder:
+
+```powershell
+git fetch --tags
+git checkout v5.3.0-beta.2
+npm ci
+```
+
+**Node.js 20 or newer is now required** (it was 18). Check with `node --version`. If you skip `npm ci`, the app no longer starts on the old packages: it explains what is missing, and `start.bat` offers to finish the update for you.
+
+### Bug Fixes
+
+- **Fabric sign-in works again.** It failed after signing in with `AADSTS70007: The application requested an unsupported mode 'query'`. Microsoft Entra ID no longer accepts the response mode that the old sign-in library always used; `@azure/msal-node` is updated from 2 to 7, which uses `form_post`. ([#115](https://github.com/goreckir/model_alchemist/pull/115))
+
+### Changes
+
+- **The app checks its installed packages when it starts.** After `git pull` or `git checkout` without `npm ci`, it used to start on outdated packages and fail later with errors that did not point at the cause (the sign-in error above, for one). It now stops with a plain explanation of how to finish the update. ([#117](https://github.com/goreckir/model_alchemist/pull/117))
+- **`start.bat` can finish an update for you.** When packages are out of date it asks `Finish the update now [Y,N]?` and runs `npm ci` on Y. It also no longer says "opened in your browser" before the server has started. ([#118](https://github.com/goreckir/model_alchemist/pull/118))
+- **Stricter check of where API requests come from.** On top of beta.1's checks, `/api` also refuses requests a browser marks as `same-site` (another port or subdomain on this computer). Setting the `HOST` environment variable (for example `0.0.0.0`) makes the server listen on other interfaces on purpose; the origin check still applies. ([#116](https://github.com/goreckir/model_alchemist/pull/116))
+- **Security updates** for packages used by the local web server (`body-parser`, `proxy-addr`, `qs`, through Express 4.22.3). `npm audit` reports no known vulnerabilities. ([#116](https://github.com/goreckir/model_alchemist/pull/116))
+
+### What to test
+
+Everything in the [tester guide](docs/beta-git-compare.md), plus:
+
+- **Fabric sign-in** (Connect to Fabric) — it did not work in beta.1.
+- **Upgrading from beta.1** as described above, including once *without* `npm ci`, to see the start-up message and the `start.bat` prompt.
+
 ## v5.3.0-beta.1 (pre-release)
 
 Beta for testing. Compares two branches of a local Git repository and deploys the selected changes into a new branch with a draft pull request ([#110](https://github.com/goreckir/model_alchemist/issues/110)). The web app only; the VS Code extension and the Marketplace stay on 5.2.1. `v5.2.1` was never tagged, so this beta also contains every change listed under v5.2.1 below.

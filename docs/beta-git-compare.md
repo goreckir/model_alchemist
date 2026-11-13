@@ -1,6 +1,6 @@
 # Beta: Git branch compare and pull requests
 
-Thank you for testing. This beta adds Git to Model Alchemist: compare two branches of a repository, then deploy the selected changes into a new branch and open a draft pull request. What changed is listed in [RELEASE_NOTES.md](../RELEASE_NOTES.md) under `v5.3.0-beta.1`.
+Thank you for testing. This beta adds Git to Model Alchemist: compare two branches of a repository, then deploy the selected changes into a new branch and open a draft pull request. What changed is listed in [RELEASE_NOTES.md](../RELEASE_NOTES.md) under `v5.3.0-beta.2` and `v5.3.0-beta.1`.
 
 ## Before you start
 
@@ -13,21 +13,23 @@ Thank you for testing. This beta adds Git to Model Alchemist: compare two branch
 The beta goes into its own folder, so your current installation keeps working.
 
 ```powershell
-git clone --branch v5.3.0-beta.1 https://github.com/goreckir/model_alchemist.git model_alchemist-beta
+git clone --branch v5.3.0-beta.2 https://github.com/goreckir/model_alchemist.git model_alchemist-beta
 cd model_alchemist-beta
-npm install
+npm ci
 npm start
 ```
 
-The header shows **v5.3.0-beta.1 · Beta**. If you are asked to test a newer beta later:
+The header shows **v5.3.0-beta.2 · Beta**. Already testing beta.1? Upgrade in your beta folder:
 
 ```powershell
 git fetch --tags
 git checkout v5.3.0-beta.2
-npm install
+npm ci
 ```
 
-Requirements on top of the README's: Git 2.28 or newer. For pull requests: [GitHub CLI](https://cli.github.com/) signed in (`gh auth login`), or for Azure DevOps the [Azure CLI](https://learn.microsoft.com/cli/azure/install-azure-cli) with the DevOps extension (`az extension add --name azure-devops`) and `az login`.
+Use the same three commands, with the new tag, whenever you are asked to test a newer beta. Without `npm ci` the app does not start; it explains why, and `start.bat` offers to run it for you.
+
+Requirements on top of the README's: **Node.js 20 or newer** (`node --version`), Git 2.28 or newer. For pull requests: [GitHub CLI](https://cli.github.com/) signed in (`gh auth login`), or for Azure DevOps the [Azure CLI](https://learn.microsoft.com/cli/azure/install-azure-cli) with the DevOps extension (`az extension add --name azure-devops`) and `az login`.
 
 ## Create a sandbox repository from the Demo Kit
 
@@ -71,6 +73,8 @@ Do what fits your setup; every scenario helps. Note the result of each one.
 | 6 | Same on an **Azure DevOps** remote. | As 5 |
 | 7 | Error paths: reuse an existing branch name; deploy with `user.email` unset; uninstall or sign out of `gh`/`az`; push to a repository you cannot write to. | A clear message in the dialog or result, nothing half-done. Without the CLI: the branch is pushed and a link opens the pull request page |
 | 8 | On Windows with `git config core.autocrlf true`: deploy and open the commit diff. | Only the selected objects change, no whole-file line-ending changes |
+| 9 | **Connect to Fabric** and sign in. *(new in beta.2)* | Signed in; your account is shown. In beta.1 this failed with `AADSTS70007` |
+| 10 | Upgrade from beta.1 with `git checkout v5.3.0-beta.2` but **without** `npm ci`, then start with `start.bat`. *(new in beta.2)* | The app explains the update is not finished and asks `Finish the update now [Y,N]?`; Y installs and starts it |
 
 Also useful: GitHub Enterprise, SSH remotes (`git@...`), a large repository, macOS or Linux.
 

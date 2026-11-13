@@ -4,7 +4,7 @@
 
 <p align="center">
   <a href="#license"><img src="https://img.shields.io/badge/license-MIT-7c6ff7" alt="MIT licence"></a>
-  <img src="https://img.shields.io/badge/node-%E2%89%A518-7dcfef" alt="Node.js 18 or newer">
+  <img src="https://img.shields.io/badge/node-%E2%89%A520-7dcfef" alt="Node.js 20 or newer">
   <img src="https://img.shields.io/badge/Power%20BI-PBIP%20%2F%20TMDL-dfcf5d" alt="Works with Power BI PBIP and TMDL">
   <img src="https://img.shields.io/badge/Microsoft%20Fabric-REST%20API-7ddf7d" alt="Works with Microsoft Fabric over the REST API">
 </p>
@@ -142,7 +142,7 @@ To try it against Fabric, open `demo/dev/Apothecary.pbip` and `demo/prod/Apothec
 
 | | |
 |---|---|
-| **Node.js** | v18 or newer (tested on v24) |
+| **Node.js** | v20 or newer (tested on v24) |
 | **Models** | Power BI in PBIP / TMDL format. Enable Developer Mode in Power BI Desktop |
 | **OS** | Windows 10/11 is the supported platform. The server itself runs anywhere Node runs, but the native folder picker and the launch-the-browser step use Windows APIs. Elsewhere, type or paste the model paths instead |
 | **Fabric** *(optional)* | A Microsoft account with access to the workspace. Only needed for the Fabric source and target modes |
