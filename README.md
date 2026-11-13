@@ -106,7 +106,16 @@ npm start
 
 The app opens at **http://localhost:3001**. Paste or browse to a `.SemanticModel` folder on each side, press **Compare Models**, then expand any row to see the changed fragment highlighted in place.
 
-If port 3001 is taken the server steps to the next free port and prints the URL it bound.
+If port 3001 is taken the server steps to the next free port and prints the URL it bound. The server listens on this computer only (`127.0.0.1`); other machines on the network cannot reach it.
+
+### Updating
+
+```bash
+git pull
+npm ci
+```
+
+Then restart the server: stop the running one (close the `start.bat` window or press Ctrl+C) and start it again. `git pull` alone does not update the installed packages; the server checks them at start-up and refuses to start, naming the outdated ones, until `npm ci` has run. Started from `start.bat`, it asks "Finish the update now [Y,N]?" and runs `npm ci` for you on Y.
 
 ### Try it in 2 minutes
 

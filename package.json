@@ -11,7 +11,7 @@
     "verify-fabric-readiness": "node verify-fabric-readiness.js"
   },
   "dependencies": {
-    "@azure/msal-node": "^2.16.0",
+    "@azure/msal-node": "^7.2.2",
     "apache-arrow": "^21.2.0",
     "express": "^4.21.0",
     "lz4js": "^0.2.0"
