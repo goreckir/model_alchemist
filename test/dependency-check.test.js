@@ -54,3 +54,10 @@ test('dependency check: the message names the fix and caps the list', () => {
     assert.match(text, /and 2 more/);
     assert.match(outdatedMessage([{ name: 'x', locked: '1.0.0', installed: null }], '/tmp/ma'), /x: missing \(needs 1\.0\.0\)/);
 });
+
+test('dependency check: started from start.bat, the message leaves the fix to its Y/N prompt', () => {
+    const text = outdatedMessage([{ name: 'x', locked: '2.0.0', installed: '1.0.0' }], 'D:\\ma', { offeredByLauncher: true });
+    assert.match(text, /can finish the update now/);
+    assert.ok(!/npm ci|cd \/d/.test(text), text);
+    assert.match(text, /x: 1\.0\.0 \(needs 2\.0\.0\)/);
+});

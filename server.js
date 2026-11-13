@@ -1,3 +1,17 @@
+// First, before any installed package is loaded: after an update that added a
+// package, require('express') (or any other) would crash with "Cannot find
+// module" and this check would never run. lib/dependency-check uses only fs/path.
+if (require.main === module) {
+    const { findOutdatedDependencies, outdatedMessage, OUTDATED_EXIT_CODE } = require('./lib/dependency-check');
+    const outdated = findOutdatedDependencies(__dirname);
+    if (outdated.length) {
+        // start.bat sets MODEL_ALCHEMIST_LAUNCHER and offers to run npm ci itself.
+        const offeredByLauncher = process.env.MODEL_ALCHEMIST_LAUNCHER === 'start.bat';
+        console.error(outdatedMessage(outdated, __dirname, { offeredByLauncher }));
+        process.exit(OUTDATED_EXIT_CODE);
+    }
+}
+
 const express = require('express');
 const path = require('path');
 const { execFile } = require('child_process');
@@ -145,12 +159,6 @@ function listen(port, tryNext) {
 
 // Guarded so tests can `require('../server')` for its exports without binding a real port.
 if (require.main === module) {
-    const { findOutdatedDependencies, outdatedMessage } = require('./lib/dependency-check');
-    const outdated = findOutdatedDependencies(__dirname);
-    if (outdated.length) {
-        console.error(outdatedMessage(outdated, __dirname));
-        process.exit(1);
-    }
     startServer(PORT);
 }
 
