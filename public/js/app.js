@@ -705,7 +705,7 @@
         const allSelected = memberKeys.length > 0 && memberKeys.every(k => selectedKeys.has(k));
         const someSelected = memberKeys.some(k => selectedKeys.has(k));
 
-        const groupIcon = group.isRename ? '✎' : group.isParameterGroup ? '⚡↻' : '↻';
+        const groupIcon = group.isRename ? '✎' : group.isConnectionGroup ? '🔌' : group.isParameterGroup ? '⚡↻' : '↻';
         const hiddenNote = hiddenCount > 0
             ? `<span class="diff-group-badge" title="This group deploys as a unit. ${hiddenCount} member(s) are hidden by the current filter or search but WILL be deployed.">${hiddenCount} hidden — deploys as a unit</span>`
             : '';
@@ -716,7 +716,7 @@
                 </div>
                 <div class="diff-group-info">
                     <span class="diff-group-icon">${groupIcon}</span>
-                    <span class="diff-group-label">${Pure.escapeHtml(group.label)}</span>
+                    <span class="diff-group-label">${Pure.escapeHtml(group.isConnectionGroup ? `${group.label} — independent of table changes` : group.label)}</span>
                     <span class="diff-group-count">${memberKeys.length} changes</span>
                     ${group.requiresRefresh ? '<span class="diff-group-badge">requires refresh</span>' : ''}
                     ${group.isRename ? '<span class="diff-group-badge">rename — data loss</span>' : ''}
@@ -729,6 +729,10 @@
 
         const checkbox = container.querySelector('.diff-group-checkbox');
         if (someSelected && !allSelected) checkbox.indeterminate = true;
+
+        // Set through the DOM: escapeHtml does not escape quotes, so the reason
+        // (which lists table names) is not safe inside an attribute string.
+        if (group.isConnectionGroup) container.querySelector('.diff-group-label').title = group.reason || '';
 
         // Group checkbox toggles every member of the atomic group
         checkbox.addEventListener('click', (e) => {

@@ -329,11 +329,49 @@ function computeGroups(diffs, devObjects, renames = []) {
         return result;
     }
 
+    // A Direct Lake (entity) partition names its source expression in
+    // `expressionSource`; the extractor keeps that block in `type`, which starts
+    // with the partition kind.
+    const isEntityPartition = part => /^entity\b/i.test(String(part.properties.type || '').trim());
+
+    // Partitions that read any of the given expression names.
+    function findReferencingPartitions(exprNames) {
+        return allPartitions.filter(part => {
+            const partExpr = part.properties.expression || part.properties.type || '';
+            return [...exprNames].some(name => containsIdentifier(partExpr, name));
+        });
+    }
+
     // Process NON-parameter expressions → add to table refresh groups
+    const connectionGroups = [];
     for (const exprDiff of nonParamExprDiffs) {
         const exprName = exprDiff.displayName;
         const allDependentNames = findDependentExprNames(exprName);
         allDependentNames.add(exprName);
+
+        // A modified expression read only by Direct Lake partitions is a pure
+        // connection: the tables reference it by name and it cannot change
+        // their shape. It differs between environments by design (each one
+        // points at its own lakehouse), so it must not be welded to the tables'
+        // structural changes — that made it impossible to promote tables
+        // without overwriting the target's connection.
+        if (exprDiff.type === 2) {
+            const readers = findReferencingPartitions(allDependentNames);
+            if (readers.length > 0 && readers.every(isEntityPartition)) {
+                const tables = [...new Set(readers.map(p => p.parentTable))].sort((a, b) => a.localeCompare(b));
+                connectionGroups.push({
+                    groupId: `connection:${exprName}`,
+                    label: `Connection '${exprName}' used by ${tables.length} Direct Lake ${tables.length === 1 ? 'table' : 'tables'}`,
+                    reason: `Direct Lake connection. Tables read it by name, so it deploys independently of table changes. ` +
+                        `Leave it unselected to keep the target's own source. Used by: ${tables.join(', ')}`,
+                    memberKeys: [exprDiff.identityKey],
+                    affectedTables: tables,
+                    requiresRefresh: true,
+                    isConnectionGroup: true
+                });
+                continue;
+            }
+        }
 
         const referencingTables = findAffectedTables(allDependentNames);
 
@@ -587,6 +625,9 @@ function computeGroups(diffs, devObjects, renames = []) {
 
     // Add parameter groups at the beginning
     groups.unshift(...parameterGroups.sort((a, b) => a.label.localeCompare(b.label)));
+
+    // Connection groups first of all: they are standalone and never merged.
+    groups.unshift(...connectionGroups.sort((a, b) => a.label.localeCompare(b.label)));
 
     return groups;
 }
