@@ -1,5 +1,10 @@
 # Changelog
 
+## 5.2.2 (Preview)
+
+- **Direct Lake: the connection expression is independent of table changes.** A modified named expression read only by Direct Lake partitions, typically `DatabaseQuery`, is its own group, so tables can be deployed while the target keeps its own lakehouse connection.
+- **`changedProperty` no longer shows a difference that cannot be deployed.** The lines are compared as an unordered set, not by the last line.
+
 ## 5.2.1 (Preview)
 
 - **The panel looks like the web app.** VS Code's default webview styles gave `<code>` text (backup path, object and table names) a light background, another colour and a sans-serif font, made body text smaller, and replaced the dark scrollbars in dialogs with light native ones. The browser's defaults are now restored inside the panel.
