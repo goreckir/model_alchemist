@@ -222,3 +222,94 @@ test('#73 an unchanged model reports no renames', () => {
     assert.deepStrictEqual(result.diffs, []);
     assert.deepStrictEqual(result.renames, []);
 });
+
+// ── Direct Lake: the connection expression is independent of table changes ────
+const dlTable = (name, extraColumn = '') => [
+    `table ${name}`,
+    '',
+    '\tcolumn Id',
+    '\t\tdataType: int64',
+    '\t\tsourceColumn: Id',
+    extraColumn,
+    `\tpartition ${name} = entity`,
+    '\t\tmode: directLake',
+    '\t\tsource',
+    `\t\t\tentityName: ${name}`,
+    '\t\t\tschemaName: dbo',
+    '\t\t\texpressionSource: DatabaseQuery',
+    ''
+].join('\n');
+
+const dlExpression = endpoint => [
+    'expression DatabaseQuery =',
+    '\t\tlet',
+    `\t\t\tdatabase = Sql.Database("${endpoint}", "abc")`,
+    '\t\tin',
+    '\t\t\tdatabase',
+    ''
+].join('\n');
+
+const AMOUNT = '\n\tcolumn Amount\n\t\tdataType: double\n\t\tsourceColumn: Amount\n';
+
+function dlModel(endpoint, tables, extra = {}) {
+    const files = {
+        'database.tmdl': H.databaseTmdl(),
+        'model.tmdl': H.modelTmdl(tables.map(t => `table ${t}`)),
+        'expressions.tmdl': dlExpression(endpoint)
+    };
+    for (const t of tables) files[`tables/${t}.tmdl`] = dlTable(t, t === 'Sales' ? AMOUNT : '');
+    return { ...files, ...extra };
+}
+
+test('Direct Lake: a changed connection expression is a standalone group', () => {
+    const dev = dlModel('test.endpoint', ['Sales', 'Dim', 'New']);
+    const prod = dlModel('dev.endpoint', ['Sales', 'Dim']);
+    prod['tables/Sales.tmdl'] = dlTable('Sales');
+
+    const result = compare(dev, prod);
+    const exprDiff = result.diffs.find(d => d.objectType === 'expression');
+    const owners = result.groups.filter(g => g.memberKeys.includes(exprDiff.identityKey));
+
+    assert.strictEqual(owners.length, 1, 'the expression is in exactly one group');
+    assert.strictEqual(owners[0].groupId, 'connection:DatabaseQuery');
+    assert.strictEqual(owners[0].isConnectionGroup, true);
+    assert.deepStrictEqual(owners[0].memberKeys, [exprDiff.identityKey], 'no table change is welded to it');
+    assert.deepStrictEqual(owners[0].affectedTables, ['Dim', 'New', 'Sales']);
+
+    // The added table is still deployable as its own atomic group.
+    const newTable = result.groups.find(g => g.memberKeys.includes('table:new'));
+    assert.ok(newTable, 'the added table keeps its group');
+    assert.ok(!newTable.memberKeys.includes(exprDiff.identityKey));
+});
+
+test('Direct Lake: an expression also read by an M partition stays coupled', () => {
+    const importTable = source => [
+        'table Imp',
+        '',
+        '\tcolumn Id',
+        '\t\tdataType: int64',
+        '\t\tsourceColumn: Id',
+        '',
+        '\tpartition Imp = m',
+        '\t\tmode: import',
+        '\t\tsource =',
+        '\t\t\t\tlet',
+        `\t\t\t\t\tSource = ${source}`,
+        '\t\t\t\tin',
+        '\t\t\t\t\tSource',
+        ''
+    ].join('\n');
+    const withImport = endpoint => {
+        const files = dlModel(endpoint, ['Sales']);
+        files['model.tmdl'] = H.modelTmdl(['table Sales', 'table Imp']);
+        files['tables/Imp.tmdl'] = importTable('DatabaseQuery');
+        return files;
+    };
+
+    const result = compare(withImport('test.endpoint'), withImport('dev.endpoint'));
+    const exprDiff = result.diffs.find(d => d.objectType === 'expression');
+
+    assert.ok(!result.groups.some(g => g.isConnectionGroup), 'no connection group when an M partition reads it');
+    assert.ok(result.groups.some(g => g.memberKeys.includes(exprDiff.identityKey) && g.requiresRefresh),
+        'the expression stays in a table refresh group');
+});

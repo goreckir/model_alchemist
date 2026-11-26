@@ -60,10 +60,26 @@ function serializeDefinition(obj, name) {
 }
 
 /** Copy every parsed property except the per-environment identifiers. */
+/**
+ * `changedProperty = X` repeats once per property (IsHidden, FormatString,
+ * DataType…), so it is a set, not a single value. The parser keeps only the
+ * last line, and the service writes the lines in its own order: two models
+ * with the same set then showed a "FormatString vs DataType" difference that
+ * no deployment could remove. Read every line and sort them.
+ */
+function changedProperties(obj) {
+    const names = new Set();
+    const re = /^\s*changedProperty\s*=\s*(\S+)\s*$/gim;
+    let match;
+    while ((match = re.exec((obj && obj.rawBlock) || '')) !== null) names.add(match[1]);
+    return [...names].sort((a, b) => a.localeCompare(b)).join(', ');
+}
+
 function copyProperties(obj) {
     const out = {};
     for (const [key, value] of Object.entries((obj && obj.properties) || {})) {
         if (ENV_PROPERTIES.has(key)) continue;
+        if (key === 'changedProperty') { out[key] = changedProperties(obj) || value; continue; }
         out[key] = value;
     }
     return out;

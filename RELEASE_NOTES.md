@@ -1,5 +1,24 @@
 # Model Alchemist — Release Notes
 
+## v5.2.2
+
+Direct Lake tables can be promoted between environments without overwriting the target's lakehouse connection. Also collects the fixes merged since 5.2.1: Fabric sign-in, a local-only server, and a start-up check for outdated packages.
+
+### Requirements
+
+- **Node.js 20 or newer.** `@azure/msal-node` 7 does not support Node 18. `package.json` declares `engines.node >=20`.
+
+### Changes
+
+- **Direct Lake: the connection expression is independent of table changes.** A modified named expression read only by Direct Lake (entity) partitions, typically `DatabaseQuery`, is now its own group: "Connection '…' used by N Direct Lake tables". Before, it was merged into one atomic group with the structural changes of every table that reads it, so tables could not be deployed without also overwriting the target's connection. Leave the group unselected to keep the target's own source. An expression that an M partition also reads (Import, DirectQuery) stays grouped with its tables, because it can change their shape.
+- **The server listens on this computer only.** It binds `127.0.0.1` instead of every interface (`HOST` overrides this), and every `/api` request must come from the app's own page: `Host`, `Origin` and `Sec-Fetch-Site` are checked. Clients that send none of these headers (curl, scripts) are unaffected.
+- **The server refuses to start on outdated packages.** After `git pull`, installed packages older than `package-lock.json` are named at start-up instead of failing later. `start.bat` offers to finish the update (`npm ci`) and starts the server again.
+
+### Bug Fixes
+
+- **`changedProperty` no longer shows a difference that cannot be deployed.** A column carries one `changedProperty` line per property (IsHidden, FormatString, DataType…). Only the last line was compared, and the service writes the lines in its own order, so the same set in another order showed as "FormatString vs DataType" and came back after every deployment. The lines are now compared as an unordered set.
+- **Fabric sign-in no longer fails with `AADSTS70007`.** Fixed by moving to `@azure/msal-node` 7.
+
 ## v5.2.1
 
 Adds Model Alchemist for VS Code (Preview) on the same engine, and stops deploying what Power BI does not allow to change: role members and the model culture.
