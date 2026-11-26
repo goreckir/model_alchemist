@@ -503,3 +503,32 @@ test('#58 a case-only rename is one modify, not Add + Remove', () => {
 test('#58 keys fold case for tables too', () => {
     assert.strictEqual(rootKey('table', 'Sales'), rootKey('table', 'SALES'));
 });
+
+// ── changedProperty is a set: order must not produce a difference ─────────────
+test('changedProperty lines are compared as an unordered set', () => {
+    const table = changed => [
+        'table HA',
+        '',
+        '\tcolumn Data',
+        '\t\tdataType: dateTime',
+        '\t\tformatString: Short Date',
+        '\t\tsourceColumn: Data',
+        '',
+        ...changed.flatMap(c => [`\t\tchangedProperty = ${c}`, '']),
+        '\t\tannotation SummarizationSetBy = Automatic',
+        ''
+    ].join('\n');
+    const model = changed => loadModelFromFolder(H.makeModelFolder({
+        'database.tmdl': H.databaseTmdl(),
+        'model.tmdl': H.modelTmdl(['table HA']),
+        'tables/HA.tmdl': table(changed)
+    }));
+
+    const sameSet = compareModels(model(['IsHidden', 'DataType', 'FormatString']), model(['IsHidden', 'FormatString', 'DataType']), 'dev', 'prod');
+    assert.deepStrictEqual(sameSet.diffs, [], 'the same set in another order is not a difference');
+
+    const realDiff = compareModels(model(['DataType', 'FormatString']), model(['DataType']), 'dev', 'prod');
+    const prop = realDiff.diffs[0].propertyDiffs.find(p => p.propertyName === 'changedProperty');
+    assert.strictEqual(prop.devValue, 'DataType, FormatString');
+    assert.strictEqual(prop.prodValue, 'DataType');
+});
